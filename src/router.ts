@@ -5,7 +5,6 @@ import Dashboard from './views/Dashboard.vue'
 import History from './views/History.vue'
 import Monitoring from './views/Monitoring.vue'
 import Incidents from './views/Incidents.vue'
-import AlertRules from './views/AlertRules.vue'
 import Settings from './views/Settings.vue'
 
 const router = createRouter({
@@ -16,7 +15,6 @@ const router = createRouter({
     { path: '/history', component: History },
     { path: '/monitoring', component: Monitoring },
     { path: '/incidents', component: Incidents },
-    { path: '/rules', component: AlertRules },
     { path: '/settings', component: Settings },
   ],
 })

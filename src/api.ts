@@ -196,23 +196,14 @@ export const api = {
   incidents: () => req<Incident[]>('GET', '/api/v1/incidents'),
   timeline: (id: string) => req<TimelineEntry[]>('GET', `/api/v1/incidents/${encodeURIComponent(id)}/timeline`),
   alerts: () => req<Alert[]>('GET', '/api/v1/alerts'),
-  // Alarm rules: reusable templates + per-target rules.
-  ruleTemplates: () => req<Rule[]>('GET', '/api/v1/rule-templates'),
-  createTemplate: (rule: Partial<Rule>) => req<{ id: string }>('POST', '/api/v1/rule-templates', rule),
+  // Alarm rules are configured per monitoring target.
   targetRules: (probeTaskId: string) =>
     req<Rule[]>('GET', `/api/v1/targets/${encodeURIComponent(probeTaskId)}/rules`),
   createTargetRule: (probeTaskId: string, rule: Partial<Rule>) =>
     req<{ id: string }>('POST', `/api/v1/targets/${encodeURIComponent(probeTaskId)}/rules`, rule),
-  applyTemplate: (probeTaskId: string, templateId: string) =>
-    req<{ id: string }>('POST', `/api/v1/targets/${encodeURIComponent(probeTaskId)}/apply-template`, {
-      template_id: templateId,
-    }),
   updateRule: (id: string, rule: Partial<Rule>) =>
     req<unknown>('PUT', `/api/v1/rules/${encodeURIComponent(id)}`, rule),
-  updateTemplate: (id: string, rule: Partial<Rule>) =>
-    req<unknown>('PUT', `/api/v1/rule-templates/${encodeURIComponent(id)}`, rule),
   deleteRule: (id: string) => req<unknown>('DELETE', `/api/v1/rules/${encodeURIComponent(id)}`),
-  deleteTemplate: (id: string) => req<unknown>('DELETE', `/api/v1/rule-templates/${encodeURIComponent(id)}`),
   channels: () => req<Channel[]>('GET', '/api/v1/channels'),
   createChannel: (name: string, type: string, config: Record<string, string>) =>
     req<{ id: string }>('POST', '/api/v1/channels', { name, type, config }),

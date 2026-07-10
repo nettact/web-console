@@ -16,7 +16,6 @@ const nav = [
   { to: '/history', label: '历史' },
   { to: '/incidents', label: '事故' },
   { to: '/monitoring', label: '监控目标' },
-  { to: '/rules', label: '报警模板' },
   { to: '/settings', label: '设置' },
 ]
 
@@ -70,14 +69,6 @@ const initials = computed(() => (auth.user?.username ?? '?').slice(0, 1).toUpper
               <circle cx="12" cy="12" r="8" />
               <circle cx="12" cy="12" r="3.4" />
               <path d="M12 2v3M12 19v3M2 12h3M19 12h3" />
-            </svg>
-            <!-- 告警规则 -->
-            <svg v-else-if="n.to === '/rules'" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-              stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M4 6h10M18 6h2M4 12h2M10 12h10M4 18h7M15 18h5" />
-              <circle cx="16" cy="6" r="2" />
-              <circle cx="8" cy="12" r="2" />
-              <circle cx="13" cy="18" r="2" />
             </svg>
             <!-- 设置 -->
             <svg v-else viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"

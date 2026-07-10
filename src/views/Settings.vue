@@ -10,6 +10,12 @@ const newToken = ref('')
 const error = ref('')
 
 const channels = ref<Channel[]>([])
+// 通知渠道按类型添加：先选类型，再展示对应表单。新增类型时在此登记即可。
+const CHANNEL_TYPES = [
+  { value: 'webhook', label: 'Webhook' },
+  { value: 'email', label: 'Email' },
+]
+const addType = ref('webhook')
 const webhook = reactive({ name: '', url: '' })
 const email = reactive({ name: '', host: '', port: '587', from: '', to: '', username: '', password: '' })
 
@@ -143,14 +149,24 @@ onMounted(load)
       <div class="panel-body">
         <p class="hint">可添加多个渠道，并在「监控目标」的每条报警规则上单独勾选要通知的渠道。</p>
 
-        <div class="row field-row">
+        <div class="type-tabs" role="tablist">
+          <span class="type-label">添加通知类型</span>
+          <button
+            v-for="ct in CHANNEL_TYPES" :key="ct.value"
+            class="type-tab" :class="{ active: addType === ct.value }"
+            @click="addType = ct.value">
+            {{ ct.label }}
+          </button>
+        </div>
+
+        <div v-if="addType === 'webhook'" class="row field-row">
           <b class="ftag">Webhook</b>
           <input v-model="webhook.name" placeholder="名称" class="tiny-name" />
           <input v-model="webhook.url" placeholder="https://hooks.example.com/…" class="wide" />
           <button class="btn btn-primary" @click="addWebhook">添加</button>
         </div>
 
-        <div class="row field-row wrap">
+        <div v-else-if="addType === 'email'" class="row field-row wrap">
           <b class="ftag">Email</b>
           <input v-model="email.name" placeholder="名称" class="tiny-name" />
           <input v-model="email.host" placeholder="smtp 主机" />
@@ -249,6 +265,36 @@ code {
   word-break: break-all;
   color: var(--primary);
   border-color: transparent;
+}
+.type-tabs {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 4px 0 2px;
+}
+.type-label {
+  font-size: 13px;
+  color: var(--text-dim);
+  margin-right: 4px;
+}
+.type-tab {
+  padding: 6px 16px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-dim);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill);
+  cursor: pointer;
+  transition: background 0.16s, color 0.16s, border-color 0.16s;
+}
+.type-tab:hover {
+  color: var(--text);
+}
+.type-tab.active {
+  color: var(--primary);
+  background: var(--primary-soft);
+  border-color: rgba(56, 189, 248, 0.35);
 }
 .field-row .ftag {
   min-width: 62px;

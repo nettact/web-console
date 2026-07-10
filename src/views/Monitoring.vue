@@ -10,20 +10,32 @@ const busy = ref(false)
 
 const expanded = reactive<Record<string, boolean>>({})
 const rulesByTarget = reactive<Record<string, Rule[]>>({})
-const templates = ref<Rule[]>([])
 const channels = ref<Channel[]>([])
-const applySel = reactive<Record<string, string>>({}) // probeTaskId -> selected templateId
 
-const METRICS = [
-  'probe.icmp.loss_pct', 'probe.icmp.rtt_ms',
-  'probe.dns.ok', 'probe.dns.resolve_ms',
-  'probe.http.ok', 'probe.http.status', 'probe.http.latency_ms',
-]
+// 报警方式：按监控类型区分可选指标，并给出中文友好名。value 仍是原始 metric_kind。
+const METRIC_LABELS: Record<string, string> = {
+  'probe.icmp.loss_pct': '丢包率 (%)',
+  'probe.icmp.rtt_ms': '往返延迟 (ms)',
+  'probe.dns.ok': '解析成功 (1/0)',
+  'probe.dns.resolve_ms': '解析耗时 (ms)',
+  'probe.http.ok': '可用 (1/0)',
+  'probe.http.status': '状态码',
+  'probe.http.latency_ms': '响应延迟 (ms)',
+}
+const METRICS_BY_KIND: Record<string, string[]> = {
+  icmp: ['probe.icmp.loss_pct', 'probe.icmp.rtt_ms'],
+  dns: ['probe.dns.ok', 'probe.dns.resolve_ms'],
+  http: ['probe.http.ok', 'probe.http.status', 'probe.http.latency_ms'],
+}
+// 某目标类型下可选的报警方式（指标）。未知类型回退到 icmp。
+function metricsForKind(kind: string): string[] {
+  return METRICS_BY_KIND[kind] || METRICS_BY_KIND.icmp
+}
 
 async function load() {
   try {
-    ;[targets.value, templates.value, channels.value] = await Promise.all([
-      api.listTargets(SITE), api.ruleTemplates(), api.channels(),
+    ;[targets.value, channels.value] = await Promise.all([
+      api.listTargets(SITE), api.channels(),
     ])
     targets.value.forEach((t) => {
       if (!t.params) t.params = {}
@@ -107,16 +119,6 @@ async function addRule(t: ProbeTarget) {
     error.value = String((e as Error).message || e)
   }
 }
-async function applyTpl(t: ProbeTarget) {
-  if (!t.id || !applySel[t.id]) return
-  try {
-    await api.applyTemplate(t.id, applySel[t.id])
-    applySel[t.id] = ''
-    await reloadRules(t.id)
-  } catch (e) {
-    error.value = String((e as Error).message || e)
-  }
-}
 async function saveRule(r: Rule, tid: string) {
   await api.updateRule(r.id, {
     name: r.name, metric_kind: r.metric_kind, comparator: r.comparator,
@@ -167,18 +169,20 @@ onMounted(load)
 
     <section class="panel">
       <div class="panel-head"><h3>探测目标</h3><span class="count">{{ targets.length }}</span></div>
+      <p class="hint panel-hint">点击每行的「参数/报警」展开,可设置该目标的协议参数(检查间隔、超时、包大小、重试…)和报警规则。新目标需先「保存并下发」后才能配置。</p>
       <div class="table-wrap">
         <table class="data-table">
           <thead>
-            <tr><th></th><th>类型</th><th>目标</th><th>频率档</th><th class="center">启用</th><th></th></tr>
+            <tr><th>配置</th><th>类型</th><th>目标</th><th>频率档</th><th class="center">启用</th><th></th></tr>
           </thead>
           <tbody>
             <template v-for="(t, i) in targets" :key="t.id || i">
               <tr>
-                <td class="center">
-                  <button class="link-btn" @click="toggleExpand(t)" :title="t.id ? '配置' : '先保存'">
-                    {{ t.id && expanded[t.id] ? '▾' : '▸' }}
+                <td>
+                  <button v-if="t.id" class="btn-cfg" :class="{ open: expanded[t.id] }" @click="toggleExpand(t)">
+                    {{ expanded[t.id] ? '收起 ▾' : '参数/报警 ▸' }}
                   </button>
+                  <span v-else class="hint tiny">保存后可配</span>
                 </td>
                 <td>
                   <select v-model="t.kind">
@@ -230,19 +234,16 @@ onMounted(load)
                     <div class="sub-title">
                       报警规则
                       <span class="apply">
-                        <select v-model="applySel[t.id]">
-                          <option value="">套用模板…</option>
-                          <option v-for="tpl in templates" :key="tpl.id" :value="tpl.id">{{ tpl.name }}</option>
-                        </select>
-                        <button class="link-btn" @click="applyTpl(t)" :disabled="!applySel[t.id]">套用</button>
                         <button class="link-btn" @click="addRule(t)">+ 新建规则</button>
                       </span>
                     </div>
-                    <div v-if="!(rulesByTarget[t.id]?.length)" class="hint tiny">暂无报警规则。</div>
+                    <div v-if="!(rulesByTarget[t.id]?.length)" class="hint tiny">暂无报警规则。可按该目标类型（{{ t.kind.toUpperCase() }}）新建报警方式。</div>
                     <div v-for="r in rulesByTarget[t.id]" :key="r.id" class="rule-card">
                       <div class="rule-line">
                         <input v-model="r.name" class="rule-name" />
-                        <select v-model="r.metric_kind"><option v-for="m in METRICS" :key="m" :value="m">{{ m }}</option></select>
+                        <select v-model="r.metric_kind" title="报警方式">
+                          <option v-for="m in metricsForKind(t.kind)" :key="m" :value="m">{{ METRIC_LABELS[m] || m }}</option>
+                        </select>
                         <select v-model="r.comparator" class="cmp">
                           <option value="gt">&gt;</option><option value="gte">&ge;</option>
                           <option value="lt">&lt;</option><option value="lte">&le;</option><option value="eq">=</option>
@@ -324,6 +325,25 @@ onMounted(load)
 .target-in {
   width: 100%;
   min-width: 180px;
+}
+.panel-hint {
+  margin: 0 18px 10px;
+}
+.btn-cfg {
+  white-space: nowrap;
+  padding: 4px 10px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--primary);
+  background: var(--primary-soft);
+  border: 1px solid rgba(56, 189, 248, 0.3);
+  border-radius: var(--radius-pill);
+  cursor: pointer;
+}
+.btn-cfg.open {
+  color: var(--text);
+  background: var(--surface-2);
+  border-color: var(--border);
 }
 .expand-row td {
   background: var(--surface-2);
