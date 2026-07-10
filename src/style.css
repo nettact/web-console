@@ -218,6 +218,9 @@ a {
 .stat.is-bad::before {
   background: var(--danger);
 }
+.stat.is-unknown::before {
+  background: var(--text-dim);
+}
 .stat .label {
   font-size: 12px;
   color: var(--text-dim);
