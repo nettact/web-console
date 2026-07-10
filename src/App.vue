@@ -14,7 +14,9 @@ async function doLogout() {
     <nav v-if="auth.user" class="topnav">
       <span class="brand">NetTact</span>
       <RouterLink to="/">总览</RouterLink>
+      <RouterLink to="/incidents">事故</RouterLink>
       <RouterLink to="/monitoring">监控目标</RouterLink>
+      <RouterLink to="/rules">告警规则</RouterLink>
       <RouterLink to="/settings">设置</RouterLink>
       <span class="spacer"></span>
       <span class="user">{{ auth.user.username }}</span>

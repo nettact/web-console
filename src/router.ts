@@ -3,6 +3,8 @@ import { auth, refresh } from './auth'
 import Login from './views/Login.vue'
 import Dashboard from './views/Dashboard.vue'
 import Monitoring from './views/Monitoring.vue'
+import Incidents from './views/Incidents.vue'
+import AlertRules from './views/AlertRules.vue'
 import Settings from './views/Settings.vue'
 
 const router = createRouter({
@@ -11,6 +13,8 @@ const router = createRouter({
     { path: '/login', component: Login },
     { path: '/', component: Dashboard },
     { path: '/monitoring', component: Monitoring },
+    { path: '/incidents', component: Incidents },
+    { path: '/rules', component: AlertRules },
     { path: '/settings', component: Settings },
   ],
 })

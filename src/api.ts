@@ -53,6 +53,51 @@ export interface Device {
   first_seen: string | null
   last_seen: string | null
 }
+export interface Incident {
+  id: string
+  site_id: string
+  title: string
+  suspected_layer: string
+  state: string
+  severity: string
+  summary: string
+  opened_at: string
+  resolved_at: string | null
+}
+export interface TimelineEntry {
+  ts: string
+  kind: string
+  message: string
+}
+export interface Alert {
+  id: string
+  rule_name: string
+  agent_id: string
+  target: string
+  layer: string
+  severity: string
+  state: string
+  value: number
+  started_at: string
+}
+export interface Rule {
+  id: string
+  name: string
+  metric_kind: string
+  target_glob: string
+  comparator: string
+  threshold: number
+  for_seconds: number
+  layer: string
+  severity: string
+  enabled: boolean
+}
+export interface Channel {
+  id: string
+  type: string
+  config: Record<string, string>
+  enabled: boolean
+}
 
 export class AuthError extends Error {}
 
@@ -97,4 +142,14 @@ export const api = {
   setTargets: (siteID: string, targets: ProbeTarget[]) =>
     req<unknown>('PUT', `/api/v1/sites/${encodeURIComponent(siteID)}/targets`, { targets }),
   listDevices: (siteID: string) => req<Device[]>('GET', `/api/v1/sites/${encodeURIComponent(siteID)}/devices`),
+  incidents: () => req<Incident[]>('GET', '/api/v1/incidents'),
+  timeline: (id: string) => req<TimelineEntry[]>('GET', `/api/v1/incidents/${encodeURIComponent(id)}/timeline`),
+  alerts: () => req<Alert[]>('GET', '/api/v1/alerts'),
+  rules: () => req<Rule[]>('GET', '/api/v1/rules'),
+  updateRule: (id: string, body: Record<string, unknown>) =>
+    req<unknown>('PUT', `/api/v1/rules/${encodeURIComponent(id)}`, body),
+  channels: () => req<Channel[]>('GET', '/api/v1/channels'),
+  createChannel: (type: string, config: Record<string, string>) =>
+    req<{ id: string }>('POST', '/api/v1/channels', { type, config }),
+  deleteChannel: (id: string) => req<unknown>('DELETE', `/api/v1/channels/${encodeURIComponent(id)}`),
 }

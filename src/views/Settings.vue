@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
-import { api, type Quota, type EnrollmentToken } from '../api'
+import { ref, reactive, onMounted } from 'vue'
+import { api, type Quota, type EnrollmentToken, type Channel } from '../api'
 
 const quota = ref<Quota | null>(null)
 const tokens = ref<EnrollmentToken[]>([])
@@ -8,12 +8,31 @@ const note = ref('')
 const newToken = ref('')
 const error = ref('')
 
+const channels = ref<Channel[]>([])
+const webhookUrl = ref('')
+const email = reactive({ host: '', port: '587', from: '', to: '', username: '', password: '' })
+
 async function load() {
   try {
-    ;[quota.value, tokens.value] = await Promise.all([api.quota(), api.listTokens()])
+    ;[quota.value, tokens.value, channels.value] = await Promise.all([api.quota(), api.listTokens(), api.channels()])
   } catch (e) {
     error.value = String((e as Error).message || e)
   }
+}
+async function addWebhook() {
+  if (!webhookUrl.value) return
+  await api.createChannel('webhook', { url: webhookUrl.value })
+  webhookUrl.value = ''
+  await load()
+}
+async function addEmail() {
+  if (!email.host || !email.from || !email.to) return
+  await api.createChannel('email', { ...email })
+  await load()
+}
+async function removeChannel(id: string) {
+  await api.deleteChannel(id)
+  await load()
 }
 async function create() {
   error.value = ''
@@ -74,6 +93,40 @@ onMounted(load)
         </tbody>
       </table>
     </section>
+
+    <section>
+      <h3>通知渠道</h3>
+      <p class="hint">事故发生/恢复时向以下渠道推送。</p>
+
+      <div class="row">
+        <b>Webhook</b>
+        <input v-model="webhookUrl" placeholder="https://hooks.example.com/…" class="wide" />
+        <button class="primary" @click="addWebhook">添加</button>
+      </div>
+
+      <div class="row wrap">
+        <b>Email</b>
+        <input v-model="email.host" placeholder="smtp 主机" />
+        <input v-model="email.port" placeholder="端口" class="tiny" />
+        <input v-model="email.from" placeholder="发件人" />
+        <input v-model="email.to" placeholder="收件人" />
+        <input v-model="email.username" placeholder="用户名(可选)" />
+        <input v-model="email.password" type="password" placeholder="密码(可选)" />
+        <button class="primary" @click="addEmail">添加</button>
+      </div>
+
+      <table>
+        <thead><tr><th>类型</th><th>配置</th><th></th></tr></thead>
+        <tbody>
+          <tr v-if="!channels.length"><td colspan="3" class="hint">暂无渠道</td></tr>
+          <tr v-for="c in channels" :key="c.id">
+            <td>{{ c.type }}</td>
+            <td class="mono">{{ c.type === 'webhook' ? c.config.url : (c.config.from + ' → ' + c.config.to + ' @ ' + c.config.host) }}</td>
+            <td><button class="link danger" @click="removeChannel(c.id)">删除</button></td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
   </main>
 </template>
 
@@ -98,9 +151,26 @@ section {
   align-items: center;
   margin: 8px 0;
 }
+.row.wrap {
+  flex-wrap: wrap;
+}
 input {
   padding: 6px 8px;
-  min-width: 240px;
+  min-width: 140px;
+}
+input.wide {
+  min-width: 320px;
+}
+input.tiny {
+  min-width: 60px;
+  width: 60px;
+}
+.mono {
+  font-family: ui-monospace, monospace;
+  font-size: 12px;
+}
+.danger {
+  color: #c0392b;
 }
 .primary {
   background: #3b82f6;
