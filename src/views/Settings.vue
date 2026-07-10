@@ -60,172 +60,197 @@ onMounted(load)
 </script>
 
 <template>
-  <main>
-    <h2>设置</h2>
+  <main class="page">
+    <div class="page-head">
+      <h2>设置</h2>
+      <p class="sub">配额、存储、注册令牌与通知渠道。</p>
+    </div>
 
-    <section>
-      <h3>Agent 配额</h3>
-      <p v-if="quota">已用 <b>{{ quota.used }}</b> / {{ quota.max === 0 ? '不限' : quota.max }}</p>
+    <div class="stat-grid">
+      <div class="stat" v-if="quota">
+        <div class="label">Agent 配额</div>
+        <div class="value">{{ quota.used }}<span class="unit">/ {{ quota.max === 0 ? '∞' : quota.max }}</span></div>
+        <div class="foot">已注册 / 上限</div>
+      </div>
+      <template v-if="stats">
+        <div class="stat">
+          <div class="label">Series</div>
+          <div class="value">{{ stats.series }}</div>
+          <div class="foot">时序数量</div>
+        </div>
+        <div class="stat">
+          <div class="label">Raw 样本</div>
+          <div class="value">{{ stats.samples }}</div>
+          <div class="foot">短期原始点</div>
+        </div>
+        <div class="stat">
+          <div class="label">降采样</div>
+          <div class="value rollup">{{ stats.rollup_1m }}<span class="sep">·</span>{{ stats.rollup_1h }}<span
+              class="sep">·</span>{{ stats.rollup_1d }}</div>
+          <div class="foot">1 分钟 · 1 小时 · 1 天</div>
+        </div>
+      </template>
+    </div>
+    <p class="hint storage-note" v-if="stats">
+      原始样本短期保留，按 1 分钟 / 1 小时 / 1 天降采样分级长期保留 → 多年历史占用可控。
+    </p>
+
+    <section class="panel">
+      <div class="panel-head"><h3>注册令牌</h3></div>
+      <div class="panel-body">
+        <p class="hint">一次性令牌，用于新 agent 注册：<code>nettact-agent --server &lt;URL&gt; --enroll-token &lt;令牌&gt;</code></p>
+        <div class="row">
+          <input v-model="note" placeholder="备注（可选）" />
+          <button class="btn btn-primary" @click="create">生成令牌</button>
+        </div>
+        <div v-if="newToken" class="token">
+          <span class="token-label">令牌（仅显示一次）</span>
+          <code>{{ newToken }}</code>
+          <button class="link-btn" @click="copyToken">复制</button>
+        </div>
+        <p v-if="error" class="err">{{ error }}</p>
+      </div>
+      <div class="table-wrap">
+        <table class="data-table">
+          <thead>
+            <tr><th>备注</th><th>过期时间</th><th>状态</th></tr>
+          </thead>
+          <tbody>
+            <tr v-if="!tokens.length"><td colspan="3" class="hint">暂无令牌</td></tr>
+            <tr v-for="(t, i) in tokens" :key="i">
+              <td>{{ t.note || '—' }}</td>
+              <td class="hint">{{ new Date(t.expires_at).toLocaleString() }}</td>
+              <td>
+                <span class="badge" :class="tokenState(t) === '可用' ? 'up' : 'neutral'">{{ tokenState(t) }}</span>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
     </section>
 
-    <section v-if="stats">
-      <h3>存储用量（时序）</h3>
-      <p class="hint">原始样本短期保留、按 1 分钟 / 1 小时 / 1 天降采样分级长期保留 → 多年历史占用可控。</p>
-      <table>
-        <thead><tr><th>series</th><th>raw 样本</th><th>1 分钟</th><th>1 小时</th><th>1 天</th></tr></thead>
-        <tbody>
-          <tr>
-            <td>{{ stats.series }}</td><td>{{ stats.samples }}</td>
-            <td>{{ stats.rollup_1m }}</td><td>{{ stats.rollup_1h }}</td><td>{{ stats.rollup_1d }}</td>
-          </tr>
-        </tbody>
-      </table>
-    </section>
+    <section class="panel">
+      <div class="panel-head"><h3>通知渠道</h3><span class="count">{{ channels.length }}</span></div>
+      <div class="panel-body">
+        <p class="hint">事故发生 / 恢复时向以下渠道推送。</p>
 
-    <section>
-      <h3>注册令牌</h3>
-      <p class="hint">一次性令牌，用于新 agent 注册：<code>nettact-agent --server &lt;URL&gt; --enroll-token &lt;令牌&gt;</code></p>
-      <div class="row">
-        <input v-model="note" placeholder="备注（可选）" />
-        <button class="primary" @click="create">生成令牌</button>
+        <div class="row field-row">
+          <b class="ftag">Webhook</b>
+          <input v-model="webhookUrl" placeholder="https://hooks.example.com/…" class="wide" />
+          <button class="btn btn-primary" @click="addWebhook">添加</button>
+        </div>
+
+        <div class="row field-row wrap">
+          <b class="ftag">Email</b>
+          <input v-model="email.host" placeholder="smtp 主机" />
+          <input v-model="email.port" placeholder="端口" class="tiny" />
+          <input v-model="email.from" placeholder="发件人" />
+          <input v-model="email.to" placeholder="收件人" />
+          <input v-model="email.username" placeholder="用户名(可选)" />
+          <input v-model="email.password" type="password" placeholder="密码(可选)" />
+          <button class="btn btn-primary" @click="addEmail">添加</button>
+        </div>
       </div>
-      <div v-if="newToken" class="token">
-        <span>令牌（仅显示一次）：</span>
-        <code>{{ newToken }}</code>
-        <button class="link" @click="copyToken">复制</button>
+      <div class="table-wrap">
+        <table class="data-table">
+          <thead><tr><th>类型</th><th>配置</th><th></th></tr></thead>
+          <tbody>
+            <tr v-if="!channels.length"><td colspan="3" class="hint">暂无渠道</td></tr>
+            <tr v-for="c in channels" :key="c.id">
+              <td><span class="badge neutral">{{ c.type }}</span></td>
+              <td class="mono">{{ c.type === 'webhook' ? c.config.url : (c.config.from + ' → ' + c.config.to + ' @ ' + c.config.host) }}</td>
+              <td><button class="link-btn danger" @click="removeChannel(c.id)">删除</button></td>
+            </tr>
+          </tbody>
+        </table>
       </div>
-      <p v-if="error" class="err">{{ error }}</p>
-
-      <table>
-        <thead>
-          <tr><th>备注</th><th>过期时间</th><th>状态</th></tr>
-        </thead>
-        <tbody>
-          <tr v-if="!tokens.length"><td colspan="3" class="hint">暂无令牌</td></tr>
-          <tr v-for="(t, i) in tokens" :key="i">
-            <td>{{ t.note || '—' }}</td>
-            <td>{{ new Date(t.expires_at).toLocaleString() }}</td>
-            <td>{{ tokenState(t) }}</td>
-          </tr>
-        </tbody>
-      </table>
-    </section>
-
-    <section>
-      <h3>通知渠道</h3>
-      <p class="hint">事故发生/恢复时向以下渠道推送。</p>
-
-      <div class="row">
-        <b>Webhook</b>
-        <input v-model="webhookUrl" placeholder="https://hooks.example.com/…" class="wide" />
-        <button class="primary" @click="addWebhook">添加</button>
-      </div>
-
-      <div class="row wrap">
-        <b>Email</b>
-        <input v-model="email.host" placeholder="smtp 主机" />
-        <input v-model="email.port" placeholder="端口" class="tiny" />
-        <input v-model="email.from" placeholder="发件人" />
-        <input v-model="email.to" placeholder="收件人" />
-        <input v-model="email.username" placeholder="用户名(可选)" />
-        <input v-model="email.password" type="password" placeholder="密码(可选)" />
-        <button class="primary" @click="addEmail">添加</button>
-      </div>
-
-      <table>
-        <thead><tr><th>类型</th><th>配置</th><th></th></tr></thead>
-        <tbody>
-          <tr v-if="!channels.length"><td colspan="3" class="hint">暂无渠道</td></tr>
-          <tr v-for="c in channels" :key="c.id">
-            <td>{{ c.type }}</td>
-            <td class="mono">{{ c.type === 'webhook' ? c.config.url : (c.config.from + ' → ' + c.config.to + ' @ ' + c.config.host) }}</td>
-            <td><button class="link danger" @click="removeChannel(c.id)">删除</button></td>
-          </tr>
-        </tbody>
-      </table>
     </section>
   </main>
 </template>
 
 <style scoped>
-main {
-  max-width: 760px;
-  margin: 0 auto;
-  padding: 20px;
+.page {
+  max-width: 900px;
 }
-section {
-  margin-bottom: 28px;
+.panel {
+  margin-bottom: 20px;
 }
-.hint {
-  color: #888;
+.table-wrap {
+  overflow-x: auto;
+  border-top: 1px solid var(--border);
 }
-.err {
-  color: #c0392b;
+.count {
+  margin-left: auto;
+  min-width: 22px;
+  padding: 1px 9px;
+  border-radius: var(--radius-pill);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-dim);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  text-align: center;
 }
-.row {
+.panel-body {
+  padding: 16px 18px;
+}
+.panel-body .row {
+  margin: 12px 0 0;
+}
+.rollup {
+  font-size: 22px;
+}
+.rollup .sep {
+  margin: 0 7px;
+  color: var(--text-muted);
+  font-weight: 400;
+}
+.storage-note {
+  margin: -8px 0 22px;
+}
+code {
+  font-family: var(--mono);
+  font-size: 12px;
+  padding: 1px 6px;
+  border-radius: 5px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+}
+.token {
   display: flex;
   gap: 12px;
   align-items: center;
-  margin: 8px 0;
-}
-.row.wrap {
+  padding: 12px 14px;
+  margin-top: 12px;
+  background: var(--primary-soft);
+  border: 1px solid rgba(56, 189, 248, 0.28);
+  border-radius: var(--radius-sm);
   flex-wrap: wrap;
 }
+.token-label {
+  font-size: 12px;
+  color: var(--text-dim);
+}
+.token code {
+  background: rgba(0, 0, 0, 0.25);
+  word-break: break-all;
+  color: var(--primary);
+  border-color: transparent;
+}
+.field-row .ftag {
+  min-width: 62px;
+  font-size: 13px;
+  color: var(--text-dim);
+}
 input {
-  padding: 6px 8px;
   min-width: 140px;
 }
 input.wide {
   min-width: 320px;
+  flex: 1;
 }
 input.tiny {
-  min-width: 60px;
-  width: 60px;
-}
-.mono {
-  font-family: ui-monospace, monospace;
-  font-size: 12px;
-}
-.danger {
-  color: #c0392b;
-}
-.primary {
-  background: #3b82f6;
-  color: #fff;
-  border: none;
-  padding: 6px 14px;
-  border-radius: 6px;
-  cursor: pointer;
-}
-.link {
-  background: none;
-  border: none;
-  color: #3b82f6;
-  cursor: pointer;
-}
-.token {
-  display: flex;
-  gap: 10px;
-  align-items: center;
-  padding: 10px;
-  margin: 8px 0;
-  background: rgba(59, 130, 246, 0.08);
-  border-radius: 6px;
-  flex-wrap: wrap;
-}
-.token code {
-  font-family: ui-monospace, monospace;
-  word-break: break-all;
-}
-table {
-  border-collapse: collapse;
-  width: 100%;
-  margin-top: 12px;
-}
-th,
-td {
-  border: 1px solid rgba(128, 128, 128, 0.3);
-  padding: 6px 10px;
-  text-align: left;
+  min-width: 64px;
+  width: 64px;
 }
 </style>

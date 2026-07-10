@@ -35,86 +35,81 @@ onMounted(load)
 </script>
 
 <template>
-  <main>
-    <h2>告警规则</h2>
-    <p class="hint">阈值规则驱动 §4 分层诊断（网关 / WAN / DNS / 服务）。修改后即时生效。</p>
+  <main class="page">
+    <div class="page-head">
+      <h2>告警规则</h2>
+      <p class="sub">阈值规则驱动 §4 分层诊断（网关 / WAN / DNS / 服务）。修改后即时生效。</p>
+    </div>
     <p v-if="error" class="err">{{ error }}</p>
 
-    <table>
-      <thead>
-        <tr>
-          <th>规则</th><th>指标</th><th>目标</th><th>比较</th><th>阈值</th><th>持续(s)</th><th>层</th><th>启用</th><th></th>
-        </tr>
-      </thead>
-      <tbody>
-        <tr v-if="!rules.length"><td colspan="9" class="hint">无规则</td></tr>
-        <tr v-for="r in rules" :key="r.id">
-          <td>{{ r.name }}</td>
-          <td class="mono">{{ r.metric_kind }}</td>
-          <td class="mono">{{ r.target_glob }}</td>
-          <td>
-            <select v-model="r.comparator">
-              <option value="gt">&gt;</option><option value="gte">&ge;</option>
-              <option value="lt">&lt;</option><option value="lte">&le;</option><option value="eq">=</option>
-            </select>
-          </td>
-          <td><input type="number" step="any" v-model="r.threshold" class="num" /></td>
-          <td><input type="number" v-model="r.for_seconds" class="num sm" /></td>
-          <td>{{ layerLabel(r.layer) }}</td>
-          <td class="center"><input type="checkbox" :checked="r.enabled" @change="toggle(r)" /></td>
-          <td>
-            <button class="link" @click="saveThreshold(r)">保存</button>
-            <span v-if="savedId === r.id" class="ok">✓</span>
-          </td>
-        </tr>
-      </tbody>
-    </table>
+    <section class="panel">
+      <div class="panel-head"><h3>规则</h3><span class="count">{{ rules.length }}</span></div>
+      <div class="table-wrap">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>规则</th><th>指标</th><th>目标</th><th>比较</th><th>阈值</th><th>持续(s)</th><th>层</th>
+              <th class="center">启用</th><th></th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-if="!rules.length"><td colspan="9" class="hint">无规则</td></tr>
+            <tr v-for="r in rules" :key="r.id">
+              <td>{{ r.name }}</td>
+              <td class="mono">{{ r.metric_kind }}</td>
+              <td class="mono">{{ r.target_glob }}</td>
+              <td>
+                <select v-model="r.comparator" class="cmp">
+                  <option value="gt">&gt;</option><option value="gte">&ge;</option>
+                  <option value="lt">&lt;</option><option value="lte">&le;</option><option value="eq">=</option>
+                </select>
+              </td>
+              <td><input type="number" step="any" v-model="r.threshold" class="num" /></td>
+              <td><input type="number" v-model="r.for_seconds" class="num sm" /></td>
+              <td><span class="badge neutral">{{ layerLabel(r.layer) }}</span></td>
+              <td class="center"><input type="checkbox" :checked="r.enabled" @change="toggle(r)" /></td>
+              <td class="nowrap">
+                <button class="link-btn" @click="saveThreshold(r)">保存</button>
+                <span v-if="savedId === r.id" class="ok">✓</span>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
   </main>
 </template>
 
 <style scoped>
-main {
-  max-width: 960px;
-  margin: 0 auto;
-  padding: 20px;
+.table-wrap {
+  overflow-x: auto;
 }
-.hint {
-  color: #888;
-}
-.err {
-  color: #c0392b;
-}
-.mono {
-  font-family: ui-monospace, monospace;
+.count {
+  margin-left: auto;
+  min-width: 22px;
+  padding: 1px 9px;
+  border-radius: var(--radius-pill);
   font-size: 12px;
-}
-table {
-  border-collapse: collapse;
-  width: 100%;
-}
-th,
-td {
-  border: 1px solid rgba(128, 128, 128, 0.3);
-  padding: 5px 10px;
-  text-align: left;
-}
-.center {
+  font-weight: 600;
+  color: var(--text-dim);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
   text-align: center;
 }
+.cmp {
+  padding: 6px 8px;
+}
 .num {
-  width: 72px;
+  width: 84px;
+  padding: 6px 8px;
 }
 .num.sm {
-  width: 56px;
+  width: 68px;
 }
-.link {
-  background: none;
-  border: none;
-  color: #3b82f6;
-  cursor: pointer;
+.nowrap {
+  white-space: nowrap;
 }
 .ok {
-  color: #2e7d32;
-  margin-left: 4px;
+  margin-left: 6px;
 }
 </style>

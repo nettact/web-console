@@ -7,13 +7,11 @@ const SITE = 'site_default'
 const agents = ref<Agent[]>([])
 const selected = ref<string>('')
 const quota = ref<Quota | null>(null)
+// Two range series feed the trend charts; everything else on this page only
+// needs the latest value, so it comes from a single /latest snapshot.
 const rtt = ref<Sample[]>([])
 const loss = ref<Sample[]>([])
-const publicRtt = ref<Sample[]>([])
-const ifaces = ref<Sample[]>([])
-const dnsMs = ref<Sample[]>([])
-const httpStatus = ref<Sample[]>([])
-const httpLat = ref<Sample[]>([])
+const snapshot = ref<Sample[]>([])
 const devices = ref<Device[]>([])
 const error = ref('')
 let timer: number | undefined
@@ -31,23 +29,17 @@ async function loadMetrics() {
   if (!selected.value) return
   try {
     const id = selected.value
-    const [r, l, pr, i, dm, hs, hl, dv] = await Promise.all([
+    // Gateway RTT/loss keep a short range for the trend charts; the snapshot
+    // covers every other panel with one round trip instead of five.
+    const [r, l, snap, dv] = await Promise.all([
       api.metrics(id, 'probe.icmp.rtt_ms', 'gateway'),
       api.metrics(id, 'probe.icmp.loss_pct', 'gateway'),
-      api.metrics(id, 'probe.icmp.rtt_ms', undefined, 400),
-      api.metrics(id, 'iface.up', undefined, 200),
-      api.metrics(id, 'probe.dns.resolve_ms', undefined, 400),
-      api.metrics(id, 'probe.http.status', undefined, 400),
-      api.metrics(id, 'probe.http.latency_ms', undefined, 400),
+      api.latest(id),
       api.listDevices(SITE),
     ])
     rtt.value = r
     loss.value = l
-    publicRtt.value = pr
-    ifaces.value = i
-    dnsMs.value = dm
-    httpStatus.value = hs
-    httpLat.value = hl
+    snapshot.value = snap
     devices.value = dv
     error.value = ''
   } catch (e) {
@@ -55,28 +47,47 @@ async function loadMetrics() {
   }
 }
 
-function latestByTarget(samples: Sample[], excludeGateway = false): Map<string, Sample> {
-  const m = new Map<string, Sample>()
-  for (const s of samples) {
-    if (excludeGateway && s.target === 'gateway') continue
-    m.set(s.target, s)
-  }
-  return m
-}
+// The snapshot holds one point per series, so panels just filter it by kind.
+const byKind = (kind: string) => snapshot.value.filter((s) => s.kind === kind)
+const byTarget = (kind: string) => new Map(byKind(kind).map((s) => [s.target, s]))
+
 function publicTargets(): Sample[] {
-  return [...latestByTarget(publicRtt.value, true).values()].sort((a, b) => a.target.localeCompare(b.target))
+  return byKind('probe.icmp.rtt_ms')
+    .filter((s) => s.target !== 'gateway')
+    .sort((a, b) => a.target.localeCompare(b.target))
 }
 function dnsTargets(): Sample[] {
-  return [...latestByTarget(dnsMs.value).values()].sort((a, b) => a.target.localeCompare(b.target))
+  return byKind('probe.dns.resolve_ms').sort((a, b) => a.target.localeCompare(b.target))
 }
 function httpRows() {
-  const st = latestByTarget(httpStatus.value)
-  const lat = latestByTarget(httpLat.value)
+  const st = byTarget('probe.http.status')
+  const lat = byTarget('probe.http.latency_ms')
   return [...st.keys()].sort().map((url) => ({ url, status: st.get(url)!.value, lat: lat.get(url)?.value ?? 0 }))
 }
 function latestIfaces(): Sample[] {
-  return [...latestByTarget(ifaces.value).values()].sort((a, b) => a.target.localeCompare(b.target))
+  return byKind('iface.up').sort((a, b) => a.target.localeCompare(b.target))
 }
+
+// --- headline KPIs (latest gateway sample by timestamp) ---
+function latestVal(samples: Sample[]): number | null {
+  let best: Sample | null = null
+  for (const s of samples) {
+    if (!best || new Date(s.ts).getTime() > new Date(best.ts).getTime()) best = s
+  }
+  return best ? best.value : null
+}
+function rttClass(v: number | null): string {
+  if (v == null) return ''
+  return v < 50 ? 'is-good' : v < 150 ? 'is-warn' : 'is-bad'
+}
+function lossClass(v: number | null): string {
+  if (v == null) return ''
+  return v === 0 ? 'is-good' : v < 2 ? 'is-warn' : 'is-bad'
+}
+function onlineCount(): number {
+  return agents.value.filter((a) => a.status === 'online').length
+}
+const fmt = (v: number | null, digits = 0) => (v == null ? '—' : v.toFixed(digits))
 
 onMounted(async () => {
   await loadAgents()
@@ -89,153 +100,252 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <main>
-    <header class="head">
+  <main class="page">
+    <div class="page-head">
       <h2>总览</h2>
-      <span v-if="quota" class="quota">Agent 配额 {{ quota.used }} / {{ quota.max === 0 ? '∞' : quota.max }}</span>
-    </header>
-
-    <p v-if="error" class="err">{{ error }}</p>
-
-    <div class="row">
-      <label>
-        Agent：
+      <span v-if="quota" class="pill">
+        <span class="dot live"></span>
+        Agent 配额 {{ quota.used }} / {{ quota.max === 0 ? '∞' : quota.max }}
+      </span>
+      <span class="spacer"></span>
+      <div class="picker" v-if="agents.length">
+        <label>Agent</label>
         <select v-model="selected" @change="loadMetrics">
           <option v-for="a in agents" :key="a.id" :value="a.id">
             {{ a.hostname || a.id }} ({{ a.platform }}) — {{ a.status }}
           </option>
         </select>
-      </label>
-      <button @click="loadMetrics">刷新</button>
+        <button class="btn" @click="loadMetrics">刷新</button>
+      </div>
     </div>
 
-    <p v-if="!agents.length" class="hint">暂无 agent。到「设置」生成注册令牌，再用其启动 nettact-agent。</p>
+    <p v-if="error" class="err">{{ error }}</p>
+
+    <div v-if="!agents.length" class="card empty">
+      <div class="empty-ico">
+        <svg viewBox="0 0 24 24" width="30" height="30" fill="none" stroke="currentColor" stroke-width="1.7"
+          stroke-linecap="round" stroke-linejoin="round">
+          <rect x="2" y="3" width="20" height="14" rx="2" />
+          <path d="M8 21h8M12 17v4" />
+        </svg>
+      </div>
+      <h3>暂无 agent</h3>
+      <p class="hint">到「设置」生成注册令牌，再用其启动 nettact-agent 即可上线。</p>
+    </div>
 
     <template v-else>
-      <div class="card"><MetricChart title="网关 RTT (ms)" unit="ms" :samples="rtt" /></div>
-      <div class="card"><MetricChart title="网关丢包率 (%)" unit="%" :samples="loss" /></div>
-
-      <div class="grid">
-        <div>
-          <h3>公网可达性 (ICMP)</h3>
-          <table>
-            <thead><tr><th>目标</th><th>RTT</th></tr></thead>
-            <tbody>
-              <tr v-if="!publicTargets().length"><td colspan="2" class="hint">无数据</td></tr>
-              <tr v-for="s in publicTargets()" :key="s.target"><td>{{ s.target }}</td><td>{{ s.value.toFixed(0) }} ms</td></tr>
-            </tbody>
-          </table>
+      <!-- KPI tiles -->
+      <div class="stat-grid">
+        <div class="stat" :class="rttClass(latestVal(rtt))">
+          <div class="label">网关 RTT</div>
+          <div class="value">{{ fmt(latestVal(rtt)) }}<span class="unit">ms</span></div>
+          <div class="foot">默认网关往返时延</div>
         </div>
-        <div>
-          <h3>DNS 解析</h3>
-          <table>
-            <thead><tr><th>域名</th><th>耗时</th></tr></thead>
-            <tbody>
-              <tr v-if="!dnsTargets().length"><td colspan="2" class="hint">无数据（去监控目标添加 DNS）</td></tr>
-              <tr v-for="s in dnsTargets()" :key="s.target"><td>{{ s.target }}</td><td>{{ s.value.toFixed(0) }} ms</td></tr>
-            </tbody>
-          </table>
+        <div class="stat" :class="lossClass(latestVal(loss))">
+          <div class="label">网关丢包率</div>
+          <div class="value">{{ fmt(latestVal(loss), 1) }}<span class="unit">%</span></div>
+          <div class="foot">ICMP 探测丢包</div>
+        </div>
+        <div class="stat is-good">
+          <div class="label">在线 Agent</div>
+          <div class="value">{{ onlineCount() }}<span class="unit">/ {{ agents.length }}</span></div>
+          <div class="foot">已连接采集端</div>
+        </div>
+        <div class="stat">
+          <div class="label">局域网设备</div>
+          <div class="value">{{ devices.length }}</div>
+          <div class="foot">ARP 发现主机</div>
         </div>
       </div>
 
-      <h3>HTTP/HTTPS</h3>
-      <table>
-        <thead><tr><th>URL</th><th>状态码</th><th>耗时</th></tr></thead>
-        <tbody>
-          <tr v-if="!httpRows().length"><td colspan="3" class="hint">无数据（去监控目标添加 HTTP）</td></tr>
-          <tr v-for="h in httpRows()" :key="h.url">
-            <td>{{ h.url }}</td>
-            <td :class="h.status >= 200 && h.status < 400 ? 'up' : 'down'">{{ h.status }}</td>
-            <td>{{ h.lat.toFixed(0) }} ms</td>
-          </tr>
-        </tbody>
-      </table>
+      <!-- charts -->
+      <div class="chart-grid">
+        <div class="card chart-card"><MetricChart title="网关 RTT (ms)" unit="ms" :samples="rtt" /></div>
+        <div class="card chart-card">
+          <MetricChart title="网关丢包率 (%)" unit="%" :samples="loss" color="#fbbf24" />
+        </div>
+      </div>
 
-      <div class="grid">
-        <div>
-          <h3>接口状态</h3>
-          <table>
-            <thead><tr><th>接口</th><th>状态</th></tr></thead>
+      <!-- reachability + dns -->
+      <div class="grid-2">
+        <section class="panel">
+          <div class="panel-head">
+            <h3>公网可达性 (ICMP)</h3>
+            <span class="count">{{ publicTargets().length }}</span>
+          </div>
+          <div class="table-wrap">
+            <table class="data-table">
+              <thead><tr><th>目标</th><th>RTT</th></tr></thead>
+              <tbody>
+                <tr v-if="!publicTargets().length"><td colspan="2" class="hint">无数据</td></tr>
+                <tr v-for="s in publicTargets()" :key="s.target">
+                  <td class="mono">{{ s.target }}</td>
+                  <td>{{ s.value.toFixed(0) }} ms</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <section class="panel">
+          <div class="panel-head">
+            <h3>DNS 解析</h3>
+            <span class="count">{{ dnsTargets().length }}</span>
+          </div>
+          <div class="table-wrap">
+            <table class="data-table">
+              <thead><tr><th>域名</th><th>耗时</th></tr></thead>
+              <tbody>
+                <tr v-if="!dnsTargets().length"><td colspan="2" class="hint">无数据（去监控目标添加 DNS）</td></tr>
+                <tr v-for="s in dnsTargets()" :key="s.target">
+                  <td class="mono">{{ s.target }}</td>
+                  <td>{{ s.value.toFixed(0) }} ms</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+      </div>
+
+      <!-- http -->
+      <section class="panel">
+        <div class="panel-head">
+          <h3>HTTP / HTTPS</h3>
+          <span class="count">{{ httpRows().length }}</span>
+        </div>
+        <div class="table-wrap">
+          <table class="data-table">
+            <thead><tr><th>URL</th><th>状态码</th><th>耗时</th></tr></thead>
             <tbody>
-              <tr v-for="s in latestIfaces()" :key="s.target">
-                <td>{{ s.target }}</td>
-                <td :class="s.value === 1 ? 'up' : 'down'">{{ s.value === 1 ? 'UP' : 'DOWN' }}</td>
+              <tr v-if="!httpRows().length"><td colspan="3" class="hint">无数据（去监控目标添加 HTTP）</td></tr>
+              <tr v-for="h in httpRows()" :key="h.url">
+                <td class="mono">{{ h.url }}</td>
+                <td>
+                  <span class="badge" :class="h.status >= 200 && h.status < 400 ? 'up' : 'down'">{{ h.status }}</span>
+                </td>
+                <td>{{ h.lat.toFixed(0) }} ms</td>
               </tr>
             </tbody>
           </table>
         </div>
-        <div>
-          <h3>局域网设备（ARP 发现）</h3>
-          <table>
-            <thead><tr><th>IP</th><th>MAC</th></tr></thead>
-            <tbody>
-              <tr v-if="!devices.length"><td colspan="2" class="hint">尚未发现设备</td></tr>
-              <tr v-for="d in devices" :key="d.mac"><td>{{ d.ip }}</td><td>{{ d.mac }}</td></tr>
-            </tbody>
-          </table>
-        </div>
+      </section>
+
+      <!-- ifaces + lan devices -->
+      <div class="grid-2">
+        <section class="panel">
+          <div class="panel-head"><h3>接口状态</h3><span class="count">{{ latestIfaces().length }}</span></div>
+          <div class="table-wrap">
+            <table class="data-table">
+              <thead><tr><th>接口</th><th>状态</th></tr></thead>
+              <tbody>
+                <tr v-if="!latestIfaces().length"><td colspan="2" class="hint">无数据</td></tr>
+                <tr v-for="s in latestIfaces()" :key="s.target">
+                  <td class="mono">{{ s.target }}</td>
+                  <td>
+                    <span class="badge" :class="s.value === 1 ? 'up' : 'down'">
+                      <span class="dot" :class="s.value === 1 ? 'up' : 'down'"></span>
+                      {{ s.value === 1 ? 'UP' : 'DOWN' }}
+                    </span>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <section class="panel">
+          <div class="panel-head"><h3>局域网设备（ARP 发现）</h3><span class="count">{{ devices.length }}</span></div>
+          <div class="table-wrap">
+            <table class="data-table">
+              <thead><tr><th>IP</th><th>MAC</th></tr></thead>
+              <tbody>
+                <tr v-if="!devices.length"><td colspan="2" class="hint">尚未发现设备</td></tr>
+                <tr v-for="d in devices" :key="d.mac">
+                  <td class="mono">{{ d.ip }}</td>
+                  <td class="mono">{{ d.mac }}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
       </div>
     </template>
   </main>
 </template>
 
 <style scoped>
-main {
-  max-width: 960px;
-  margin: 0 auto;
-  padding: 20px;
-}
-.head {
+.picker {
   display: flex;
-  align-items: baseline;
-  gap: 16px;
-}
-.quota {
-  font-size: 13px;
-  padding: 2px 10px;
-  border: 1px solid rgba(128, 128, 128, 0.4);
-  border-radius: 999px;
-}
-.row {
-  display: flex;
-  gap: 12px;
   align-items: center;
-  margin: 12px 0;
+  gap: 10px;
 }
-.grid {
+.picker label {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-muted);
+}
+.picker select {
+  max-width: 320px;
+}
+
+.chart-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 24px;
+  gap: 18px;
+  margin-bottom: 20px;
 }
-.err {
-  color: #c0392b;
+.chart-card {
+  padding: 8px 6px 4px;
 }
-.hint {
-  color: #888;
+.grid-2 {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 18px;
+  margin-bottom: 20px;
 }
-.card {
-  border: 1px solid rgba(128, 128, 128, 0.25);
-  border-radius: 8px;
-  padding: 8px;
-  margin: 12px 0;
+.table-wrap {
+  overflow-x: auto;
 }
-table {
-  border-collapse: collapse;
-  margin-bottom: 8px;
-  width: 100%;
-}
-th,
-td {
-  border: 1px solid rgba(128, 128, 128, 0.3);
-  padding: 4px 12px;
-  text-align: left;
-}
-.up {
-  color: #2e7d32;
+.count {
+  margin-left: auto;
+  min-width: 22px;
+  padding: 1px 9px;
+  border-radius: var(--radius-pill);
+  font-size: 12px;
   font-weight: 600;
+  color: var(--text-dim);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  text-align: center;
 }
-.down {
-  color: #c0392b;
-  font-weight: 600;
+
+.empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: 8px;
+  padding: 54px 20px;
+}
+.empty-ico {
+  display: grid;
+  place-items: center;
+  width: 64px;
+  height: 64px;
+  border-radius: 18px;
+  color: var(--primary);
+  background: var(--primary-soft);
+  margin-bottom: 6px;
+}
+.empty h3 {
+  font-size: 17px;
+}
+
+@media (max-width: 860px) {
+  .chart-grid,
+  .grid-2 {
+    grid-template-columns: 1fr;
+  }
 }
 </style>

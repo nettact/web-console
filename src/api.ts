@@ -107,6 +107,13 @@ export interface StorageStats {
   rollup_1d: number
 }
 
+export interface SeriesInfo {
+  kind: string
+  target: string
+  layer: string
+  unit: string
+}
+
 export class AuthError extends Error {}
 
 async function req<T>(method: string, url: string, body?: unknown): Promise<T> {
@@ -139,11 +146,21 @@ export const api = {
   stats: () => req<StorageStats>('GET', '/api/v1/stats'),
   sites: () => req<Site[]>('GET', '/api/v1/sites'),
   agents: () => req<Agent[]>('GET', '/api/v1/agents'),
-  metrics: (id: string, kind: string, target?: string, limit = 200) => {
+  metrics: (id: string, kind: string, target?: string, limit = 200, sinceSeconds?: number) => {
     const p = new URLSearchParams({ kind, limit: String(limit) })
     if (target) p.set('target', target)
+    if (sinceSeconds) p.set('since_seconds', String(sinceSeconds))
     return req<Sample[]>('GET', `/api/v1/agents/${encodeURIComponent(id)}/metrics?${p.toString()}`)
   },
+  // Latest value per series (one point per target) — cheap "current status".
+  latest: (id: string, sinceSeconds?: number) => {
+    const p = new URLSearchParams()
+    if (sinceSeconds) p.set('since_seconds', String(sinceSeconds))
+    const qs = p.toString()
+    return req<Sample[]>('GET', `/api/v1/agents/${encodeURIComponent(id)}/latest${qs ? '?' + qs : ''}`)
+  },
+  // All series recorded for an agent — populates the history browser selector.
+  listSeries: (id: string) => req<SeriesInfo[]>('GET', `/api/v1/agents/${encodeURIComponent(id)}/series`),
   listTokens: () => req<EnrollmentToken[]>('GET', '/api/v1/enrollment-tokens'),
   createToken: (note: string) =>
     req<{ token: string; expires_in_minutes: number }>('POST', '/api/v1/enrollment-tokens', { note }),

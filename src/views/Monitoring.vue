@@ -60,113 +60,115 @@ onMounted(load)
 </script>
 
 <template>
-  <main>
-    <h2>监控目标</h2>
-    <p class="hint">这些目标会自动下发到该站点的所有 agent（agent 端无需任何配置）。保存后配置版本 +1，agent 下次上报时应用。</p>
+  <main class="page">
+    <div class="page-head">
+      <h2>监控目标</h2>
+      <p class="sub">这些目标会自动下发到该站点的所有 agent（agent 端无需任何配置）。保存后配置版本 +1，agent 下次上报时应用。</p>
+    </div>
     <p v-if="error" class="err">{{ error }}</p>
 
-    <table>
-      <thead>
-        <tr><th>类型</th><th>目标</th><th>频率档</th><th>启用</th><th></th></tr>
-      </thead>
-      <tbody>
-        <tr v-for="(t, i) in targets" :key="i">
-          <td>
-            <select v-model="t.kind">
-              <option value="icmp">ICMP</option>
-              <option value="dns">DNS</option>
-              <option value="http">HTTP</option>
-            </select>
-          </td>
-          <td><input v-model="t.target" :placeholder="placeholderFor(t.kind)" /></td>
-          <td>
-            <select v-model="t.tier"><option value="base">base</option><option value="regular">regular</option></select>
-          </td>
-          <td class="center"><input type="checkbox" v-model="t.enabled" /></td>
-          <td><button class="link" @click="removeRow(i)">删除</button></td>
-        </tr>
-        <tr v-if="!targets.length"><td colspan="5" class="hint">暂无目标，点击下方添加。</td></tr>
-      </tbody>
-    </table>
+    <section class="panel">
+      <div class="panel-head"><h3>探测目标</h3><span class="count">{{ targets.length }}</span></div>
+      <div class="table-wrap">
+        <table class="data-table">
+          <thead>
+            <tr><th>类型</th><th>目标</th><th>频率档</th><th class="center">启用</th><th></th></tr>
+          </thead>
+          <tbody>
+            <tr v-for="(t, i) in targets" :key="i">
+              <td>
+                <select v-model="t.kind">
+                  <option value="icmp">ICMP</option>
+                  <option value="dns">DNS</option>
+                  <option value="http">HTTP</option>
+                </select>
+              </td>
+              <td><input class="target-in" v-model="t.target" :placeholder="placeholderFor(t.kind)" /></td>
+              <td>
+                <select v-model="t.tier">
+                  <option value="base">base</option>
+                  <option value="regular">regular</option>
+                </select>
+              </td>
+              <td class="center"><input type="checkbox" v-model="t.enabled" /></td>
+              <td><button class="link-btn danger" @click="removeRow(i)">删除</button></td>
+            </tr>
+            <tr v-if="!targets.length"><td colspan="5" class="hint">暂无目标，点击下方添加。</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="panel-foot">
+        <button class="btn" @click="addRow">+ 添加目标</button>
+        <button class="btn btn-primary" :disabled="busy" @click="save">{{ busy ? '保存中…' : '保存并下发' }}</button>
+        <span v-if="saved" class="ok">✓ 已保存，已推送到 agent</span>
+      </div>
+    </section>
 
-    <div class="row">
-      <button @click="addRow">+ 添加目标</button>
-      <button class="primary" :disabled="busy" @click="save">{{ busy ? '保存中…' : '保存并下发' }}</button>
-      <span v-if="saved" class="ok">已保存，已推送到 agent</span>
-    </div>
-
-    <h3 class="danger-h">清除历史数据（按目标回收空间）</h3>
-    <p class="hint">删除某个目标的全部历史样本与聚合，立即释放空间（不影响正在下发的监控配置）。</p>
-    <div class="row">
-      <input v-model="purgeTgt" placeholder="目标，如 192.0.2.1 / example.com" />
-      <button class="danger-btn" @click="purge">清除该目标历史</button>
-      <span v-if="purgeMsg" class="ok">{{ purgeMsg }}</span>
-    </div>
+    <section class="panel danger-zone">
+      <div class="panel-head">
+        <h3>清除历史数据</h3>
+        <span class="tag-danger">危险操作</span>
+      </div>
+      <div class="panel-body">
+        <p class="hint">删除某个目标的全部历史样本与聚合，立即释放空间（不影响正在下发的监控配置）。此操作不可恢复。</p>
+        <div class="row">
+          <input v-model="purgeTgt" placeholder="目标，如 192.0.2.1 / example.com" class="purge-in" />
+          <button class="btn btn-danger" @click="purge">清除该目标历史</button>
+          <span v-if="purgeMsg" class="ok">{{ purgeMsg }}</span>
+        </div>
+      </div>
+    </section>
   </main>
 </template>
 
 <style scoped>
-main {
-  max-width: 760px;
-  margin: 0 auto;
-  padding: 20px;
+.page {
+  max-width: 860px;
 }
-.hint {
-  color: #888;
+.panel {
+  margin-bottom: 20px;
 }
-.err {
-  color: #c0392b;
+.table-wrap {
+  overflow-x: auto;
 }
-table {
-  border-collapse: collapse;
-  width: 100%;
-  margin: 12px 0;
-}
-th,
-td {
-  border: 1px solid rgba(128, 128, 128, 0.3);
-  padding: 6px 10px;
-  text-align: left;
-}
-.center {
+.count {
+  margin-left: auto;
+  min-width: 22px;
+  padding: 1px 9px;
+  border-radius: var(--radius-pill);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-dim);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
   text-align: center;
 }
-input,
-select {
-  padding: 4px 6px;
+.target-in {
+  width: 100%;
+  min-width: 180px;
 }
-.row {
+.purge-in {
+  min-width: 280px;
+  flex: 1;
+}
+.panel-foot {
   display: flex;
-  gap: 12px;
   align-items: center;
+  gap: 12px;
+  padding: 14px 18px;
+  border-top: 1px solid var(--border);
 }
-.primary {
-  background: #3b82f6;
-  color: #fff;
-  border: none;
-  padding: 6px 14px;
-  border-radius: 6px;
-  cursor: pointer;
+.danger-zone {
+  border-color: rgba(248, 113, 113, 0.28);
 }
-.link {
-  background: none;
-  border: none;
-  color: #c0392b;
-  cursor: pointer;
-}
-.ok {
-  color: #2e7d32;
-}
-.danger-h {
-  margin-top: 28px;
-  color: #c0392b;
-}
-.danger-btn {
-  background: #c0392b;
-  color: #fff;
-  border: none;
-  padding: 6px 14px;
-  border-radius: 6px;
-  cursor: pointer;
+.tag-danger {
+  margin-left: auto;
+  padding: 2px 10px;
+  border-radius: var(--radius-pill);
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--danger);
+  background: var(--danger-soft);
+  border: 1px solid rgba(248, 113, 113, 0.3);
 }
 </style>

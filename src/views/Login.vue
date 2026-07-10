@@ -25,11 +25,36 @@ async function submit() {
 
 <template>
   <div class="wrap">
-    <form class="card" @submit.prevent="submit">
-      <h1>NetTact 登录</h1>
-      <input v-model="username" placeholder="用户名" autocomplete="username" />
-      <input v-model="password" type="password" placeholder="密码" autocomplete="current-password" />
-      <button :disabled="busy" type="submit">{{ busy ? '登录中…' : '登录' }}</button>
+    <div class="glow"></div>
+    <form class="card login" @submit.prevent="submit">
+      <div class="brand">
+        <span class="mark">
+          <svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="2.2"
+            stroke-linecap="round" stroke-linejoin="round">
+            <path d="M3 12h3l2.5 7 5-15L18 12h3" />
+          </svg>
+        </span>
+        <div class="brand-text">
+          <b>NetTact</b>
+          <small>网络监控控制台</small>
+        </div>
+      </div>
+
+      <h1>登录到控制台</h1>
+      <p class="lead">输入凭据以访问监控与告警数据</p>
+
+      <label class="field">
+        <span>用户名</span>
+        <input v-model="username" placeholder="用户名" autocomplete="username" />
+      </label>
+      <label class="field">
+        <span>密码</span>
+        <input v-model="password" type="password" placeholder="••••••••" autocomplete="current-password" />
+      </label>
+
+      <button class="btn btn-primary submit" :disabled="busy" type="submit">
+        {{ busy ? '登录中…' : '登录' }}
+      </button>
       <p v-if="error" class="err">{{ error }}</p>
     </form>
   </div>
@@ -37,39 +62,85 @@ async function submit() {
 
 <style scoped>
 .wrap {
-  min-height: 80vh;
+  position: relative;
+  min-height: 100vh;
   display: grid;
   place-items: center;
+  padding: 24px;
+  overflow: hidden;
 }
-.card {
+.glow {
+  position: absolute;
+  width: 520px;
+  height: 520px;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(56, 189, 248, 0.22), transparent 60%);
+  filter: blur(20px);
+  top: -120px;
+  pointer-events: none;
+}
+.login {
+  position: relative;
   display: flex;
   flex-direction: column;
+  gap: 14px;
+  width: 360px;
+  max-width: 100%;
+  padding: 32px 30px 30px;
+}
+.brand {
+  display: flex;
+  align-items: center;
   gap: 12px;
-  width: 280px;
-  padding: 28px;
-  border: 1px solid rgba(128, 128, 128, 0.25);
-  border-radius: 10px;
+  margin-bottom: 6px;
+}
+.mark {
+  display: grid;
+  place-items: center;
+  width: 46px;
+  height: 46px;
+  border-radius: 13px;
+  color: #04121c;
+  background: linear-gradient(150deg, #7dd3fc, var(--primary-strong));
+  box-shadow: 0 10px 26px -8px var(--primary-glow);
+}
+.brand-text {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.25;
+}
+.brand-text b {
+  font-size: 18px;
+}
+.brand-text small {
+  font-size: 12px;
+  color: var(--text-muted);
 }
 h1 {
-  font-size: 18px;
-  margin: 0 0 8px;
+  font-size: 20px;
+  margin-top: 8px;
 }
-input,
-button {
-  padding: 8px 10px;
-  font-size: 14px;
-  border-radius: 6px;
-  border: 1px solid rgba(128, 128, 128, 0.4);
+.lead {
+  margin: -8px 0 6px;
+  color: var(--text-dim);
+  font-size: 13px;
 }
-button {
-  background: #3b82f6;
-  color: #fff;
-  border: none;
-  cursor: pointer;
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.field span {
+  font-size: 12px;
+  color: var(--text-dim);
+  font-weight: 550;
+}
+.submit {
+  margin-top: 6px;
+  padding: 11px;
+  font-size: 14.5px;
 }
 .err {
-  color: #c0392b;
-  margin: 0;
-  font-size: 13px;
+  margin: 2px 0 0;
 }
 </style>
