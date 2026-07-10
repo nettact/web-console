@@ -41,6 +41,21 @@ async function save() {
     busy.value = false
   }
 }
+
+const purgeTgt = ref('')
+const purgeMsg = ref('')
+async function purge() {
+  if (!purgeTgt.value) return
+  if (!confirm(`确认删除目标「${purgeTgt.value}」的全部历史数据（不可恢复）？`)) return
+  purgeMsg.value = ''
+  try {
+    const r = await api.purgeTarget(SITE, purgeTgt.value)
+    purgeMsg.value = `已清除 ${r.purged_series} 条 series 的历史`
+    purgeTgt.value = ''
+  } catch (e) {
+    error.value = String((e as Error).message || e)
+  }
+}
 onMounted(load)
 </script>
 
@@ -78,6 +93,14 @@ onMounted(load)
       <button @click="addRow">+ 添加目标</button>
       <button class="primary" :disabled="busy" @click="save">{{ busy ? '保存中…' : '保存并下发' }}</button>
       <span v-if="saved" class="ok">已保存，已推送到 agent</span>
+    </div>
+
+    <h3 class="danger-h">清除历史数据（按目标回收空间）</h3>
+    <p class="hint">删除某个目标的全部历史样本与聚合，立即释放空间（不影响正在下发的监控配置）。</p>
+    <div class="row">
+      <input v-model="purgeTgt" placeholder="目标，如 192.0.2.1 / example.com" />
+      <button class="danger-btn" @click="purge">清除该目标历史</button>
+      <span v-if="purgeMsg" class="ok">{{ purgeMsg }}</span>
     </div>
   </main>
 </template>
@@ -133,5 +156,17 @@ select {
 }
 .ok {
   color: #2e7d32;
+}
+.danger-h {
+  margin-top: 28px;
+  color: #c0392b;
+}
+.danger-btn {
+  background: #c0392b;
+  color: #fff;
+  border: none;
+  padding: 6px 14px;
+  border-radius: 6px;
+  cursor: pointer;
 }
 </style>

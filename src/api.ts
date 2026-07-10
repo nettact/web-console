@@ -99,6 +99,14 @@ export interface Channel {
   enabled: boolean
 }
 
+export interface StorageStats {
+  series: number
+  samples: number
+  rollup_1m: number
+  rollup_1h: number
+  rollup_1d: number
+}
+
 export class AuthError extends Error {}
 
 async function req<T>(method: string, url: string, body?: unknown): Promise<T> {
@@ -128,6 +136,7 @@ export const api = {
   logout: () => req<unknown>('POST', '/api/v1/auth/logout'),
   me: () => req<User>('GET', '/api/v1/auth/me'),
   quota: () => req<Quota>('GET', '/api/v1/quota'),
+  stats: () => req<StorageStats>('GET', '/api/v1/stats'),
   sites: () => req<Site[]>('GET', '/api/v1/sites'),
   agents: () => req<Agent[]>('GET', '/api/v1/agents'),
   metrics: (id: string, kind: string, target?: string, limit = 200) => {
@@ -141,6 +150,8 @@ export const api = {
   listTargets: (siteID: string) => req<ProbeTarget[]>('GET', `/api/v1/sites/${encodeURIComponent(siteID)}/targets`),
   setTargets: (siteID: string, targets: ProbeTarget[]) =>
     req<unknown>('PUT', `/api/v1/sites/${encodeURIComponent(siteID)}/targets`, { targets }),
+  purgeTarget: (siteID: string, target: string) =>
+    req<{ purged_series: number }>('POST', `/api/v1/sites/${encodeURIComponent(siteID)}/purge-target`, { target }),
   listDevices: (siteID: string) => req<Device[]>('GET', `/api/v1/sites/${encodeURIComponent(siteID)}/devices`),
   incidents: () => req<Incident[]>('GET', '/api/v1/incidents'),
   timeline: (id: string) => req<TimelineEntry[]>('GET', `/api/v1/incidents/${encodeURIComponent(id)}/timeline`),

@@ -1,8 +1,9 @@
 <script setup lang="ts">
 import { ref, reactive, onMounted } from 'vue'
-import { api, type Quota, type EnrollmentToken, type Channel } from '../api'
+import { api, type Quota, type EnrollmentToken, type Channel, type StorageStats } from '../api'
 
 const quota = ref<Quota | null>(null)
+const stats = ref<StorageStats | null>(null)
 const tokens = ref<EnrollmentToken[]>([])
 const note = ref('')
 const newToken = ref('')
@@ -14,7 +15,9 @@ const email = reactive({ host: '', port: '587', from: '', to: '', username: '', 
 
 async function load() {
   try {
-    ;[quota.value, tokens.value, channels.value] = await Promise.all([api.quota(), api.listTokens(), api.channels()])
+    ;[quota.value, stats.value, tokens.value, channels.value] = await Promise.all([
+      api.quota(), api.stats(), api.listTokens(), api.channels(),
+    ])
   } catch (e) {
     error.value = String((e as Error).message || e)
   }
@@ -63,6 +66,20 @@ onMounted(load)
     <section>
       <h3>Agent 配额</h3>
       <p v-if="quota">已用 <b>{{ quota.used }}</b> / {{ quota.max === 0 ? '不限' : quota.max }}</p>
+    </section>
+
+    <section v-if="stats">
+      <h3>存储用量（时序）</h3>
+      <p class="hint">原始样本短期保留、按 1 分钟 / 1 小时 / 1 天降采样分级长期保留 → 多年历史占用可控。</p>
+      <table>
+        <thead><tr><th>series</th><th>raw 样本</th><th>1 分钟</th><th>1 小时</th><th>1 天</th></tr></thead>
+        <tbody>
+          <tr>
+            <td>{{ stats.series }}</td><td>{{ stats.samples }}</td>
+            <td>{{ stats.rollup_1m }}</td><td>{{ stats.rollup_1h }}</td><td>{{ stats.rollup_1d }}</td>
+          </tr>
+        </tbody>
+      </table>
     </section>
 
     <section>
