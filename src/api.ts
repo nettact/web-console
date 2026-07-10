@@ -32,11 +32,24 @@ export interface Sample {
   value: number
   unit: string
 }
+export interface ProbeParams {
+  interval_seconds?: number
+  timeout_ms?: number
+  // icmp
+  packet_size?: number
+  retries?: number
+  // dns
+  record_type?: string
+  // http
+  method?: string
+  expected_status?: number
+}
 export interface ProbeTarget {
   id?: string
   kind: string
   target: string
   tier: string
+  params?: ProbeParams
   enabled: boolean
 }
 export interface EnrollmentToken {
@@ -82,21 +95,29 @@ export interface Alert {
 }
 export interface Rule {
   id: string
+  probe_task_id?: string
   name: string
   metric_kind: string
-  target_glob: string
   comparator: string
   threshold: number
+  fail_threshold: number
   for_seconds: number
   layer: string
   severity: string
+  channel_ids: string[]
+  is_template: boolean
   enabled: boolean
 }
 export interface Channel {
   id: string
+  name: string
   type: string
   config: Record<string, string>
   enabled: boolean
+}
+export interface StatusEvent {
+  status: string
+  changed_at: string
 }
 
 export interface StorageStats {
@@ -161,6 +182,8 @@ export const api = {
   },
   // All series recorded for an agent — populates the history browser selector.
   listSeries: (id: string) => req<SeriesInfo[]>('GET', `/api/v1/agents/${encodeURIComponent(id)}/series`),
+  agentStatusHistory: (id: string) =>
+    req<StatusEvent[]>('GET', `/api/v1/agents/${encodeURIComponent(id)}/status-history`),
   listTokens: () => req<EnrollmentToken[]>('GET', '/api/v1/enrollment-tokens'),
   createToken: (note: string) =>
     req<{ token: string; expires_in_minutes: number }>('POST', '/api/v1/enrollment-tokens', { note }),
@@ -173,11 +196,27 @@ export const api = {
   incidents: () => req<Incident[]>('GET', '/api/v1/incidents'),
   timeline: (id: string) => req<TimelineEntry[]>('GET', `/api/v1/incidents/${encodeURIComponent(id)}/timeline`),
   alerts: () => req<Alert[]>('GET', '/api/v1/alerts'),
-  rules: () => req<Rule[]>('GET', '/api/v1/rules'),
-  updateRule: (id: string, body: Record<string, unknown>) =>
-    req<unknown>('PUT', `/api/v1/rules/${encodeURIComponent(id)}`, body),
+  // Alarm rules: reusable templates + per-target rules.
+  ruleTemplates: () => req<Rule[]>('GET', '/api/v1/rule-templates'),
+  createTemplate: (rule: Partial<Rule>) => req<{ id: string }>('POST', '/api/v1/rule-templates', rule),
+  targetRules: (probeTaskId: string) =>
+    req<Rule[]>('GET', `/api/v1/targets/${encodeURIComponent(probeTaskId)}/rules`),
+  createTargetRule: (probeTaskId: string, rule: Partial<Rule>) =>
+    req<{ id: string }>('POST', `/api/v1/targets/${encodeURIComponent(probeTaskId)}/rules`, rule),
+  applyTemplate: (probeTaskId: string, templateId: string) =>
+    req<{ id: string }>('POST', `/api/v1/targets/${encodeURIComponent(probeTaskId)}/apply-template`, {
+      template_id: templateId,
+    }),
+  updateRule: (id: string, rule: Partial<Rule>) =>
+    req<unknown>('PUT', `/api/v1/rules/${encodeURIComponent(id)}`, rule),
+  updateTemplate: (id: string, rule: Partial<Rule>) =>
+    req<unknown>('PUT', `/api/v1/rule-templates/${encodeURIComponent(id)}`, rule),
+  deleteRule: (id: string) => req<unknown>('DELETE', `/api/v1/rules/${encodeURIComponent(id)}`),
+  deleteTemplate: (id: string) => req<unknown>('DELETE', `/api/v1/rule-templates/${encodeURIComponent(id)}`),
   channels: () => req<Channel[]>('GET', '/api/v1/channels'),
-  createChannel: (type: string, config: Record<string, string>) =>
-    req<{ id: string }>('POST', '/api/v1/channels', { type, config }),
+  createChannel: (name: string, type: string, config: Record<string, string>) =>
+    req<{ id: string }>('POST', '/api/v1/channels', { name, type, config }),
+  updateChannel: (id: string, body: { name: string; enabled: boolean; config?: Record<string, string> }) =>
+    req<unknown>('PUT', `/api/v1/channels/${encodeURIComponent(id)}`, body),
   deleteChannel: (id: string) => req<unknown>('DELETE', `/api/v1/channels/${encodeURIComponent(id)}`),
 }

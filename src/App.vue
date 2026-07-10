@@ -16,7 +16,7 @@ const nav = [
   { to: '/history', label: '历史' },
   { to: '/incidents', label: '事故' },
   { to: '/monitoring', label: '监控目标' },
-  { to: '/rules', label: '告警规则' },
+  { to: '/rules', label: '报警模板' },
   { to: '/settings', label: '设置' },
 ]
 

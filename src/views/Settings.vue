@@ -10,8 +10,8 @@ const newToken = ref('')
 const error = ref('')
 
 const channels = ref<Channel[]>([])
-const webhookUrl = ref('')
-const email = reactive({ host: '', port: '587', from: '', to: '', username: '', password: '' })
+const webhook = reactive({ name: '', url: '' })
+const email = reactive({ name: '', host: '', port: '587', from: '', to: '', username: '', password: '' })
 
 async function load() {
   try {
@@ -23,15 +23,24 @@ async function load() {
   }
 }
 async function addWebhook() {
-  if (!webhookUrl.value) return
-  await api.createChannel('webhook', { url: webhookUrl.value })
-  webhookUrl.value = ''
+  if (!webhook.url) return
+  await api.createChannel(webhook.name || 'Webhook', 'webhook', { url: webhook.url })
+  webhook.name = ''
+  webhook.url = ''
   await load()
 }
 async function addEmail() {
   if (!email.host || !email.from || !email.to) return
-  await api.createChannel('email', { ...email })
+  const { name, ...cfg } = email
+  await api.createChannel(name || 'Email', 'email', { ...cfg })
   await load()
+}
+async function toggleChannel(c: Channel) {
+  await api.updateChannel(c.id, { name: c.name, enabled: !c.enabled })
+  await load()
+}
+async function renameChannel(c: Channel) {
+  await api.updateChannel(c.id, { name: c.name, enabled: c.enabled })
 }
 async function removeChannel(id: string) {
   await api.deleteChannel(id)
@@ -132,16 +141,18 @@ onMounted(load)
     <section class="panel">
       <div class="panel-head"><h3>通知渠道</h3><span class="count">{{ channels.length }}</span></div>
       <div class="panel-body">
-        <p class="hint">事故发生 / 恢复时向以下渠道推送。</p>
+        <p class="hint">可添加多个渠道，并在「监控目标」的每条报警规则上单独勾选要通知的渠道。</p>
 
         <div class="row field-row">
           <b class="ftag">Webhook</b>
-          <input v-model="webhookUrl" placeholder="https://hooks.example.com/…" class="wide" />
+          <input v-model="webhook.name" placeholder="名称" class="tiny-name" />
+          <input v-model="webhook.url" placeholder="https://hooks.example.com/…" class="wide" />
           <button class="btn btn-primary" @click="addWebhook">添加</button>
         </div>
 
         <div class="row field-row wrap">
           <b class="ftag">Email</b>
+          <input v-model="email.name" placeholder="名称" class="tiny-name" />
           <input v-model="email.host" placeholder="smtp 主机" />
           <input v-model="email.port" placeholder="端口" class="tiny" />
           <input v-model="email.from" placeholder="发件人" />
@@ -153,12 +164,14 @@ onMounted(load)
       </div>
       <div class="table-wrap">
         <table class="data-table">
-          <thead><tr><th>类型</th><th>配置</th><th></th></tr></thead>
+          <thead><tr><th>名称</th><th>类型</th><th>配置</th><th class="center">启用</th><th></th></tr></thead>
           <tbody>
-            <tr v-if="!channels.length"><td colspan="3" class="hint">暂无渠道</td></tr>
+            <tr v-if="!channels.length"><td colspan="5" class="hint">暂无渠道</td></tr>
             <tr v-for="c in channels" :key="c.id">
+              <td><input v-model="c.name" class="name-in" @blur="renameChannel(c)" /></td>
               <td><span class="badge neutral">{{ c.type }}</span></td>
               <td class="mono">{{ c.type === 'webhook' ? c.config.url : (c.config.from + ' → ' + c.config.to + ' @ ' + c.config.host) }}</td>
+              <td class="center"><input type="checkbox" :checked="c.enabled" @change="toggleChannel(c)" /></td>
               <td><button class="link-btn danger" @click="removeChannel(c.id)">删除</button></td>
             </tr>
           </tbody>
@@ -252,5 +265,12 @@ input.wide {
 input.tiny {
   min-width: 64px;
   width: 64px;
+}
+input.tiny-name {
+  min-width: 96px;
+  width: 96px;
+}
+.name-in {
+  min-width: 120px;
 }
 </style>

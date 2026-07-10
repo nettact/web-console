@@ -1,12 +1,13 @@
 <script setup lang="ts">
 import { ref, onMounted, onBeforeUnmount } from 'vue'
-import { api, type Agent, type Sample, type Quota, type Device } from '../api'
+import { api, type Agent, type Sample, type Quota, type Device, type StatusEvent } from '../api'
 import MetricChart from '../components/MetricChart.vue'
 
 const SITE = 'site_default'
 const agents = ref<Agent[]>([])
 const selected = ref<string>('')
 const quota = ref<Quota | null>(null)
+const statusHistory = ref<StatusEvent[]>([])
 // Two range series feed the trend charts; everything else on this page only
 // needs the latest value, so it comes from a single /latest snapshot.
 const rtt = ref<Sample[]>([])
@@ -42,10 +43,12 @@ async function loadMetrics() {
     snapshot.value = snap
     devices.value = dv
     error.value = ''
+    statusHistory.value = await api.agentStatusHistory(id)
   } catch (e) {
     error.value = String((e as Error).message || e)
   }
 }
+const fmtTime = (s: string) => new Date(s).toLocaleString()
 
 // The snapshot holds one point per series, so panels just filter it by kind.
 const byKind = (kind: string) => snapshot.value.filter((s) => s.kind === kind)
@@ -269,6 +272,28 @@ onBeforeUnmount(() => {
           </div>
         </section>
       </div>
+
+      <!-- agent online/offline history -->
+      <section class="panel">
+        <div class="panel-head"><h3>Agent 在线/离线历史</h3><span class="count">{{ statusHistory.length }}</span></div>
+        <div class="table-wrap">
+          <table class="data-table">
+            <thead><tr><th>状态</th><th>时间</th></tr></thead>
+            <tbody>
+              <tr v-if="!statusHistory.length"><td colspan="2" class="hint">暂无状态变更记录</td></tr>
+              <tr v-for="(h, i) in statusHistory" :key="i">
+                <td>
+                  <span class="badge" :class="h.status === 'online' ? 'up' : 'down'">
+                    <span class="dot" :class="h.status === 'online' ? 'up' : 'down'"></span>
+                    {{ h.status === 'online' ? '上线' : '离线' }}
+                  </span>
+                </td>
+                <td class="hint">{{ fmtTime(h.changed_at) }}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
     </template>
   </main>
 </template>
