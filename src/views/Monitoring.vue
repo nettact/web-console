@@ -18,6 +18,11 @@ async function load() {
 function addRow() {
   targets.value.push({ kind: 'icmp', target: '', tier: 'base', enabled: true })
 }
+function placeholderFor(kind: string): string {
+  if (kind === 'dns') return 'example.com'
+  if (kind === 'http') return 'https://example.com'
+  return '1.1.1.1'
+}
 function removeRow(i: number) {
   targets.value.splice(i, 1)
 }
@@ -52,9 +57,13 @@ onMounted(load)
       <tbody>
         <tr v-for="(t, i) in targets" :key="i">
           <td>
-            <select v-model="t.kind"><option value="icmp">ICMP</option></select>
+            <select v-model="t.kind">
+              <option value="icmp">ICMP</option>
+              <option value="dns">DNS</option>
+              <option value="http">HTTP</option>
+            </select>
           </td>
-          <td><input v-model="t.target" placeholder="1.1.1.1 / example.com" /></td>
+          <td><input v-model="t.target" :placeholder="placeholderFor(t.kind)" /></td>
           <td>
             <select v-model="t.tier"><option value="base">base</option><option value="regular">regular</option></select>
           </td>

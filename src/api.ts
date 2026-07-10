@@ -45,6 +45,14 @@ export interface EnrollmentToken {
   expires_at: string
   used_at: string | null
 }
+export interface Device {
+  mac: string
+  ip: string
+  hostname: string
+  vendor: string
+  first_seen: string | null
+  last_seen: string | null
+}
 
 export class AuthError extends Error {}
 
@@ -88,4 +96,5 @@ export const api = {
   listTargets: (siteID: string) => req<ProbeTarget[]>('GET', `/api/v1/sites/${encodeURIComponent(siteID)}/targets`),
   setTargets: (siteID: string, targets: ProbeTarget[]) =>
     req<unknown>('PUT', `/api/v1/sites/${encodeURIComponent(siteID)}/targets`, { targets }),
+  listDevices: (siteID: string) => req<Device[]>('GET', `/api/v1/sites/${encodeURIComponent(siteID)}/devices`),
 }
