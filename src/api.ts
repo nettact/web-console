@@ -5,6 +5,10 @@ export interface User {
   id: string
   username: string
 }
+export interface ServerInfo {
+  os: string
+  native_notify: boolean
+}
 export interface Quota {
   used: number
   max: number
@@ -222,6 +226,7 @@ export const api = {
   login: (username: string, password: string) => req<User>('POST', '/api/v1/auth/login', { username, password }),
   logout: () => req<unknown>('POST', '/api/v1/auth/logout'),
   me: () => req<User>('GET', '/api/v1/auth/me'),
+  serverInfo: () => req<ServerInfo>('GET', '/api/v1/server-info'),
   quota: () => req<Quota>('GET', '/api/v1/quota'),
   stats: () => req<StorageStats>('GET', '/api/v1/stats'),
   sites: () => req<Site[]>('GET', '/api/v1/sites'),

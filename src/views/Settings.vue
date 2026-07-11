@@ -1,28 +1,37 @@
 <script setup lang="ts">
-import { ref, reactive, onMounted } from 'vue'
+import { ref, reactive, computed, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { api, type Quota, type Channel, type StorageStats } from '../api'
+import { api, type Quota, type Channel, type ServerInfo, type StorageStats } from '../api'
 
 const { t } = useI18n()
 
 const quota = ref<Quota | null>(null)
 const stats = ref<StorageStats | null>(null)
+const serverInfo = ref<ServerInfo | null>(null)
 const error = ref('')
 
 const channels = ref<Channel[]>([])
 // 通知渠道按类型添加：先选类型，再展示对应表单。新增类型时在此登记即可。
-const CHANNEL_TYPES = [
-  { value: 'webhook', label: 'Webhook' },
-  { value: 'email', label: 'Email' },
-]
+// 「系统通知」仅当 server 运行于 Windows/macOS（native_notify）时才提供。
+const CHANNEL_TYPES = computed(() => {
+  const types = [
+    { value: 'webhook', label: 'Webhook' },
+    { value: 'email', label: 'Email' },
+  ]
+  if (serverInfo.value?.native_notify) {
+    types.push({ value: 'system', label: t('settings.sysNotify') })
+  }
+  return types
+})
 const addType = ref('webhook')
 const webhook = reactive({ name: '', url: '' })
 const email = reactive({ name: '', host: '', port: '587', from: '', to: '', username: '', password: '' })
+const system = reactive({ name: '' })
 
 async function load() {
   try {
-    ;[quota.value, stats.value, channels.value] = await Promise.all([
-      api.quota(), api.stats(), api.channels(),
+    ;[quota.value, stats.value, channels.value, serverInfo.value] = await Promise.all([
+      api.quota(), api.stats(), api.channels(), api.serverInfo(),
     ])
   } catch (e) {
     error.value = String((e as Error).message || e)
@@ -39,6 +48,11 @@ async function addEmail() {
   if (!email.host || !email.from || !email.to) return
   const { name, ...cfg } = email
   await api.createChannel(name || 'Email', 'email', { ...cfg })
+  await load()
+}
+async function addSystem() {
+  await api.createChannel(system.name || 'System', 'system', {})
+  system.name = ''
   await load()
 }
 async function toggleChannel(c: Channel) {
@@ -126,6 +140,13 @@ onMounted(load)
           <input v-model="email.password" type="password" :placeholder="t('settings.passwordOpt')" />
           <button class="btn btn-primary" @click="addEmail">{{ t('settings.addBtn') }}</button>
         </div>
+
+        <div v-else-if="addType === 'system'" class="row field-row">
+          <b class="ftag">{{ t('settings.sysNotify') }}</b>
+          <input v-model="system.name" :placeholder="t('settings.namePlaceholder')" class="tiny-name" />
+          <span class="hint">{{ t('settings.sysNotifyHint') }}</span>
+          <button class="btn btn-primary" @click="addSystem">{{ t('settings.addBtn') }}</button>
+        </div>
       </div>
       <div class="table-wrap">
         <table class="data-table">
@@ -135,7 +156,7 @@ onMounted(load)
             <tr v-for="c in channels" :key="c.id">
               <td><input v-model="c.name" class="name-in" @blur="renameChannel(c)" /></td>
               <td><span class="badge neutral">{{ c.type }}</span></td>
-              <td class="mono">{{ c.type === 'webhook' ? c.config.url : (c.config.from + ' → ' + c.config.to + ' @ ' + c.config.host) }}</td>
+              <td class="mono">{{ c.type === 'webhook' ? c.config.url : c.type === 'system' ? t('settings.sysNotifyConfig') : (c.config.from + ' → ' + c.config.to + ' @ ' + c.config.host) }}</td>
               <td class="center"><input type="checkbox" :checked="c.enabled" @change="toggleChannel(c)" /></td>
               <td><button class="link-btn danger" @click="removeChannel(c.id)">{{ t('common.delete') }}</button></td>
             </tr>
