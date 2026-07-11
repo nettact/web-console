@@ -6,6 +6,7 @@ import type { Sample } from '../api'
 import { toDateLocale } from '../i18n'
 import { theme } from '../theme'
 import { type Seg, boolSegments, toPoints, uptimeSegments } from '../lib/timeline'
+import { fmtByUnit, isByteUnit } from '../lib/format'
 
 const { t, locale } = useI18n()
 
@@ -106,6 +107,9 @@ function fmtDur(ms: number): string {
   if (h < 48) return t('common.durHours', { n: h.toFixed(1) })
   return t('common.durDays', { n: (h / 24).toFixed(1) })
 }
+// 's'-unit series (uptime) carry a value in seconds; humanize it for axes/tooltips.
+const isDurUnit = (u: string) => u === 's'
+const fmtDurSec = (sec: number) => fmtDur(sec * 1000)
 
 // Trend metrics: one smooth line each, grouped onto up to two Y axes by unit.
 // Boolean metrics that get mixed in render as a 0/1 step line on their own axis.
@@ -119,7 +123,9 @@ function renderLines(ms: ChartMetric[]) {
 
   const yAxis = axisUnits.map((u, i) => ({
     type: 'value' as const,
-    name: unitName(u),
+    // Capacity (bytes / bps) and duration ('s') axes carry their scaled suffix
+    // (MB/GB, 小时/天) on each tick label, so the axis name would be redundant.
+    name: isByteUnit(u) || isDurUnit(u) ? '' : unitName(u),
     position: i === 0 ? ('left' as const) : ('right' as const),
     // Unit label runs vertically along the middle of the axis (not parked in the
     // top corner) so it never collides with the title or the legend — the cause
@@ -131,7 +137,13 @@ function renderLines(ms: ChartMetric[]) {
     axisLabel: {
       color: ct.label,
       fontSize: 11,
-      ...(u === 'bool' ? { formatter: (v: number) => (v >= 0.5 ? t('chart.normal') : t('chart.interrupted')) } : {}),
+      ...(u === 'bool'
+        ? { formatter: (v: number) => (v >= 0.5 ? t('chart.normal') : t('chart.interrupted')) }
+        : isByteUnit(u)
+          ? { formatter: (v: number) => fmtByUnit(u, v) }
+          : isDurUnit(u)
+            ? { formatter: (v: number) => fmtDurSec(v) }
+            : {}),
     },
     axisLine: { show: false },
     splitLine: i === 0 ? { lineStyle: { color: ct.split } } : { show: false },
@@ -163,6 +175,43 @@ function renderLines(ms: ChartMetric[]) {
     }
   })
 
+  // Only override the tooltip when a series needs scaled formatting (capacity or
+  // duration); other charts keep ECharts' default axis tooltip untouched.
+  const unitByName = new Map(ms.map((m) => [m.label, m.unit]))
+  const hasScaled = ms.some((m) => isByteUnit(m.unit) || isDurUnit(m.unit))
+  const scaledTooltip = (params: { axisValue: number; seriesName: string; marker: string; value: [number, number] }[]) => {
+    const rows = params
+      .map((p) => {
+        const u = unitByName.get(p.seriesName) ?? ''
+        const raw = p.value[1]
+        const disp = isByteUnit(u)
+          ? fmtByUnit(u, raw)
+          : isDurUnit(u)
+            ? fmtDurSec(raw)
+            : `${Number.isInteger(raw) ? raw : raw.toFixed(1)}${u ? ' ' + unitName(u) : ''}`
+        return `${p.marker}${p.seriesName}<span style="float:right;margin-left:20px;font-weight:600">${disp}</span>`
+      })
+      .join('<br/>')
+    return `${fmtTime(params[0].axisValue)}<br/>${rows}`
+  }
+
+  // A single legend row overflows once there are many series (per-core CPU),
+  // so past PER_ROW entries we split into centered rows of PER_ROW stacked
+  // below the title (core 0–7 on row 1, 8–15 on row 2, …) and grow the top
+  // margin to fit them. Few-series charts keep the compact top-right legend.
+  const PER_ROW = 8
+  const legendStyle = { textStyle: { color: ct.title, fontSize: 11 }, itemWidth: 14, itemHeight: 8 }
+  let legend: echarts.LegendComponentOption | echarts.LegendComponentOption[] | undefined
+  let gridTop = multi ? 44 : 40
+  if (multi && ms.length > PER_ROW) {
+    const rows: string[][] = []
+    for (let i = 0; i < ms.length; i += PER_ROW) rows.push(ms.slice(i, i + PER_ROW).map((m) => m.label))
+    legend = rows.map((data, i) => ({ ...legendStyle, data, top: 30 + i * 20, left: 'center', itemGap: 12 }))
+    gridTop = 30 + rows.length * 20 + 8
+  } else if (multi) {
+    legend = { ...legendStyle, top: 8, right: 12 }
+  }
+
   chart.setOption(
     {
       title: baseTitle(),
@@ -173,13 +222,12 @@ function renderLines(ms: ChartMetric[]) {
         borderWidth: 1,
         textStyle: { color: ct.tooltipText, fontSize: 12 },
         axisPointer: { lineStyle: { color: ct.pointer } },
+        ...(hasScaled ? { formatter: scaledTooltip as never } : {}),
       },
-      // Only the title (left) and legend (right) share the top row now; axis unit
-      // names live on the sides, so a small top margin is enough.
-      legend: multi
-        ? { top: 8, right: 12, textStyle: { color: ct.title, fontSize: 11 }, itemWidth: 14, itemHeight: 8 }
-        : undefined,
-      grid: { left: 58, right: axisUnits.length > 1 ? 58 : 22, top: multi ? 44 : 40, bottom: 28 },
+      // Title sits top-left; the legend is top-right for a few series, or wraps
+      // into centered rows below the title when there are many (see above).
+      legend,
+      grid: { left: 58, right: axisUnits.length > 1 ? 58 : 22, top: gridTop, bottom: 28 },
       xAxis: {
         type: 'time',
         axisLine: { lineStyle: { color: ct.axisLine } },

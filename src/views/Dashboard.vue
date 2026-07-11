@@ -4,6 +4,7 @@ import { useI18n } from 'vue-i18n'
 import { api, type Agent, type Sample, type Quota, type Device, type StatusEvent } from '../api'
 import { toDateLocale } from '../i18n'
 import MetricChart from '../components/MetricChart.vue'
+import { fmtBytes, fmtBps } from '../lib/format'
 
 const { t, locale } = useI18n()
 
@@ -91,18 +92,6 @@ function cpuCores(): Sample[] {
 function diskMounts(): string[] {
   return [...new Set(byKind('host.disk.pct').map((s) => s.target))].sort()
 }
-function fmtBytes(v: number | null): string {
-  if (v == null) return '—'
-  const u = ['B', 'KB', 'MB', 'GB', 'TB', 'PB']
-  let n = v
-  let i = 0
-  while (n >= 1024 && i < u.length - 1) {
-    n /= 1024
-    i++
-  }
-  return `${n.toFixed(n >= 100 || i === 0 ? 0 : 1)} ${u[i]}`
-}
-const fmtBps = (v: number | null) => (v == null ? '—' : `${fmtBytes(v)}/s`)
 function fmtUptime(sec: number | null): string {
   if (sec == null) return '—'
   const d = Math.floor(sec / 86400)

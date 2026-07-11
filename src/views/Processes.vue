@@ -3,6 +3,7 @@ import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue'
 import { useRoute } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { api, type Agent, type ProcessInfo, type ConnectionInfo, type HostSnapshot } from '../api'
+import { fmtBytes } from '../lib/format'
 
 const { t } = useI18n()
 
@@ -118,16 +119,6 @@ const processes = computed<ProcessInfo[]>(() => {
 })
 const connections = computed<ConnectionInfo[]>(() => snapshot.value?.connections || [])
 
-function fmtBytes(v: number): string {
-  const u = ['B', 'KB', 'MB', 'GB', 'TB']
-  let n = v
-  let i = 0
-  while (n >= 1024 && i < u.length - 1) {
-    n /= 1024
-    i++
-  }
-  return `${n.toFixed(n >= 100 || i === 0 ? 0 : 1)} ${u[i]}`
-}
 function fmtRun(sec: number): string {
   const h = Math.floor(sec / 3600)
   const m = Math.floor((sec % 3600) / 60)
