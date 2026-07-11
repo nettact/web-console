@@ -21,8 +21,37 @@ export interface Agent {
   platform: string
   agent_version: string
   status: string
+  capabilities?: string[]
   last_seen_at: string | null
   created_at: string
+}
+// Live host snapshot (ephemeral process / connection lists — never stored).
+export interface ProcessInfo {
+  pid: number
+  name: string
+  user?: string
+  status?: string
+  cpu_pct: number
+  rss_bytes: number
+  virt_bytes: number
+  disk_read_bytes: number
+  disk_write_bytes: number
+  run_time_seconds: number
+}
+export interface ConnectionInfo {
+  proto: string
+  local_addr: string
+  remote_addr?: string
+  state?: string
+  pid?: number
+  process_name?: string
+}
+export interface HostSnapshot {
+  ts: string
+  request_id: string
+  process_total: number
+  processes?: ProcessInfo[]
+  connections?: ConnectionInfo[]
 }
 export interface Sample {
   ts: string
@@ -167,6 +196,18 @@ export const api = {
   stats: () => req<StorageStats>('GET', '/api/v1/stats'),
   sites: () => req<Site[]>('GET', '/api/v1/sites'),
   agents: () => req<Agent[]>('GET', '/api/v1/agents'),
+  agent: (id: string) => req<Agent>('GET', `/api/v1/agents/${encodeURIComponent(id)}`),
+  // Live host snapshot: ask the agent (POST), then poll for the result (GET).
+  requestSnapshot: (id: string, wantProcesses = true, wantConnections = true) =>
+    req<{ request_id: string }>('POST', `/api/v1/agents/${encodeURIComponent(id)}/snapshot`, {
+      want_processes: wantProcesses,
+      want_connections: wantConnections,
+    }),
+  getSnapshot: (id: string) =>
+    req<{ snapshot: HostSnapshot | null; pending: boolean }>(
+      'GET',
+      `/api/v1/agents/${encodeURIComponent(id)}/snapshot`,
+    ),
   metrics: (id: string, kind: string, target?: string, limit = 200, sinceSeconds?: number) => {
     const p = new URLSearchParams({ kind, limit: String(limit) })
     if (target) p.set('target', target)

@@ -13,6 +13,7 @@ async function doLogout() {
 
 const nav = [
   { to: '/', label: '总览' },
+  { to: '/processes', label: '实时进程' },
   { to: '/history', label: '历史' },
   { to: '/incidents', label: '事故' },
   { to: '/monitoring', label: '监控目标' },
@@ -49,6 +50,12 @@ const initials = computed(() => (auth.user?.username ?? '?').slice(0, 1).toUpper
               <rect x="14" y="3" width="7" height="5" rx="1.5" />
               <rect x="14" y="12" width="7" height="9" rx="1.5" />
               <rect x="3" y="16" width="7" height="5" rx="1.5" />
+            </svg>
+            <!-- 实时进程 -->
+            <svg v-else-if="n.to === '/processes'" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+              stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+              <rect x="3" y="4" width="18" height="16" rx="2" />
+              <path d="M3 9h18M8 4v16" />
             </svg>
             <!-- 历史 -->
             <svg v-else-if="n.to === '/history'" viewBox="0 0 24 24" fill="none" stroke="currentColor"

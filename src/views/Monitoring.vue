@@ -21,11 +21,18 @@ const METRIC_LABELS: Record<string, string> = {
   'probe.http.ok': '可用 (1/0)',
   'probe.http.status': '状态码',
   'probe.http.latency_ms': '响应延迟 (ms)',
+  'host.cpu.pct': 'CPU 使用率 (%)',
+  'host.mem.pct': '内存使用率 (%)',
+  'host.disk.pct': '磁盘使用率 (%)',
+  'host.load.1m': '1m 负载',
+  'host.load.5m': '5m 负载',
+  'host.load.15m': '15m 负载',
 }
 const METRICS_BY_KIND: Record<string, string[]> = {
   icmp: ['probe.icmp.loss_pct', 'probe.icmp.rtt_ms'],
   dns: ['probe.dns.ok', 'probe.dns.resolve_ms'],
   http: ['probe.http.ok', 'probe.http.status', 'probe.http.latency_ms'],
+  host: ['host.cpu.pct', 'host.mem.pct', 'host.disk.pct', 'host.load.1m', 'host.load.5m', 'host.load.15m'],
 }
 // 某目标类型下可选的报警方式（指标）。未知类型回退到 icmp。
 function metricsForKind(kind: string): string[] {
@@ -50,6 +57,7 @@ function addRow() {
 function placeholderFor(kind: string): string {
   if (kind === 'dns') return 'example.com'
   if (kind === 'http') return 'https://example.com'
+  if (kind === 'host') return 'host（CPU/内存/负载）或盘符如 C:'
   return '1.1.1.1'
 }
 function removeRow(i: number) {
@@ -88,7 +96,10 @@ async function save() {
 // Diagnostic layer inferred from the target kind, so fired alerts carry a
 // meaningful §4 layer instead of an empty/generic one.
 function layerForKind(kind: string): string {
-  return kind === 'dns' ? 'dns' : kind === 'http' ? 'service' : 'internet'
+  if (kind === 'dns') return 'dns'
+  if (kind === 'http') return 'service'
+  if (kind === 'host') return 'local'
+  return 'internet'
 }
 
 async function toggleExpand(t: ProbeTarget) {
@@ -106,9 +117,13 @@ async function reloadRules(id: string) {
 }
 async function addRule(t: ProbeTarget) {
   if (!t.id) return
-  const metric = t.kind === 'dns' ? 'probe.dns.ok' : t.kind === 'http' ? 'probe.http.ok' : 'probe.icmp.loss_pct'
+  const metric =
+    t.kind === 'dns' ? 'probe.dns.ok'
+    : t.kind === 'http' ? 'probe.http.ok'
+    : t.kind === 'host' ? 'host.cpu.pct'
+    : 'probe.icmp.loss_pct'
   const cmp = metric.endsWith('.ok') ? 'lt' : 'gte'
-  const threshold = metric.endsWith('.ok') ? 1 : 50
+  const threshold = metric.endsWith('.ok') ? 1 : t.kind === 'host' ? 90 : 50
   try {
     await api.createTargetRule(t.id, {
       name: `${t.target} 报警`, metric_kind: metric, comparator: cmp,
@@ -189,6 +204,7 @@ onMounted(load)
                     <option value="icmp">ICMP</option>
                     <option value="dns">DNS</option>
                     <option value="http">HTTP</option>
+                    <option value="host">系统状态</option>
                   </select>
                 </td>
                 <td><input class="target-in" v-model="t.target" :placeholder="placeholderFor(t.kind)" /></td>

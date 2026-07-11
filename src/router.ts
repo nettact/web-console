@@ -2,6 +2,7 @@ import { createRouter, createWebHistory } from 'vue-router'
 import { auth, refresh } from './auth'
 import Login from './views/Login.vue'
 import Dashboard from './views/Dashboard.vue'
+import Processes from './views/Processes.vue'
 import History from './views/History.vue'
 import Monitoring from './views/Monitoring.vue'
 import Incidents from './views/Incidents.vue'
@@ -12,6 +13,7 @@ const router = createRouter({
   routes: [
     { path: '/login', component: Login },
     { path: '/', component: Dashboard },
+    { path: '/processes', component: Processes },
     { path: '/history', component: History },
     { path: '/monitoring', component: Monitoring },
     { path: '/incidents', component: Incidents },

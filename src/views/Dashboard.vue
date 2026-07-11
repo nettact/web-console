@@ -71,6 +71,46 @@ function latestIfaces(): Sample[] {
   return byKind('iface.up').sort((a, b) => a.target.localeCompare(b.target))
 }
 
+// --- host / system metrics (stored series, delivered via /latest) ---
+const hasHost = () => snapshot.value.some((s) => s.kind.startsWith('host.'))
+function hostVal(kind: string, target = 'host'): number | null {
+  const s = snapshot.value.find((x) => x.kind === kind && x.target === target)
+  return s ? s.value : null
+}
+function coreNum(t: string): number {
+  const m = /(\d+)/.exec(t)
+  return m ? +m[1] : 0
+}
+function cpuCores(): Sample[] {
+  return byKind('host.cpu.core.pct').sort((a, b) => coreNum(a.target) - coreNum(b.target))
+}
+function diskMounts(): string[] {
+  return [...new Set(byKind('host.disk.pct').map((s) => s.target))].sort()
+}
+function fmtBytes(v: number | null): string {
+  if (v == null) return '—'
+  const u = ['B', 'KB', 'MB', 'GB', 'TB', 'PB']
+  let n = v
+  let i = 0
+  while (n >= 1024 && i < u.length - 1) {
+    n /= 1024
+    i++
+  }
+  return `${n.toFixed(n >= 100 || i === 0 ? 0 : 1)} ${u[i]}`
+}
+const fmtBps = (v: number | null) => (v == null ? '—' : `${fmtBytes(v)}/s`)
+function fmtUptime(sec: number | null): string {
+  if (sec == null) return '—'
+  const d = Math.floor(sec / 86400)
+  const h = Math.floor((sec % 86400) / 3600)
+  const m = Math.floor((sec % 3600) / 60)
+  return `${d}d ${h}h ${m}m`
+}
+function barClass(pct: number | null): string {
+  if (pct == null) return ''
+  return pct < 60 ? 'is-good' : pct < 85 ? 'is-warn' : 'is-bad'
+}
+
 // --- headline KPIs (latest gateway sample by timestamp) ---
 function latestVal(samples: Sample[]): number | null {
   let best: Sample | null = null
@@ -160,6 +200,70 @@ onBeforeUnmount(() => {
           <div class="foot">ARP 发现主机</div>
         </div>
       </div>
+
+      <!-- host / system status (only when the agent reports it) -->
+      <section v-if="hasHost()" class="panel host-panel">
+        <div class="panel-head">
+          <h3>系统状态</h3>
+          <RouterLink class="btn ghost sm" :to="{ path: '/processes', query: { agent: selected } }">
+            实时进程 / 网络连接 →
+          </RouterLink>
+        </div>
+        <div class="host-grid">
+          <!-- CPU -->
+          <div class="host-card">
+            <div class="hc-head"><span>CPU 使用率</span><b>{{ fmt(hostVal('host.cpu.pct'), 1) }}%</b></div>
+            <div class="bar"><span :class="barClass(hostVal('host.cpu.pct'))" :style="{ width: (hostVal('host.cpu.pct') ?? 0) + '%' }"></span></div>
+            <div class="cores">
+              <div class="core" v-for="c in cpuCores()" :key="c.target">
+                <span class="core-label">{{ c.target }}</span>
+                <span class="bar sm"><span :class="barClass(c.value)" :style="{ width: c.value + '%' }"></span></span>
+                <span class="core-val">{{ c.value.toFixed(0) }}%</span>
+              </div>
+            </div>
+          </div>
+          <!-- Memory -->
+          <div class="host-card">
+            <div class="hc-head"><span>内存</span><b>{{ fmt(hostVal('host.mem.pct'), 1) }}%</b></div>
+            <div class="bar"><span :class="barClass(hostVal('host.mem.pct'))" :style="{ width: (hostVal('host.mem.pct') ?? 0) + '%' }"></span></div>
+            <dl class="kv">
+              <div><dt>总量</dt><dd>{{ fmtBytes(hostVal('host.mem.total')) }}</dd></div>
+              <div><dt>已用</dt><dd>{{ fmtBytes(hostVal('host.mem.used')) }}</dd></div>
+              <div><dt>可用</dt><dd>{{ fmtBytes(hostVal('host.mem.free')) }}</dd></div>
+            </dl>
+          </div>
+          <!-- Storage -->
+          <div class="host-card">
+            <div class="hc-head"><span>存储</span></div>
+            <div v-for="mp in diskMounts()" :key="mp" class="disk">
+              <div class="disk-head"><span class="mono">{{ mp }}</span><b>{{ fmt(hostVal('host.disk.pct', mp), 1) }}%</b></div>
+              <div class="bar sm"><span :class="barClass(hostVal('host.disk.pct', mp))" :style="{ width: (hostVal('host.disk.pct', mp) ?? 0) + '%' }"></span></div>
+              <div class="disk-foot hint">
+                {{ fmtBytes(hostVal('host.disk.used', mp)) }} / {{ fmtBytes(hostVal('host.disk.total', mp)) }}
+                · 可用 {{ fmtBytes(hostVal('host.disk.free', mp)) }}
+              </div>
+            </div>
+          </div>
+          <!-- System -->
+          <div class="host-card">
+            <div class="hc-head"><span>系统</span></div>
+            <dl class="kv">
+              <div><dt>运行时长</dt><dd>{{ fmtUptime(hostVal('host.uptime_s')) }}</dd></div>
+              <div><dt>1m 负载</dt><dd>{{ fmt(hostVal('host.load.1m'), 2) }}</dd></div>
+              <div><dt>5m 负载</dt><dd>{{ fmt(hostVal('host.load.5m'), 2) }}</dd></div>
+              <div><dt>15m 负载</dt><dd>{{ fmt(hostVal('host.load.15m'), 2) }}</dd></div>
+            </dl>
+          </div>
+          <!-- Network I/O -->
+          <div class="host-card">
+            <div class="hc-head"><span>网络 I/O</span></div>
+            <dl class="kv">
+              <div><dt>↓ 接收</dt><dd>{{ fmtBps(hostVal('host.net.rx_bps')) }}</dd></div>
+              <div><dt>↑ 发送</dt><dd>{{ fmtBps(hostVal('host.net.tx_bps')) }}</dd></div>
+            </dl>
+          </div>
+        </div>
+      </section>
 
       <!-- charts -->
       <div class="chart-grid">
@@ -365,6 +469,111 @@ onBeforeUnmount(() => {
 }
 .empty h3 {
   font-size: 17px;
+}
+
+/* host / system status */
+.host-panel {
+  margin-bottom: 20px;
+}
+.host-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 14px;
+}
+.host-card {
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 12px 14px;
+}
+.hc-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  font-size: 13px;
+  color: var(--text-muted);
+  margin-bottom: 8px;
+}
+.hc-head b {
+  font-size: 16px;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+.bar {
+  height: 8px;
+  border-radius: 6px;
+  background: var(--surface);
+  overflow: hidden;
+}
+.bar.sm {
+  height: 5px;
+}
+.bar > span {
+  display: block;
+  height: 100%;
+  border-radius: 6px;
+  background: var(--primary);
+  transition: width 0.4s ease;
+}
+.bar > span.is-good {
+  background: #34d399;
+}
+.bar > span.is-warn {
+  background: #fbbf24;
+}
+.bar > span.is-bad {
+  background: #f87171;
+}
+.cores {
+  display: grid;
+  gap: 5px;
+  margin-top: 10px;
+}
+.core {
+  display: grid;
+  grid-template-columns: 46px 1fr 40px;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+.core-val {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.kv {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+}
+.kv > div {
+  display: flex;
+  justify-content: space-between;
+  font-size: 13px;
+}
+.kv dt {
+  color: var(--text-muted);
+}
+.kv dd {
+  margin: 0;
+  font-variant-numeric: tabular-nums;
+}
+.disk {
+  margin-bottom: 10px;
+}
+.disk-head {
+  display: flex;
+  justify-content: space-between;
+  font-size: 13px;
+  margin-bottom: 4px;
+}
+.disk-foot {
+  margin-top: 4px;
+  font-size: 11px;
+}
+.btn.ghost.sm {
+  font-size: 12px;
+  padding: 4px 10px;
 }
 
 @media (max-width: 860px) {
