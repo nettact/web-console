@@ -150,7 +150,6 @@ async function save() {
     const beforeIds = new Set(others.map((x) => x.id))
     const payload = [...others, current]
     await api.setTargets(SITE, payload)
-    saved.value = true
     // Reload so a freshly-created monitor gets its server-assigned id (needed to
     // configure alarm rules); locate it by id (edit) or the one new id (create).
     all.value = await api.listTargets(SITE)
@@ -161,8 +160,15 @@ async function save() {
     if (match) {
       form.id = match.id
       if (!editingId.value && match.id) router.replace(`/monitoring/${match.id}/edit`)
+      // Persist in-form alarm-rule edits before reloading, so the primary Save
+      // saves the whole form. Otherwise loadRules() overwrites the user's
+      // rule-card edits with the server's original values (the revert bug).
+      await persistRules()
       await loadRules()
     }
+    // Only now, after the target AND its rules have persisted, mark saved — so a
+    // failed rule save surfaces the error without a misleading "saved" indicator.
+    saved.value = true
   } catch (e) {
     error.value = String((e as Error).message || e)
   } finally {
@@ -287,14 +293,25 @@ async function addRule() {
     error.value = String((e as Error).message || e)
   }
 }
-async function saveRule(r: Rule) {
-  await api.updateRule(r.id, {
+// Serialize a rule card's current values for the update API. Shared by the
+// per-rule Save button and the primary Save (which persists every rule).
+function rulePayload(r: Rule): Partial<Rule> {
+  return {
     name: r.name, metric_kind: r.metric_kind, comparator: r.comparator,
     threshold: Number(r.threshold), fail_threshold: Number(r.fail_threshold),
     for_seconds: Number(r.for_seconds || 0), layer: r.layer, severity: r.severity,
     channel_ids: r.channel_ids || [], enabled: r.enabled,
-  })
+  }
+}
+async function saveRule(r: Rule) {
+  await api.updateRule(r.id, rulePayload(r))
   await loadRules()
+}
+// Persist every rule card's edits at once. Used by the primary Save so a single
+// click saves the whole form (target + its alarm rules); leaves reloading to the
+// caller. Without this, save()'s loadRules() would clobber unsaved rule edits.
+async function persistRules() {
+  await Promise.all(rules.value.filter((r) => r.id).map((r) => api.updateRule(r.id, rulePayload(r))))
 }
 async function delRule(r: Rule) {
   await api.deleteRule(r.id)
