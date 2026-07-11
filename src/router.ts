@@ -7,6 +7,7 @@ import History from './views/History.vue'
 import Monitoring from './views/Monitoring.vue'
 import MonitorForm from './views/MonitorForm.vue'
 import Incidents from './views/Incidents.vue'
+import Agents from './views/Agents.vue'
 import Settings from './views/Settings.vue'
 
 const router = createRouter({
@@ -20,6 +21,7 @@ const router = createRouter({
     { path: '/monitoring/new', component: MonitorForm },
     { path: '/monitoring/:id/edit', component: MonitorForm },
     { path: '/incidents', component: Incidents },
+    { path: '/agents', component: Agents },
     { path: '/settings', component: Settings },
   ],
 })

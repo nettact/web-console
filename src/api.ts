@@ -17,6 +17,7 @@ export interface Site {
 export interface Agent {
   id: string
   site_id: string
+  display_name: string
   hostname: string
   platform: string
   agent_version: string
@@ -213,6 +214,9 @@ export const api = {
   sites: () => req<Site[]>('GET', '/api/v1/sites'),
   agents: () => req<Agent[]>('GET', '/api/v1/agents'),
   agent: (id: string) => req<Agent>('GET', `/api/v1/agents/${encodeURIComponent(id)}`),
+  updateAgent: (id: string, displayName: string) =>
+    req<Agent>('PUT', `/api/v1/agents/${encodeURIComponent(id)}`, { display_name: displayName }),
+  deleteAgent: (id: string) => req<unknown>('DELETE', `/api/v1/agents/${encodeURIComponent(id)}`),
   // Live host snapshot: ask the agent (POST), then poll for the result (GET).
   requestSnapshot: (id: string, wantProcesses = true, wantConnections = true) =>
     req<{ request_id: string }>('POST', `/api/v1/agents/${encodeURIComponent(id)}/snapshot`, {

@@ -22,6 +22,7 @@ const nav = [
   { to: '/history', label: 'nav.history' },
   { to: '/incidents', label: 'nav.incidents' },
   { to: '/monitoring', label: 'nav.monitoring' },
+  { to: '/agents', label: 'nav.agents' },
   { to: '/settings', label: 'nav.settings' },
 ]
 
@@ -84,6 +85,13 @@ const initials = computed(() => (auth.user?.username ?? '?').slice(0, 1).toUpper
               <circle cx="12" cy="12" r="8" />
               <circle cx="12" cy="12" r="3.4" />
               <path d="M12 2v3M12 19v3M2 12h3M19 12h3" />
+            </svg>
+            <!-- Agent 管理 -->
+            <svg v-else-if="n.to === '/agents'" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+              stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+              <rect x="3" y="4" width="18" height="7" rx="2" />
+              <rect x="3" y="13" width="18" height="7" rx="2" />
+              <path d="M7 7.5h.01M7 16.5h.01" />
             </svg>
             <!-- 设置 -->
             <svg v-else viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"

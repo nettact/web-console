@@ -1,16 +1,12 @@
 <script setup lang="ts">
 import { ref, reactive, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { api, type Quota, type EnrollmentToken, type Channel, type StorageStats } from '../api'
-import { toDateLocale } from '../i18n'
+import { api, type Quota, type Channel, type StorageStats } from '../api'
 
-const { t, locale } = useI18n()
+const { t } = useI18n()
 
 const quota = ref<Quota | null>(null)
 const stats = ref<StorageStats | null>(null)
-const tokens = ref<EnrollmentToken[]>([])
-const note = ref('')
-const newToken = ref('')
 const error = ref('')
 
 const channels = ref<Channel[]>([])
@@ -25,8 +21,8 @@ const email = reactive({ name: '', host: '', port: '587', from: '', to: '', user
 
 async function load() {
   try {
-    ;[quota.value, stats.value, tokens.value, channels.value] = await Promise.all([
-      api.quota(), api.stats(), api.listTokens(), api.channels(),
+    ;[quota.value, stats.value, channels.value] = await Promise.all([
+      api.quota(), api.stats(), api.channels(),
     ])
   } catch (e) {
     error.value = String((e as Error).message || e)
@@ -56,33 +52,6 @@ async function removeChannel(id: string) {
   await api.deleteChannel(id)
   await load()
 }
-async function create() {
-  error.value = ''
-  newToken.value = ''
-  try {
-    const r = await api.createToken(note.value)
-    newToken.value = r.token
-    note.value = ''
-    await load()
-  } catch (e) {
-    error.value = String((e as Error).message || e)
-  }
-}
-function copyToken() {
-  navigator.clipboard?.writeText(newToken.value)
-}
-type TokenState = 'used' | 'expired' | 'available'
-function tokenState(tok: EnrollmentToken): TokenState {
-  if (tok.used_at) return 'used'
-  return new Date(tok.expires_at) < new Date() ? 'expired' : 'available'
-}
-const tokenStateLabel = (tok: EnrollmentToken) =>
-  ({
-    used: t('settings.tokenUsed'),
-    expired: t('settings.tokenExpired'),
-    available: t('settings.tokenAvailable'),
-  })[tokenState(tok)]
-const fmtDateTime = (s: string) => new Date(s).toLocaleString(toDateLocale(locale.value))
 onMounted(load)
 </script>
 
@@ -122,39 +91,7 @@ onMounted(load)
       {{ t('settings.storageNote') }}
     </p>
 
-    <section class="panel">
-      <div class="panel-head"><h3>{{ t('settings.enrollTokens') }}</h3></div>
-      <div class="panel-body">
-        <p class="hint">{{ t('settings.enrollHintPrefix') }}<code>nettact-agent --server &lt;URL&gt; --enroll-token &lt;token&gt;</code></p>
-        <div class="row">
-          <input v-model="note" :placeholder="t('settings.notePlaceholder')" />
-          <button class="btn btn-primary" @click="create">{{ t('settings.genToken') }}</button>
-        </div>
-        <div v-if="newToken" class="token">
-          <span class="token-label">{{ t('settings.tokenOnce') }}</span>
-          <code>{{ newToken }}</code>
-          <button class="link-btn" @click="copyToken">{{ t('settings.copy') }}</button>
-        </div>
-        <p v-if="error" class="err">{{ error }}</p>
-      </div>
-      <div class="table-wrap">
-        <table class="data-table">
-          <thead>
-            <tr><th>{{ t('settings.thNote') }}</th><th>{{ t('settings.thExpires') }}</th><th>{{ t('settings.thState') }}</th></tr>
-          </thead>
-          <tbody>
-            <tr v-if="!tokens.length"><td colspan="3" class="hint">{{ t('settings.noTokens') }}</td></tr>
-            <tr v-for="(tok, i) in tokens" :key="i">
-              <td>{{ tok.note || '—' }}</td>
-              <td class="hint">{{ fmtDateTime(tok.expires_at) }}</td>
-              <td>
-                <span class="badge" :class="tokenState(tok) === 'available' ? 'up' : 'neutral'">{{ tokenStateLabel(tok) }}</span>
-              </td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
-    </section>
+    <p v-if="error" class="err">{{ error }}</p>
 
     <section class="panel">
       <div class="panel-head"><h3>{{ t('settings.channels') }}</h3><span class="count">{{ channels.length }}</span></div>
@@ -248,35 +185,6 @@ onMounted(load)
 }
 .storage-note {
   margin: -8px 0 22px;
-}
-code {
-  font-family: var(--mono);
-  font-size: 12px;
-  padding: 1px 6px;
-  border-radius: 5px;
-  background: var(--surface-2);
-  border: 1px solid var(--border);
-}
-.token {
-  display: flex;
-  gap: 12px;
-  align-items: center;
-  padding: 12px 14px;
-  margin-top: 12px;
-  background: var(--primary-soft);
-  border: 1px solid rgba(56, 189, 248, 0.28);
-  border-radius: var(--radius-sm);
-  flex-wrap: wrap;
-}
-.token-label {
-  font-size: 12px;
-  color: var(--text-dim);
-}
-.token code {
-  background: var(--code-bg);
-  word-break: break-all;
-  color: var(--primary);
-  border-color: transparent;
 }
 .type-tabs {
   display: flex;
