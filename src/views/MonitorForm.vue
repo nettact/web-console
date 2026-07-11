@@ -2,7 +2,7 @@
 import { ref, reactive, computed, onMounted, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
-import { api, type ProbeTarget, type ProbeParams, type Rule, type Channel } from '../api'
+import { api, type ProbeTarget, type ProbeParams, type Rule, type Channel, type AgentGroup } from '../api'
 
 const { t: tr } = useI18n()
 const route = useRoute()
@@ -41,7 +41,22 @@ const notFound = ref(false)
 const loaded = ref(false)
 
 function blank(): ProbeTarget {
-  return { kind: 'icmp', name: '', target: '', params: {}, enabled: true }
+  return { kind: 'icmp', name: '', target: '', params: {}, enabled: true, all_agents: true, group_ids: [] }
+}
+
+// Agent groups for the scope selector. A target is either broadcast to all agents
+// (all_agents=true) or limited to the selected groups.
+const groups = ref<AgentGroup[]>([])
+// Scope radio bound to the boolean flag so the two states stay in sync.
+const scope = computed<'all' | 'groups'>({
+  get: () => (form.all_agents ? 'all' : 'groups'),
+  set: (v) => { form.all_agents = v === 'all' },
+})
+function toggleGroup(id: string) {
+  const ids = form.group_ids || (form.group_ids = [])
+  const i = ids.indexOf(id)
+  if (i >= 0) ids.splice(i, 1)
+  else ids.push(id)
 }
 
 // HTTP is a single type: an empty keyword means a plain availability check; a
@@ -64,7 +79,11 @@ function placeholderFor(kind: string): string {
 
 async function loadAll() {
   try {
-    ;[all.value, channels.value] = await Promise.all([api.listTargets(SITE), api.channels()])
+    ;[all.value, channels.value, groups.value] = await Promise.all([
+      api.listTargets(SITE),
+      api.channels(),
+      api.agentGroups(SITE),
+    ])
   } catch (e) {
     // Leave loaded=false so Save stays disabled — reconciling against an empty
     // list would wipe every existing monitor.
@@ -383,6 +402,34 @@ onMounted(loadAll)
         </div>
       </section>
 
+      <!-- Scope: which agents run this monitor. Hidden for host anchors, which are
+           server-side and never pushed to agents. -->
+      <section class="panel" v-if="!isHostMode">
+        <div class="panel-head"><h3>{{ tr('mform.secScope') }}</h3></div>
+        <p class="hint panel-hint">{{ tr('mform.scopeHint') }}</p>
+        <div class="panel-body">
+          <label class="scope-opt">
+            <input type="radio" value="all" v-model="scope" />
+            <span>{{ tr('mform.scopeAll') }}</span>
+          </label>
+          <label class="scope-opt">
+            <input type="radio" value="groups" v-model="scope" />
+            <span>{{ tr('mform.scopeGroups') }}</span>
+          </label>
+          <div v-if="scope === 'groups'" class="group-pick">
+            <p v-if="!groups.length" class="hint tiny">{{ tr('mform.noGroupsHint') }}
+              <router-link to="/agents">{{ tr('mform.manageGroups') }}</router-link>
+            </p>
+            <label v-for="g in groups" :key="g.id" class="group-chip">
+              <input type="checkbox" :checked="(form.group_ids || []).includes(g.id)" @change="toggleGroup(g.id)" />
+              <span>{{ g.name }}</span>
+              <em>{{ tr('mform.groupAgentCount', { n: g.agent_ids.length }) }}</em>
+            </label>
+            <p v-if="groups.length && !(form.group_ids || []).length" class="hint tiny warn">{{ tr('mform.scopeEmptyWarn') }}</p>
+          </div>
+        </div>
+      </section>
+
       <!-- Advanced / per-type -->
       <section class="panel" v-if="form.kind === 'icmp' || form.kind === 'dns' || form.kind === 'tcp'">
         <div class="panel-head"><h3>{{ tr('mform.secAdvanced') }}</h3></div>
@@ -553,5 +600,12 @@ onMounted(loadAll)
 .num { width: 80px; padding: 6px 8px; }
 .num.sm { width: 62px; }
 .tiny { font-size: 11.5px; margin: 4px 0 0; }
+.tiny.warn { color: var(--warn, #b26b00); }
+.scope-opt { display: flex; align-items: center; gap: 8px; font-size: 13px; margin: 4px 0; }
+.scope-opt input { width: auto; }
+.group-pick { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 8px; padding-top: 8px; border-top: 1px dashed var(--border); }
+.group-chip { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; padding: 4px 8px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface); }
+.group-chip input { width: auto; }
+.group-chip em { font-style: normal; color: var(--text-dim); font-size: 11px; }
 .form-foot { display: flex; align-items: center; gap: 12px; padding: 4px 0 20px; }
 </style>

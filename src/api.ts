@@ -97,6 +97,19 @@ export interface ProbeTarget {
   target: string
   params?: ProbeParams
   enabled: boolean
+  // Scope: all_agents=true pushes to every agent in the site (default). When
+  // false, the target reaches only agents in group_ids.
+  all_agents: boolean
+  group_ids?: string[]
+}
+// A named set of agents used to scope monitoring targets. An agent may belong to
+// several groups; a target scoped to a group is pushed to all its members.
+export interface AgentGroup {
+  id: string
+  site_id: string
+  name: string
+  agent_ids: string[]
+  created_at: string
 }
 export interface EnrollmentToken {
   site_id: string
@@ -253,6 +266,14 @@ export const api = {
     req<unknown>('PUT', `/api/v1/sites/${encodeURIComponent(siteID)}/targets`, { targets }),
   purgeTarget: (siteID: string, target: string) =>
     req<{ purged_series: number }>('POST', `/api/v1/sites/${encodeURIComponent(siteID)}/purge-target`, { target }),
+  // Agent groups scope monitoring targets to a subset of agents.
+  agentGroups: (siteID: string) =>
+    req<AgentGroup[]>('GET', `/api/v1/sites/${encodeURIComponent(siteID)}/agent-groups`),
+  createAgentGroup: (siteID: string, name: string) =>
+    req<{ id: string }>('POST', `/api/v1/sites/${encodeURIComponent(siteID)}/agent-groups`, { name }),
+  updateAgentGroup: (id: string, name: string, agentIds: string[]) =>
+    req<unknown>('PUT', `/api/v1/agent-groups/${encodeURIComponent(id)}`, { name, agent_ids: agentIds }),
+  deleteAgentGroup: (id: string) => req<unknown>('DELETE', `/api/v1/agent-groups/${encodeURIComponent(id)}`),
   listDevices: (siteID: string) => req<Device[]>('GET', `/api/v1/sites/${encodeURIComponent(siteID)}/devices`),
   incidents: () => req<Incident[]>('GET', '/api/v1/incidents'),
   timeline: (id: string) => req<TimelineEntry[]>('GET', `/api/v1/incidents/${encodeURIComponent(id)}/timeline`),

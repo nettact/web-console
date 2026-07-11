@@ -1,13 +1,16 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { api, type Agent, type EnrollmentToken } from '../api'
+import { api, type Agent, type EnrollmentToken, type AgentGroup } from '../api'
 import { toDateLocale } from '../i18n'
 
 const { t, locale } = useI18n()
 
+const SITE = 'site_default'
 const agents = ref<Agent[]>([])
 const tokens = ref<EnrollmentToken[]>([])
+const groups = ref<AgentGroup[]>([])
+const newGroupName = ref('')
 const note = ref('')
 const newToken = ref('')
 const error = ref('')
@@ -15,7 +18,54 @@ const busy = ref(false)
 
 async function load() {
   try {
-    ;[agents.value, tokens.value] = await Promise.all([api.agents(), api.listTokens()])
+    ;[agents.value, tokens.value, groups.value] = await Promise.all([
+      api.agents(),
+      api.listTokens(),
+      api.agentGroups(SITE),
+    ])
+  } catch (e) {
+    error.value = String((e as Error).message || e)
+  }
+}
+
+// ---- agent groups: named sets of agents used to scope monitoring targets ----
+function agentLabel(id: string): string {
+  const a = agents.value.find((x) => x.id === id)
+  return a ? a.display_name || a.hostname || a.id : id
+}
+function toggleMember(g: AgentGroup, agentId: string) {
+  const i = g.agent_ids.indexOf(agentId)
+  if (i >= 0) g.agent_ids.splice(i, 1)
+  else g.agent_ids.push(agentId)
+}
+async function createGroup() {
+  const name = newGroupName.value.trim()
+  if (!name) return
+  error.value = ''
+  try {
+    await api.createAgentGroup(SITE, name)
+    newGroupName.value = ''
+    await load()
+  } catch (e) {
+    error.value = String((e as Error).message || e)
+  }
+}
+async function saveGroup(g: AgentGroup) {
+  error.value = ''
+  try {
+    await api.updateAgentGroup(g.id, g.name.trim(), g.agent_ids)
+    await load()
+  } catch (e) {
+    error.value = String((e as Error).message || e)
+    await load()
+  }
+}
+async function removeGroup(g: AgentGroup) {
+  if (!confirm(t('agents.groupConfirmDelete', { name: g.name }))) return
+  error.value = ''
+  try {
+    await api.deleteAgentGroup(g.id)
+    await load()
   } catch (e) {
     error.value = String((e as Error).message || e)
   }
@@ -131,6 +181,36 @@ onMounted(load)
     </section>
 
     <section class="panel">
+      <div class="panel-head">
+        <h3>{{ t('agents.groupsTitle') }}</h3>
+        <span class="count">{{ groups.length }}</span>
+      </div>
+      <div class="panel-body">
+        <p class="hint">{{ t('agents.groupsHint') }}</p>
+        <div class="row">
+          <input v-model="newGroupName" :placeholder="t('agents.groupNamePlaceholder')" @keyup.enter="createGroup" />
+          <button class="btn btn-primary" @click="createGroup">{{ t('agents.groupCreate') }}</button>
+        </div>
+        <p v-if="!groups.length" class="hint tiny">{{ t('agents.noGroups') }}</p>
+        <div v-for="g in groups" :key="g.id" class="group-card">
+          <div class="group-head">
+            <input v-model="g.name" class="group-name" :placeholder="t('agents.groupNamePlaceholder')" />
+            <span class="spacer"></span>
+            <button class="link-btn" @click="saveGroup(g)">{{ t('common.save') }}</button>
+            <button class="link-btn danger" @click="removeGroup(g)">{{ t('common.delete') }}</button>
+          </div>
+          <div class="group-members">
+            <span v-if="!agents.length" class="hint tiny">{{ t('agents.noAgents') }}</span>
+            <label v-for="a in agents" :key="a.id" class="member-chip">
+              <input type="checkbox" :checked="g.agent_ids.includes(a.id)" @change="toggleMember(g, a.id)" />
+              <span>{{ agentLabel(a.id) }}</span>
+            </label>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="panel">
       <div class="panel-head"><h3>{{ t('agents.enrollTokens') }}</h3></div>
       <div class="panel-body">
         <p class="hint">{{ t('agents.addAgentHint') }}</p>
@@ -228,6 +308,47 @@ code {
 .token-label {
   font-size: 12px;
   color: var(--text-dim);
+}
+.tiny {
+  font-size: 11.5px;
+  margin: 8px 0 0;
+}
+.group-card {
+  margin-top: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+}
+.group-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.group-head .spacer {
+  flex: 1;
+}
+.group-name {
+  min-width: 180px;
+  font-weight: 600;
+}
+.group-members {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px dashed var(--border);
+}
+.member-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12.5px;
+  color: var(--text-dim);
+}
+.member-chip input {
+  width: auto;
 }
 .token code {
   background: var(--code-bg);

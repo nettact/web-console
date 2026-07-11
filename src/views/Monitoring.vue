@@ -1,21 +1,31 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { api, type ProbeTarget } from '../api'
+import { api, type ProbeTarget, type AgentGroup } from '../api'
 
 const { t: tr } = useI18n()
 
 const SITE = 'site_default'
 const targets = ref<ProbeTarget[]>([])
+const groups = ref<AgentGroup[]>([])
 const error = ref('')
 const busy = ref(false)
 
 async function load() {
   try {
-    targets.value = await api.listTargets(SITE)
+    ;[targets.value, groups.value] = await Promise.all([api.listTargets(SITE), api.agentGroups(SITE)])
   } catch (e) {
     error.value = String((e as Error).message || e)
   }
+}
+
+// Scope column: host anchors aren't pushed to agents (—); broadcast targets show
+// "all agents"; group-scoped targets list their group names.
+function scopeLabel(t: ProbeTarget): string {
+  if (t.kind === 'host') return '—'
+  if (t.all_agents) return tr('monitoring.scopeAll')
+  const names = (t.group_ids || []).map((id) => groups.value.find((g) => g.id === id)?.name).filter(Boolean)
+  return names.length ? names.join(', ') : tr('monitoring.scopeNone')
 }
 
 // Human label for a target's type, folding the http keyword variant into its own
@@ -92,6 +102,7 @@ onMounted(load)
               <th>{{ tr('monitoring.thName') }}</th>
               <th>{{ tr('monitoring.thType') }}</th>
               <th>{{ tr('monitoring.thTarget') }}</th>
+              <th>{{ tr('monitoring.thScope') }}</th>
               <th class="center">{{ tr('monitoring.thEnabled') }}</th>
               <th></th>
             </tr>
@@ -101,13 +112,14 @@ onMounted(load)
               <td>{{ t.name || tr('monitoring.unnamed') }}</td>
               <td>{{ typeLabel(t) }}</td>
               <td class="mono">{{ targetLabel(t) }}<span v-if="t.kind === 'tcp' && t.params?.port">:{{ t.params.port }}</span></td>
+              <td class="scope">{{ scopeLabel(t) }}</td>
               <td class="center"><span :class="['dot', t.enabled ? 'on' : 'off']"></span></td>
               <td class="actions">
                 <router-link :to="`/monitoring/${t.id}/edit`" class="link-btn">{{ tr('monitoring.editMonitor') }}</router-link>
                 <button class="link-btn danger" :disabled="busy" @click="removeTarget(t)">{{ tr('common.delete') }}</button>
               </td>
             </tr>
-            <tr v-if="!targets.length"><td colspan="5" class="hint">{{ tr('monitoring.noTargets') }}</td></tr>
+            <tr v-if="!targets.length"><td colspan="6" class="hint">{{ tr('monitoring.noTargets') }}</td></tr>
           </tbody>
         </table>
       </div>
@@ -141,6 +153,7 @@ onMounted(load)
 }
 .head-btn { margin-left: auto; margin-right: 8px; }
 .mono { font-family: var(--font-mono, monospace); font-size: 12.5px; }
+.scope { font-size: 12.5px; color: var(--text-dim); }
 .actions { display: flex; gap: 10px; justify-content: flex-end; }
 .dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; }
 .dot.on { background: var(--ok, #34d399); }
