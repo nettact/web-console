@@ -64,20 +64,36 @@ export interface Sample {
 export interface ProbeParams {
   interval_seconds?: number
   timeout_ms?: number
-  // icmp
+  // icmp / ping
   packet_size?: number
   retries?: number
+  packet_count?: number
+  global_timeout_ms?: number
   // dns
   record_type?: string
+  resolver_server?: string
+  resolver_port?: number
+  resolver_protocol?: string
   // http
   method?: string
   expected_status?: number
+  accepted_statuses?: string
+  keyword?: string
+  keyword_invert?: boolean
+  headers?: Record<string, string>
+  body?: string
+  max_redirects?: number
+  ignore_tls?: boolean
+  max_response_bytes?: number
+  // tcp
+  port?: number
+  tls?: boolean
 }
 export interface ProbeTarget {
   id?: string
   kind: string
+  name?: string
   target: string
-  tier: string
   params?: ProbeParams
   enabled: boolean
 }

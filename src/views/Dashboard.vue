@@ -368,11 +368,12 @@ onBeforeUnmount(() => {
           <div class="panel-head"><h3>{{ t('dashboard.lanDevicesArp') }}</h3><span class="count">{{ devices.length }}</span></div>
           <div class="table-wrap">
             <table class="data-table">
-              <thead><tr><th>IP</th><th>MAC</th></tr></thead>
+              <thead><tr><th>IP</th><th>{{ t('dashboard.thHostname') }}</th><th>MAC</th></tr></thead>
               <tbody>
-                <tr v-if="!devices.length"><td colspan="2" class="hint">{{ t('dashboard.noDeviceYet') }}</td></tr>
+                <tr v-if="!devices.length"><td colspan="3" class="hint">{{ t('dashboard.noDeviceYet') }}</td></tr>
                 <tr v-for="d in devices" :key="d.mac">
                   <td class="mono">{{ d.ip }}</td>
+                  <td :class="{ hint: !d.hostname }">{{ d.hostname || '—' }}</td>
                   <td class="mono">{{ d.mac }}</td>
                 </tr>
               </tbody>

@@ -5,6 +5,7 @@ import Dashboard from './views/Dashboard.vue'
 import Processes from './views/Processes.vue'
 import History from './views/History.vue'
 import Monitoring from './views/Monitoring.vue'
+import MonitorForm from './views/MonitorForm.vue'
 import Incidents from './views/Incidents.vue'
 import Settings from './views/Settings.vue'
 
@@ -16,6 +17,8 @@ const router = createRouter({
     { path: '/processes', component: Processes },
     { path: '/history', component: History },
     { path: '/monitoring', component: Monitoring },
+    { path: '/monitoring/new', component: MonitorForm },
+    { path: '/monitoring/:id/edit', component: MonitorForm },
     { path: '/incidents', component: Incidents },
     { path: '/settings', component: Settings },
   ],
