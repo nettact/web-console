@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
+import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue'
 import { useRoute } from 'vue-router'
 import { api, type Agent, type ProcessInfo, type ConnectionInfo, type HostSnapshot } from '../api'
 
@@ -15,11 +15,24 @@ const snapshot = ref<HostSnapshot | null>(null)
 const loading = ref(false)
 const error = ref('')
 const sortKey = ref<'cpu' | 'ram' | 'name'>('cpu')
+const tab = ref<'processes' | 'connections'>('processes')
 let poll: number | undefined
 
 const canProcs = computed(() => agent.value?.capabilities?.includes('host.process.read') ?? false)
 const canConns = computed(() => agent.value?.capabilities?.includes('host.connection.read') ?? false)
 const permitted = computed(() => canProcs.value || canConns.value)
+
+// Keep the active tab valid for the selected agent's capabilities: if the current
+// tab isn't available but the other is, switch to it (e.g. an agent that only
+// reports connections should land on the 网络连接 tab).
+watch(
+  [canProcs, canConns],
+  () => {
+    if (tab.value === 'processes' && !canProcs.value && canConns.value) tab.value = 'connections'
+    else if (tab.value === 'connections' && !canConns.value && canProcs.value) tab.value = 'processes'
+  },
+  { immediate: true },
+)
 
 async function loadAgents() {
   try {
@@ -162,11 +175,36 @@ onBeforeUnmount(stopPoll)
     </div>
 
     <template v-else>
-      <!-- processes -->
-      <section class="panel" v-if="canProcs">
-        <div class="panel-head">
-          <h3>进程</h3>
+      <!-- tabs: switch between 进程 and 网络连接 instead of stacking them, so a
+           long process list doesn't bury the network connections below it. -->
+      <div class="tabs" role="tablist">
+        <button
+          v-if="canProcs"
+          class="tab"
+          role="tab"
+          :class="{ active: tab === 'processes' }"
+          :aria-selected="tab === 'processes'"
+          @click="tab = 'processes'"
+        >
+          进程
           <span class="count">{{ snapshot?.process_total ?? processes.length }}</span>
+        </button>
+        <button
+          v-if="canConns"
+          class="tab"
+          role="tab"
+          :class="{ active: tab === 'connections' }"
+          :aria-selected="tab === 'connections'"
+          @click="tab = 'connections'"
+        >
+          网络连接
+          <span class="count">{{ connections.length }}</span>
+        </button>
+      </div>
+
+      <!-- processes -->
+      <section class="panel" v-if="canProcs" v-show="tab === 'processes'">
+        <div class="panel-head">
           <span class="spacer"></span>
           <div class="sort">
             <label>排序</label>
@@ -206,11 +244,7 @@ onBeforeUnmount(stopPoll)
       </section>
 
       <!-- connections -->
-      <section class="panel" v-if="canConns">
-        <div class="panel-head">
-          <h3>网络连接</h3>
-          <span class="count">{{ connections.length }}</span>
-        </div>
+      <section class="panel" v-if="canConns" v-show="tab === 'connections'">
         <div class="table-wrap">
           <table class="data-table">
             <thead>
@@ -251,6 +285,33 @@ onBeforeUnmount(stopPoll)
 .sub {
   margin-top: -6px;
   margin-bottom: 14px;
+}
+.tabs {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 14px;
+  border-bottom: 1px solid var(--border);
+}
+.tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 16px;
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+}
+.tab:hover {
+  color: var(--text);
+}
+.tab.active {
+  color: var(--primary);
+  border-bottom-color: var(--primary);
 }
 .table-wrap {
   overflow-x: auto;
