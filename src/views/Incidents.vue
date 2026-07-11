@@ -1,6 +1,10 @@
 <script setup lang="ts">
 import { ref, onMounted, onBeforeUnmount } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { api, type Incident, type TimelineEntry, type Alert } from '../api'
+import { toDateLocale } from '../i18n'
+
+const { t, te, locale } = useI18n()
 
 const incidents = ref<Incident[]>([])
 const alerts = ref<Alert[]>([])
@@ -9,10 +13,12 @@ const timeline = ref<TimelineEntry[]>([])
 const error = ref('')
 let timer: number | undefined
 
-const LAYERS: Record<string, string> = {
-  local: '本机', lan: '局域网', wan: 'WAN', internet: '互联网', dns: 'DNS', service: '服务', wireless: '无线',
+const layerLabel = (l: string) => {
+  const key = `incidents.layer.${l}`
+  return l && te(key) ? t(key) : l || '—'
 }
-const layerLabel = (l: string) => LAYERS[l] || l || '—'
+const fmtTime = (s: string) => new Date(s).toLocaleTimeString(toDateLocale(locale.value))
+const fmtDateTime = (s: string) => new Date(s).toLocaleString(toDateLocale(locale.value))
 
 async function load() {
   try {
@@ -38,28 +44,28 @@ onBeforeUnmount(() => {
 <template>
   <main class="page">
     <div class="page-head">
-      <h2>事故与告警</h2>
-      <p class="sub">阈值告警实时聚合为分层事故，选中事故可展开处置时间线。</p>
+      <h2>{{ t('incidents.title') }}</h2>
+      <p class="sub">{{ t('incidents.sub') }}</p>
     </div>
     <p v-if="error" class="err">{{ error }}</p>
 
     <section class="panel">
       <div class="panel-head">
-        <h3>活动告警</h3>
+        <h3>{{ t('incidents.activeAlerts') }}</h3>
         <span class="count" :class="{ hot: alerts.length }">{{ alerts.length }}</span>
       </div>
       <div class="table-wrap">
         <table class="data-table">
-          <thead><tr><th>规则</th><th>Agent</th><th>目标</th><th>层</th><th>值</th><th>开始</th></tr></thead>
+          <thead><tr><th>{{ t('incidents.thRule') }}</th><th>{{ t('incidents.thAgent') }}</th><th>{{ t('incidents.thTarget') }}</th><th>{{ t('incidents.thLayer') }}</th><th>{{ t('incidents.thValue') }}</th><th>{{ t('incidents.thStart') }}</th></tr></thead>
           <tbody>
-            <tr v-if="!alerts.length"><td colspan="6" class="hint">无活动告警，一切正常 ✓</td></tr>
+            <tr v-if="!alerts.length"><td colspan="6" class="hint">{{ t('incidents.noActiveAlerts') }}</td></tr>
             <tr v-for="a in alerts" :key="a.id">
               <td>{{ a.rule_name }}</td>
               <td class="mono">{{ a.agent_id.slice(0, 14) }}…</td>
               <td>{{ a.target }}</td>
               <td><span class="badge neutral">{{ layerLabel(a.layer) }}</span></td>
               <td>{{ a.value.toFixed(1) }}</td>
-              <td class="hint">{{ new Date(a.started_at).toLocaleTimeString() }}</td>
+              <td class="hint">{{ fmtTime(a.started_at) }}</td>
             </tr>
           </tbody>
         </table>
@@ -68,26 +74,26 @@ onBeforeUnmount(() => {
 
     <section class="panel">
       <div class="panel-head">
-        <h3>事故</h3>
+        <h3>{{ t('incidents.incidents') }}</h3>
         <span class="count">{{ incidents.length }}</span>
       </div>
       <div class="table-wrap">
         <table class="data-table">
-          <thead><tr><th>状态</th><th>疑似层</th><th>严重度</th><th>摘要</th><th>开始时间</th></tr></thead>
+          <thead><tr><th>{{ t('incidents.thState') }}</th><th>{{ t('incidents.thSuspectedLayer') }}</th><th>{{ t('incidents.thSeverity') }}</th><th>{{ t('incidents.thSummary') }}</th><th>{{ t('incidents.thStartTime') }}</th></tr></thead>
           <tbody>
-            <tr v-if="!incidents.length"><td colspan="5" class="hint">暂无事故</td></tr>
+            <tr v-if="!incidents.length"><td colspan="5" class="hint">{{ t('incidents.noIncidents') }}</td></tr>
             <tr v-for="i in incidents" :key="i.id" class="clickable" :class="{ selected: i.id === selected }"
               @click="select(i.id)">
               <td>
                 <span class="badge" :class="i.state">
                   <span class="dot" :class="i.state === 'open' ? 'down' : 'up'"></span>
-                  {{ i.state === 'open' ? '进行中' : '已恢复' }}
+                  {{ i.state === 'open' ? t('incidents.stateOpen') : t('incidents.stateResolved') }}
                 </span>
               </td>
               <td>{{ layerLabel(i.suspected_layer) }}</td>
               <td>{{ i.severity }}</td>
               <td>{{ i.summary }}</td>
-              <td class="hint">{{ new Date(i.opened_at).toLocaleString() }}</td>
+              <td class="hint">{{ fmtDateTime(i.opened_at) }}</td>
             </tr>
           </tbody>
         </table>
@@ -95,15 +101,15 @@ onBeforeUnmount(() => {
     </section>
 
     <section v-if="selected" class="panel">
-      <div class="panel-head"><h3>时间线</h3></div>
+      <div class="panel-head"><h3>{{ t('incidents.timeline') }}</h3></div>
       <div class="panel-body">
         <ul class="timeline">
-          <li v-if="!timeline.length" class="hint">无记录</li>
-          <li v-for="(t, idx) in timeline" :key="idx">
+          <li v-if="!timeline.length" class="hint">{{ t('incidents.noRecords') }}</li>
+          <li v-for="(entry, idx) in timeline" :key="idx">
             <span class="node"></span>
-            <span class="ts">{{ new Date(t.ts).toLocaleTimeString() }}</span>
-            <span class="kind">{{ t.kind }}</span>
-            <span class="msg">{{ t.message }}</span>
+            <span class="ts">{{ fmtTime(entry.ts) }}</span>
+            <span class="kind">{{ entry.kind }}</span>
+            <span class="msg">{{ entry.message }}</span>
           </li>
         </ul>
       </div>

@@ -1,26 +1,33 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { useRouter, useRoute, RouterLink, RouterView } from 'vue-router'
+import { useI18n } from 'vue-i18n'
 import { auth, logout } from './auth'
+import LangSwitch from './components/LangSwitch.vue'
 
 const router = useRouter()
 const route = useRoute()
+const { t } = useI18n()
 
 async function doLogout() {
   await logout()
   router.push('/login')
 }
 
+// `label` is an i18n key resolved at render time so nav + breadcrumb re-translate live.
 const nav = [
-  { to: '/', label: '总览' },
-  { to: '/processes', label: '实时进程' },
-  { to: '/history', label: '历史' },
-  { to: '/incidents', label: '事故' },
-  { to: '/monitoring', label: '监控目标' },
-  { to: '/settings', label: '设置' },
+  { to: '/', label: 'nav.overview' },
+  { to: '/processes', label: 'nav.processes' },
+  { to: '/history', label: 'nav.history' },
+  { to: '/incidents', label: 'nav.incidents' },
+  { to: '/monitoring', label: 'nav.monitoring' },
+  { to: '/settings', label: 'nav.settings' },
 ]
 
-const sectionTitle = computed(() => nav.find((n) => n.to === route.path)?.label ?? '总览')
+const sectionTitle = computed(() => {
+  const key = nav.find((n) => n.to === route.path)?.label ?? 'nav.overview'
+  return t(key)
+})
 const initials = computed(() => (auth.user?.username ?? '?').slice(0, 1).toUpperCase())
 </script>
 
@@ -36,7 +43,7 @@ const initials = computed(() => (auth.user?.username ?? '?').slice(0, 1).toUpper
         </span>
         <span class="logo-text">
           <b>NetTact</b>
-          <small>网络监控控制台</small>
+          <small>{{ t('app.consoleSubtitle') }}</small>
         </span>
       </div>
 
@@ -84,13 +91,13 @@ const initials = computed(() => (auth.user?.username ?? '?').slice(0, 1).toUpper
               <path d="M19.4 15a1.6 1.6 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.6 1.6 0 0 0-2.7 1.1V21a2 2 0 0 1-4 0v-.1A1.6 1.6 0 0 0 7 19.4a1.6 1.6 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.6 1.6 0 0 0-1.1-2.7H1a2 2 0 0 1 0-4h.1A1.6 1.6 0 0 0 2.6 7a1.6 1.6 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.6 1.6 0 0 0 1.8.3H7a1.6 1.6 0 0 0 1-1.5V1a2 2 0 0 1 4 0v.1a1.6 1.6 0 0 0 2.7 1.1 1.6 1.6 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.6 1.6 0 0 0-.3 1.8V7a1.6 1.6 0 0 0 1.5 1H23a2 2 0 0 1 0 4h-.1a1.6 1.6 0 0 0-1.5 1Z" />
             </svg>
           </span>
-          <span class="nav-label">{{ n.label }}</span>
+          <span class="nav-label">{{ t(n.label) }}</span>
         </RouterLink>
       </nav>
 
       <div class="sidebar-foot">
         <span class="dot live"></span>
-        <span>实时采集 · 5s</span>
+        <span>{{ t('app.liveCollect') }}</span>
       </div>
     </aside>
 
@@ -102,6 +109,7 @@ const initials = computed(() => (auth.user?.username ?? '?').slice(0, 1).toUpper
           <span class="crumb-cur">{{ sectionTitle }}</span>
         </div>
         <span class="spacer"></span>
+        <LangSwitch />
         <div class="user-chip">
           <span class="avatar">{{ initials }}</span>
           <span class="uname">{{ auth.user.username }}</span>
@@ -111,7 +119,7 @@ const initials = computed(() => (auth.user?.username ?? '?').slice(0, 1).toUpper
             stroke-linecap="round" stroke-linejoin="round">
             <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9" />
           </svg>
-          退出
+          {{ t('app.logout') }}
         </button>
       </header>
 

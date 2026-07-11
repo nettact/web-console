@@ -1,7 +1,10 @@
 <script setup lang="ts">
 import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue'
 import { useRoute } from 'vue-router'
+import { useI18n } from 'vue-i18n'
 import { api, type Agent, type ProcessInfo, type ConnectionInfo, type HostSnapshot } from '../api'
+
+const { t } = useI18n()
 
 // This page shows a live, on-demand snapshot of an agent's processes and network
 // connections. Nothing is stored server-side: opening the page asks the agent to
@@ -82,7 +85,7 @@ async function requestSnapshot() {
           stopPoll()
         } else if (tries > 25) {
           loading.value = false
-          error.value = '等待 agent 响应超时（agent 可能离线）'
+          error.value = t('processes.waitTimeout')
           stopPoll()
         }
       } catch (e) {
@@ -148,7 +151,7 @@ onBeforeUnmount(stopPoll)
 <template>
   <main class="page">
     <div class="page-head">
-      <h2>实时进程 / 网络连接</h2>
+      <h2>{{ t('processes.title') }}</h2>
       <span class="spacer"></span>
       <div class="picker" v-if="agents.length">
         <label>Agent</label>
@@ -158,19 +161,18 @@ onBeforeUnmount(stopPoll)
           </option>
         </select>
         <button class="btn" :disabled="loading || !permitted" @click="requestSnapshot">
-          {{ loading ? '获取中…' : '刷新快照' }}
+          {{ loading ? t('processes.fetching') : t('processes.refreshSnapshot') }}
         </button>
       </div>
     </div>
 
-    <p class="hint sub">实时数据不落库，仅在打开本页时由 agent 主动上报一次当前状态。</p>
+    <p class="hint sub">{{ t('processes.sub') }}</p>
     <p v-if="error" class="err">{{ error }}</p>
 
     <div v-if="!permitted && agent" class="card empty">
-      <h3>该 Agent 未开启实时进程 / 连接上报</h3>
+      <h3>{{ t('processes.notEnabledTitle') }}</h3>
       <p class="hint">
-        需在启动 nettact-agent 时加上 <code>--report-processes</code> 和 / 或
-        <code>--report-connections</code>。出于安全考虑，未开启时服务端无法获取任何进程或连接信息。
+        {{ t('processes.notEnabledHint1') }}<code>--report-processes</code>{{ t('processes.notEnabledHint2') }}<code>--report-connections</code>{{ t('processes.notEnabledHint3') }}
       </p>
     </div>
 
@@ -186,7 +188,7 @@ onBeforeUnmount(stopPoll)
           :aria-selected="tab === 'processes'"
           @click="tab = 'processes'"
         >
-          进程
+          {{ t('processes.tabProcesses') }}
           <span class="count">{{ snapshot?.process_total ?? processes.length }}</span>
         </button>
         <button
@@ -197,7 +199,7 @@ onBeforeUnmount(stopPoll)
           :aria-selected="tab === 'connections'"
           @click="tab = 'connections'"
         >
-          网络连接
+          {{ t('processes.tabConnections') }}
           <span class="count">{{ connections.length }}</span>
         </button>
       </div>
@@ -207,11 +209,11 @@ onBeforeUnmount(stopPoll)
         <div class="panel-head">
           <span class="spacer"></span>
           <div class="sort">
-            <label>排序</label>
+            <label>{{ t('processes.sortLabel') }}</label>
             <select v-model="sortKey">
               <option value="cpu">CPU</option>
-              <option value="ram">内存</option>
-              <option value="name">名称</option>
+              <option value="ram">{{ t('processes.sortRam') }}</option>
+              <option value="name">{{ t('processes.sortName') }}</option>
             </select>
           </div>
         </div>
@@ -219,14 +221,14 @@ onBeforeUnmount(stopPoll)
           <table class="data-table">
             <thead>
               <tr>
-                <th>进程名</th><th>PID</th><th>状态</th><th>用户</th>
-                <th class="num">CPU %</th><th class="num">内存</th><th class="num">虚拟内存</th>
-                <th class="num">磁盘 读 / 写</th><th class="num">运行时长</th>
+                <th>{{ t('processes.thProcName') }}</th><th>PID</th><th>{{ t('processes.thStatus') }}</th><th>{{ t('processes.thUser') }}</th>
+                <th class="num">CPU %</th><th class="num">{{ t('processes.thMem') }}</th><th class="num">{{ t('processes.thVirt') }}</th>
+                <th class="num">{{ t('processes.thDisk') }}</th><th class="num">{{ t('processes.thRuntime') }}</th>
               </tr>
             </thead>
             <tbody>
-              <tr v-if="loading && !processes.length"><td colspan="9" class="hint">获取中…</td></tr>
-              <tr v-else-if="!processes.length"><td colspan="9" class="hint">无数据</td></tr>
+              <tr v-if="loading && !processes.length"><td colspan="9" class="hint">{{ t('processes.fetching') }}</td></tr>
+              <tr v-else-if="!processes.length"><td colspan="9" class="hint">{{ t('common.noData') }}</td></tr>
               <tr v-for="p in processes" :key="p.pid">
                 <td class="mono">{{ p.name }}</td>
                 <td class="mono">{{ p.pid }}</td>
@@ -248,11 +250,11 @@ onBeforeUnmount(stopPoll)
         <div class="table-wrap">
           <table class="data-table">
             <thead>
-              <tr><th>协议</th><th>本地地址</th><th>远程地址</th><th>状态</th><th>PID</th><th>进程</th></tr>
+              <tr><th>{{ t('processes.thProto') }}</th><th>{{ t('processes.thLocalAddr') }}</th><th>{{ t('processes.thRemoteAddr') }}</th><th>{{ t('processes.thStatus') }}</th><th>PID</th><th>{{ t('processes.thProcess') }}</th></tr>
             </thead>
             <tbody>
-              <tr v-if="loading && !connections.length"><td colspan="6" class="hint">获取中…</td></tr>
-              <tr v-else-if="!connections.length"><td colspan="6" class="hint">无数据</td></tr>
+              <tr v-if="loading && !connections.length"><td colspan="6" class="hint">{{ t('processes.fetching') }}</td></tr>
+              <tr v-else-if="!connections.length"><td colspan="6" class="hint">{{ t('common.noData') }}</td></tr>
               <tr v-for="(c, i) in connections" :key="i">
                 <td class="mono">{{ c.proto }}</td>
                 <td class="mono">{{ c.local_addr }}</td>

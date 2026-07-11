@@ -1,6 +1,10 @@
 <script setup lang="ts">
 import { ref, reactive, onMounted } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { api, type ProbeTarget, type ProbeParams, type Rule, type Channel } from '../api'
+
+// Aliased to `tr` because `t` is used throughout this file as a ProbeTarget variable.
+const { t: tr, te } = useI18n()
 
 const SITE = 'site_default'
 const targets = ref<ProbeTarget[]>([])
@@ -12,21 +16,11 @@ const expanded = reactive<Record<string, boolean>>({})
 const rulesByTarget = reactive<Record<string, Rule[]>>({})
 const channels = ref<Channel[]>([])
 
-// 报警方式：按监控类型区分可选指标，并给出中文友好名。value 仍是原始 metric_kind。
-const METRIC_LABELS: Record<string, string> = {
-  'probe.icmp.loss_pct': '丢包率 (%)',
-  'probe.icmp.rtt_ms': '往返延迟 (ms)',
-  'probe.dns.ok': '解析成功 (1/0)',
-  'probe.dns.resolve_ms': '解析耗时 (ms)',
-  'probe.http.ok': '可用 (1/0)',
-  'probe.http.status': '状态码',
-  'probe.http.latency_ms': '响应延迟 (ms)',
-  'host.cpu.pct': 'CPU 使用率 (%)',
-  'host.mem.pct': '内存使用率 (%)',
-  'host.disk.pct': '磁盘使用率 (%)',
-  'host.load.1m': '1m 负载',
-  'host.load.5m': '5m 负载',
-  'host.load.15m': '15m 负载',
+// Alert metric label for a metric_kind. Keys live in i18n under monitoring.metric.*
+// with dots swapped for underscores; unknown kinds fall back to the raw kind.
+const metricLabel = (k: string) => {
+  const key = `monitoring.metric.${k.replace(/\./g, '_')}`
+  return te(key) ? tr(key) : k
 }
 const METRICS_BY_KIND: Record<string, string[]> = {
   icmp: ['probe.icmp.loss_pct', 'probe.icmp.rtt_ms'],
@@ -57,7 +51,7 @@ function addRow() {
 function placeholderFor(kind: string): string {
   if (kind === 'dns') return 'example.com'
   if (kind === 'http') return 'https://example.com'
-  if (kind === 'host') return 'host（CPU/内存/负载）或盘符如 C:'
+  if (kind === 'host') return tr('monitoring.hostPlaceholder')
   return '1.1.1.1'
 }
 function removeRow(i: number) {
@@ -104,7 +98,7 @@ function layerForKind(kind: string): string {
 
 async function toggleExpand(t: ProbeTarget) {
   if (!t.id) {
-    error.value = '请先保存目标，然后再配置报警规则'
+    error.value = tr('monitoring.saveTargetFirst')
     return
   }
   expanded[t.id] = !expanded[t.id]
@@ -126,7 +120,7 @@ async function addRule(t: ProbeTarget) {
   const threshold = metric.endsWith('.ok') ? 1 : t.kind === 'host' ? 90 : 50
   try {
     await api.createTargetRule(t.id, {
-      name: `${t.target} 报警`, metric_kind: metric, comparator: cmp,
+      name: `${t.target} ${tr('monitoring.ruleNameSuffix')}`, metric_kind: metric, comparator: cmp,
       threshold, fail_threshold: 3, severity: 'error', layer: layerForKind(t.kind), channel_ids: [],
     })
     await reloadRules(t.id)
@@ -161,11 +155,11 @@ const purgeTgt = ref('')
 const purgeMsg = ref('')
 async function purge() {
   if (!purgeTgt.value) return
-  if (!confirm(`确认删除目标「${purgeTgt.value}」的全部历史数据（不可恢复）？`)) return
+  if (!confirm(tr('monitoring.confirmClearHistory', { name: purgeTgt.value }))) return
   purgeMsg.value = ''
   try {
     const r = await api.purgeTarget(SITE, purgeTgt.value)
-    purgeMsg.value = `已清除 ${r.purged_series} 条 series 的历史`
+    purgeMsg.value = tr('monitoring.purgedMsg', { count: r.purged_series })
     purgeTgt.value = ''
   } catch (e) {
     error.value = String((e as Error).message || e)
@@ -177,34 +171,34 @@ onMounted(load)
 <template>
   <main class="page">
     <div class="page-head">
-      <h2>监控目标</h2>
-      <p class="sub">目标自动下发到该站点所有 agent。每个目标可按协议精细配置，并单独设置报警规则（连续失败 N 次触发）。</p>
+      <h2>{{ tr('monitoring.title') }}</h2>
+      <p class="sub">{{ tr('monitoring.sub') }}</p>
     </div>
     <p v-if="error" class="err">{{ error }}</p>
 
     <section class="panel">
-      <div class="panel-head"><h3>探测目标</h3><span class="count">{{ targets.length }}</span></div>
-      <p class="hint panel-hint">点击每行的「参数/报警」展开,可设置该目标的协议参数(检查间隔、超时、包大小、重试…)和报警规则。新目标需先「保存并下发」后才能配置。</p>
+      <div class="panel-head"><h3>{{ tr('monitoring.probeTargets') }}</h3><span class="count">{{ targets.length }}</span></div>
+      <p class="hint panel-hint">{{ tr('monitoring.panelHint') }}</p>
       <div class="table-wrap">
         <table class="data-table">
           <thead>
-            <tr><th>配置</th><th>类型</th><th>目标</th><th>频率档</th><th class="center">启用</th><th></th></tr>
+            <tr><th>{{ tr('monitoring.thConfig') }}</th><th>{{ tr('monitoring.thType') }}</th><th>{{ tr('monitoring.thTarget') }}</th><th>{{ tr('monitoring.thTier') }}</th><th class="center">{{ tr('monitoring.thEnabled') }}</th><th></th></tr>
           </thead>
           <tbody>
             <template v-for="(t, i) in targets" :key="t.id || i">
               <tr>
                 <td>
                   <button v-if="t.id" class="btn-cfg" :class="{ open: expanded[t.id] }" @click="toggleExpand(t)">
-                    {{ expanded[t.id] ? '收起 ▾' : '参数/报警 ▸' }}
+                    {{ expanded[t.id] ? tr('monitoring.collapse') : tr('monitoring.expandParamsAlerts') }}
                   </button>
-                  <span v-else class="hint tiny">保存后可配</span>
+                  <span v-else class="hint tiny">{{ tr('monitoring.configurableAfterSave') }}</span>
                 </td>
                 <td>
                   <select v-model="t.kind">
                     <option value="icmp">ICMP</option>
                     <option value="dns">DNS</option>
                     <option value="http">HTTP</option>
-                    <option value="host">系统状态</option>
+                    <option value="host">{{ tr('monitoring.typeHost') }}</option>
                   </select>
                 </td>
                 <td><input class="target-in" v-model="t.target" :placeholder="placeholderFor(t.kind)" /></td>
@@ -215,100 +209,100 @@ onMounted(load)
                   </select>
                 </td>
                 <td class="center"><input type="checkbox" v-model="t.enabled" /></td>
-                <td><button class="link-btn danger" @click="removeRow(i)">删除</button></td>
+                <td><button class="link-btn danger" @click="removeRow(i)">{{ tr('common.delete') }}</button></td>
               </tr>
               <tr v-if="t.id && expanded[t.id]" class="expand-row">
                 <td></td>
                 <td colspan="5">
                   <!-- protocol params -->
                   <div class="sub-block">
-                    <div class="sub-title">协议参数</div>
+                    <div class="sub-title">{{ tr('monitoring.protocolParams') }}</div>
                     <div class="params">
-                      <label>检查间隔(s)<input type="number" v-model.number="t.params!.interval_seconds" class="num sm" placeholder="默认" /></label>
-                      <label>超时(ms)<input type="number" v-model.number="t.params!.timeout_ms" class="num sm" placeholder="默认" /></label>
+                      <label>{{ tr('monitoring.interval') }}<input type="number" v-model.number="t.params!.interval_seconds" class="num sm" :placeholder="tr('monitoring.default')" /></label>
+                      <label>{{ tr('monitoring.timeout') }}<input type="number" v-model.number="t.params!.timeout_ms" class="num sm" :placeholder="tr('monitoring.default')" /></label>
                       <template v-if="t.kind === 'icmp'">
-                        <label>包大小(字节)<input type="number" v-model.number="t.params!.packet_size" class="num sm" placeholder="默认" /></label>
-                        <label>重试次数<input type="number" v-model.number="t.params!.retries" class="num sm" placeholder="0" /></label>
+                        <label>{{ tr('monitoring.packetSize') }}<input type="number" v-model.number="t.params!.packet_size" class="num sm" :placeholder="tr('monitoring.default')" /></label>
+                        <label>{{ tr('monitoring.retries') }}<input type="number" v-model.number="t.params!.retries" class="num sm" placeholder="0" /></label>
                       </template>
                       <template v-else-if="t.kind === 'dns'">
-                        <label>记录类型
+                        <label>{{ tr('monitoring.recordType') }}
                           <select v-model="t.params!.record_type"><option value="">A/AAAA</option><option value="A">A</option><option value="AAAA">AAAA</option></select>
                         </label>
                       </template>
                       <template v-else-if="t.kind === 'http'">
-                        <label>方法
+                        <label>{{ tr('monitoring.method') }}
                           <select v-model="t.params!.method"><option value="">GET</option><option value="GET">GET</option><option value="HEAD">HEAD</option></select>
                         </label>
-                        <label>期望状态码<input type="number" v-model.number="t.params!.expected_status" class="num sm" placeholder="2xx" /></label>
+                        <label>{{ tr('monitoring.expectedStatus') }}<input type="number" v-model.number="t.params!.expected_status" class="num sm" placeholder="2xx" /></label>
                       </template>
                     </div>
-                    <p class="hint tiny">改动协议参数后，点上方「保存并下发」生效。</p>
+                    <p class="hint tiny">{{ tr('monitoring.paramsHint') }}</p>
                   </div>
 
                   <!-- per-target alarm rules -->
                   <div class="sub-block">
                     <div class="sub-title">
-                      报警规则
+                      {{ tr('monitoring.alertRules') }}
                       <span class="apply">
-                        <button class="link-btn" @click="addRule(t)">+ 新建规则</button>
+                        <button class="link-btn" @click="addRule(t)">{{ tr('monitoring.newRule') }}</button>
                       </span>
                     </div>
-                    <div v-if="!(rulesByTarget[t.id]?.length)" class="hint tiny">暂无报警规则。可按该目标类型（{{ t.kind.toUpperCase() }}）新建报警方式。</div>
+                    <div v-if="!(rulesByTarget[t.id]?.length)" class="hint tiny">{{ tr('monitoring.noRulesHint', { kind: t.kind.toUpperCase() }) }}</div>
                     <div v-for="r in rulesByTarget[t.id]" :key="r.id" class="rule-card">
                       <div class="rule-line">
                         <input v-model="r.name" class="rule-name" />
-                        <select v-model="r.metric_kind" title="报警方式">
-                          <option v-for="m in metricsForKind(t.kind)" :key="m" :value="m">{{ METRIC_LABELS[m] || m }}</option>
+                        <select v-model="r.metric_kind" :title="tr('monitoring.metricTitle')">
+                          <option v-for="m in metricsForKind(t.kind)" :key="m" :value="m">{{ metricLabel(m) }}</option>
                         </select>
                         <select v-model="r.comparator" class="cmp">
                           <option value="gt">&gt;</option><option value="gte">&ge;</option>
                           <option value="lt">&lt;</option><option value="lte">&le;</option><option value="eq">=</option>
                         </select>
                         <input type="number" step="any" v-model="r.threshold" class="num" />
-                        <label class="inline">连续<input type="number" v-model="r.fail_threshold" class="num sm" />次</label>
+                        <label class="inline">{{ tr('monitoring.consecutive') }}<input type="number" v-model="r.fail_threshold" class="num sm" />{{ tr('monitoring.times') }}</label>
                         <select v-model="r.severity">
                           <option value="info">info</option><option value="warn">warn</option>
                           <option value="error">error</option><option value="critical">critical</option>
                         </select>
-                        <label class="inline"><input type="checkbox" v-model="r.enabled" />启用</label>
+                        <label class="inline"><input type="checkbox" v-model="r.enabled" />{{ tr('monitoring.enable') }}</label>
                       </div>
                       <div class="rule-line channels">
-                        <span class="chan-label">通知渠道：</span>
-                        <span v-if="!channels.length" class="hint tiny">未配置渠道（去「设置」添加）</span>
+                        <span class="chan-label">{{ tr('monitoring.notifyChannels') }}</span>
+                        <span v-if="!channels.length" class="hint tiny">{{ tr('monitoring.noChannelHint') }}</span>
                         <label v-for="c in channels" :key="c.id" class="chan">
                           <input type="checkbox" :checked="(r.channel_ids || []).includes(c.id)" @change="toggleChannel(r, c.id)" />
                           {{ channelLabel(c) }}
                         </label>
                         <span class="spacer"></span>
-                        <button class="link-btn" @click="saveRule(r, t.id!)">保存</button>
-                        <button class="link-btn danger" @click="delRule(r, t.id!)">删除</button>
+                        <button class="link-btn" @click="saveRule(r, t.id!)">{{ tr('common.save') }}</button>
+                        <button class="link-btn danger" @click="delRule(r, t.id!)">{{ tr('common.delete') }}</button>
                       </div>
                     </div>
                   </div>
                 </td>
               </tr>
             </template>
-            <tr v-if="!targets.length"><td colspan="6" class="hint">暂无目标，点击下方添加。</td></tr>
+            <tr v-if="!targets.length"><td colspan="6" class="hint">{{ tr('monitoring.noTargets') }}</td></tr>
           </tbody>
         </table>
       </div>
       <div class="panel-foot">
-        <button class="btn" @click="addRow">+ 添加目标</button>
-        <button class="btn btn-primary" :disabled="busy" @click="save">{{ busy ? '保存中…' : '保存并下发' }}</button>
-        <span v-if="saved" class="ok">✓ 已保存，已推送到 agent</span>
+        <button class="btn" @click="addRow">{{ tr('monitoring.addTarget') }}</button>
+        <button class="btn btn-primary" :disabled="busy" @click="save">{{ busy ? tr('monitoring.saving') : tr('monitoring.saveAndPush') }}</button>
+        <span v-if="saved" class="ok">{{ tr('monitoring.savedPushed') }}</span>
       </div>
     </section>
 
     <section class="panel danger-zone">
       <div class="panel-head">
-        <h3>清除历史数据</h3>
-        <span class="tag-danger">危险操作</span>
+        <h3>{{ tr('monitoring.clearHistory') }}</h3>
+        <span class="tag-danger">{{ tr('monitoring.dangerOp') }}</span>
       </div>
       <div class="panel-body">
-        <p class="hint">删除某个目标的全部历史样本与聚合，立即释放空间（不影响正在下发的监控配置）。此操作不可恢复。</p>
+        <p class="hint">{{ tr('monitoring.clearHistoryHint') }}</p>
         <div class="row">
-          <input v-model="purgeTgt" placeholder="目标，如 192.0.2.1 / example.com" class="purge-in" />
-          <button class="btn btn-danger" @click="purge">清除该目标历史</button>
+          <input v-model="purgeTgt" :placeholder="tr('monitoring.purgePlaceholder')" class="purge-in" />
+          <button class="btn btn-danger" @click="purge">{{ tr('monitoring.clearTargetHistory') }}</button>
           <span v-if="purgeMsg" class="ok">{{ purgeMsg }}</span>
         </div>
       </div>

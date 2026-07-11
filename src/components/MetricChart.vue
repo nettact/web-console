@@ -1,8 +1,12 @@
 <script setup lang="ts">
 import { computed, onMounted, onBeforeUnmount, ref, watch } from 'vue'
 import * as echarts from 'echarts'
+import { useI18n } from 'vue-i18n'
 import type { Sample } from '../api'
+import { toDateLocale } from '../i18n'
 import { type Seg, boolSegments, toPoints, uptimeSegments } from '../lib/timeline'
+
+const { t, locale } = useI18n()
 
 // A metric to plot. One monitoring target may carry several (e.g. ICMP RTT +
 // loss), which are overlaid on shared time with per-unit Y axes.
@@ -33,8 +37,13 @@ const STATE_ON = '#34d399' // 正常 / 在线 / 启用
 const STATE_OFF = '#f87171' // 故障 / 中断 / 禁用
 const MARK = '#fbbf24'
 
-const UNIT_LABEL: Record<string, string> = { ms: 'ms', pct: '%', code: '状态码', bool: '状态', s: '秒', count: '' }
-const unitName = (u: string) => UNIT_LABEL[u] ?? u
+const UNIT_LABEL: Record<string, string> = { ms: 'ms', pct: '%', count: '' }
+const unitName = (u: string) => {
+  if (u === 'code') return t('chart.unitCode')
+  if (u === 'bool') return t('chart.unitBool')
+  if (u === 's') return t('chart.unitSec')
+  return UNIT_LABEL[u] ?? u
+}
 
 const metrics = computed<ChartMetric[]>(() => {
   if (props.metrics && props.metrics.length) return props.metrics
@@ -58,16 +67,16 @@ const baseTitle = () => ({
 })
 
 function fmtTime(ms: number): string {
-  return new Date(ms).toLocaleString('zh-CN', { hour12: false })
+  return new Date(ms).toLocaleString(toDateLocale(locale.value), { hour12: false })
 }
 function fmtDur(ms: number): string {
   const s = Math.round(ms / 1000)
-  if (s < 90) return `${s} 秒`
+  if (s < 90) return t('common.durSeconds', { n: s })
   const m = Math.round(s / 60)
-  if (m < 90) return `${m} 分钟`
+  if (m < 90) return t('common.durMinutes', { n: m })
   const h = s / 3600
-  if (h < 48) return `${h.toFixed(1)} 小时`
-  return `${(h / 24).toFixed(1)} 天`
+  if (h < 48) return t('common.durHours', { n: h.toFixed(1) })
+  return t('common.durDays', { n: (h / 24).toFixed(1) })
 }
 
 // Trend metrics: one smooth line each, grouped onto up to two Y axes by unit.
@@ -93,7 +102,7 @@ function renderLines(ms: ChartMetric[]) {
     axisLabel: {
       color: '#5f6c80',
       fontSize: 11,
-      ...(u === 'bool' ? { formatter: (v: number) => (v >= 0.5 ? '正常' : '中断') } : {}),
+      ...(u === 'bool' ? { formatter: (v: number) => (v >= 0.5 ? t('chart.normal') : t('chart.interrupted')) } : {}),
     },
     axisLine: { show: false },
     splitLine: i === 0 ? { lineStyle: { color: 'rgba(255,255,255,0.06)' } } : { show: false },
@@ -172,7 +181,7 @@ function renderTimeline(segs: Seg[], onLabel: string, offLabel: string, restarts
           const dot = ok ? STATE_ON : STATE_OFF
           return (
             `<span style="display:inline-block;width:8px;height:8px;border-radius:2px;background:${dot};margin-right:6px"></span>` +
-            `<b>${label}</b><br/>${fmtTime(start)} → ${fmtTime(end)}<br/><span style="color:#9aa8bd">持续 ${fmtDur(end - start)}</span>`
+            `<b>${label}</b><br/>${fmtTime(start)} → ${fmtTime(end)}<br/><span style="color:#9aa8bd">${t('chart.duration', { dur: fmtDur(end - start) })}</span>`
           )
         },
       },
@@ -212,7 +221,7 @@ function renderTimeline(segs: Seg[], onLabel: string, offLabel: string, restarts
                 symbol: 'none',
                 silent: false,
                 lineStyle: { color: MARK, type: 'dashed', width: 1 },
-                label: { formatter: '重启', color: MARK, fontSize: 10, position: 'insideEndTop' },
+                label: { formatter: t('chart.restart'), color: MARK, fontSize: 10, position: 'insideEndTop' },
                 data: restarts.map((t) => ({ xAxis: t })),
               }
             : undefined,
@@ -231,12 +240,12 @@ function render() {
   if (ms.length === 1) {
     const m = ms[0]
     if (m.unit === 'bool') {
-      renderTimeline(boolSegments(toPoints(m.samples), Date.now()), '正常 / 启用', '中断 / 禁用')
+      renderTimeline(boolSegments(toPoints(m.samples), Date.now()), t('chart.normalEnabled'), t('chart.interruptedDisabled'))
       return
     }
     if (m.kind === 'agent.uptime_s') {
       const { segs, restarts } = uptimeSegments(toPoints(m.samples), Date.now())
-      renderTimeline(segs, '在线', '离线 / 故障', restarts)
+      renderTimeline(segs, t('chart.online'), t('chart.offlineFault'), restarts)
       return
     }
   }
@@ -258,7 +267,8 @@ onBeforeUnmount(() => {
   chart?.dispose()
 })
 
-watch(() => [props.metrics, props.samples, props.color, props.kind, props.unit], render, { deep: true })
+// `locale` is included so axis labels, legends and tooltips re-render on language switch.
+watch(() => [props.metrics, props.samples, props.color, props.kind, props.unit, locale.value], render, { deep: true })
 </script>
 
 <template>

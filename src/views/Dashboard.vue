@@ -1,7 +1,11 @@
 <script setup lang="ts">
 import { ref, onMounted, onBeforeUnmount } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { api, type Agent, type Sample, type Quota, type Device, type StatusEvent } from '../api'
+import { toDateLocale } from '../i18n'
 import MetricChart from '../components/MetricChart.vue'
+
+const { t, locale } = useI18n()
 
 const SITE = 'site_default'
 const agents = ref<Agent[]>([])
@@ -48,7 +52,7 @@ async function loadMetrics() {
     error.value = String((e as Error).message || e)
   }
 }
-const fmtTime = (s: string) => new Date(s).toLocaleString()
+const fmtTime = (s: string) => new Date(s).toLocaleString(toDateLocale(locale.value))
 
 // The snapshot holds one point per series, so panels just filter it by kind.
 const byKind = (kind: string) => snapshot.value.filter((s) => s.kind === kind)
@@ -145,10 +149,10 @@ onBeforeUnmount(() => {
 <template>
   <main class="page">
     <div class="page-head">
-      <h2>总览</h2>
+      <h2>{{ t('dashboard.title') }}</h2>
       <span v-if="quota" class="pill">
         <span class="dot live"></span>
-        Agent 配额 {{ quota.used }} / {{ quota.max === 0 ? '∞' : quota.max }}
+        {{ t('dashboard.agentQuota') }} {{ quota.used }} / {{ quota.max === 0 ? '∞' : quota.max }}
       </span>
       <span class="spacer"></span>
       <div class="picker" v-if="agents.length">
@@ -158,7 +162,7 @@ onBeforeUnmount(() => {
             {{ a.hostname || a.id }} ({{ a.platform }}) — {{ a.status }}
           </option>
         </select>
-        <button class="btn" @click="loadMetrics">刷新</button>
+        <button class="btn" @click="loadMetrics">{{ t('common.refresh') }}</button>
       </div>
     </div>
 
@@ -172,47 +176,47 @@ onBeforeUnmount(() => {
           <path d="M8 21h8M12 17v4" />
         </svg>
       </div>
-      <h3>暂无 agent</h3>
-      <p class="hint">到「设置」生成注册令牌，再用其启动 nettact-agent 即可上线。</p>
+      <h3>{{ t('common.noAgents') }}</h3>
+      <p class="hint">{{ t('dashboard.noAgentHint') }}</p>
     </div>
 
     <template v-else>
       <!-- KPI tiles -->
       <div class="stat-grid">
         <div class="stat" :class="rttClass(latestVal(rtt))">
-          <div class="label">网关 RTT</div>
+          <div class="label">{{ t('dashboard.gatewayRtt') }}</div>
           <div class="value">{{ fmt(latestVal(rtt)) }}<span class="unit">ms</span></div>
-          <div class="foot">默认网关往返时延</div>
+          <div class="foot">{{ t('dashboard.gatewayRttFoot') }}</div>
         </div>
         <div class="stat" :class="lossClass(latestVal(loss))">
-          <div class="label">网关丢包率</div>
+          <div class="label">{{ t('dashboard.gatewayLoss') }}</div>
           <div class="value">{{ fmt(latestVal(loss), 1) }}<span class="unit">%</span></div>
-          <div class="foot">ICMP 探测丢包</div>
+          <div class="foot">{{ t('dashboard.gatewayLossFoot') }}</div>
         </div>
         <div class="stat is-good">
-          <div class="label">在线 Agent</div>
+          <div class="label">{{ t('dashboard.onlineAgents') }}</div>
           <div class="value">{{ onlineCount() }}<span class="unit">/ {{ agents.length }}</span></div>
-          <div class="foot">已连接采集端</div>
+          <div class="foot">{{ t('dashboard.onlineAgentsFoot') }}</div>
         </div>
         <div class="stat">
-          <div class="label">局域网设备</div>
+          <div class="label">{{ t('dashboard.lanDevices') }}</div>
           <div class="value">{{ devices.length }}</div>
-          <div class="foot">ARP 发现主机</div>
+          <div class="foot">{{ t('dashboard.lanDevicesFoot') }}</div>
         </div>
       </div>
 
       <!-- host / system status (only when the agent reports it) -->
       <section v-if="hasHost()" class="panel host-panel">
         <div class="panel-head">
-          <h3>系统状态</h3>
+          <h3>{{ t('dashboard.systemStatus') }}</h3>
           <RouterLink class="btn ghost sm" :to="{ path: '/processes', query: { agent: selected } }">
-            实时进程 / 网络连接 →
+            {{ t('dashboard.procConnLink') }}
           </RouterLink>
         </div>
         <div class="host-grid">
           <!-- CPU -->
           <div class="host-card">
-            <div class="hc-head"><span>CPU 使用率</span><b>{{ fmt(hostVal('host.cpu.pct'), 1) }}%</b></div>
+            <div class="hc-head"><span>{{ t('dashboard.cpuUsage') }}</span><b>{{ fmt(hostVal('host.cpu.pct'), 1) }}%</b></div>
             <div class="bar"><span :class="barClass(hostVal('host.cpu.pct'))" :style="{ width: (hostVal('host.cpu.pct') ?? 0) + '%' }"></span></div>
             <div class="cores">
               <div class="core" v-for="c in cpuCores()" :key="c.target">
@@ -224,42 +228,42 @@ onBeforeUnmount(() => {
           </div>
           <!-- Memory -->
           <div class="host-card">
-            <div class="hc-head"><span>内存</span><b>{{ fmt(hostVal('host.mem.pct'), 1) }}%</b></div>
+            <div class="hc-head"><span>{{ t('dashboard.memory') }}</span><b>{{ fmt(hostVal('host.mem.pct'), 1) }}%</b></div>
             <div class="bar"><span :class="barClass(hostVal('host.mem.pct'))" :style="{ width: (hostVal('host.mem.pct') ?? 0) + '%' }"></span></div>
             <dl class="kv">
-              <div><dt>总量</dt><dd>{{ fmtBytes(hostVal('host.mem.total')) }}</dd></div>
-              <div><dt>已用</dt><dd>{{ fmtBytes(hostVal('host.mem.used')) }}</dd></div>
-              <div><dt>可用</dt><dd>{{ fmtBytes(hostVal('host.mem.free')) }}</dd></div>
+              <div><dt>{{ t('dashboard.memTotal') }}</dt><dd>{{ fmtBytes(hostVal('host.mem.total')) }}</dd></div>
+              <div><dt>{{ t('dashboard.memUsed') }}</dt><dd>{{ fmtBytes(hostVal('host.mem.used')) }}</dd></div>
+              <div><dt>{{ t('dashboard.memFree') }}</dt><dd>{{ fmtBytes(hostVal('host.mem.free')) }}</dd></div>
             </dl>
           </div>
           <!-- Storage -->
           <div class="host-card">
-            <div class="hc-head"><span>存储</span></div>
+            <div class="hc-head"><span>{{ t('dashboard.storage') }}</span></div>
             <div v-for="mp in diskMounts()" :key="mp" class="disk">
               <div class="disk-head"><span class="mono">{{ mp }}</span><b>{{ fmt(hostVal('host.disk.pct', mp), 1) }}%</b></div>
               <div class="bar sm"><span :class="barClass(hostVal('host.disk.pct', mp))" :style="{ width: (hostVal('host.disk.pct', mp) ?? 0) + '%' }"></span></div>
               <div class="disk-foot hint">
                 {{ fmtBytes(hostVal('host.disk.used', mp)) }} / {{ fmtBytes(hostVal('host.disk.total', mp)) }}
-                · 可用 {{ fmtBytes(hostVal('host.disk.free', mp)) }}
+                · {{ t('dashboard.diskAvail') }} {{ fmtBytes(hostVal('host.disk.free', mp)) }}
               </div>
             </div>
           </div>
           <!-- System -->
           <div class="host-card">
-            <div class="hc-head"><span>系统</span></div>
+            <div class="hc-head"><span>{{ t('dashboard.system') }}</span></div>
             <dl class="kv">
-              <div><dt>运行时长</dt><dd>{{ fmtUptime(hostVal('host.uptime_s')) }}</dd></div>
-              <div><dt>1m 负载</dt><dd>{{ fmt(hostVal('host.load.1m'), 2) }}</dd></div>
-              <div><dt>5m 负载</dt><dd>{{ fmt(hostVal('host.load.5m'), 2) }}</dd></div>
-              <div><dt>15m 负载</dt><dd>{{ fmt(hostVal('host.load.15m'), 2) }}</dd></div>
+              <div><dt>{{ t('dashboard.uptime') }}</dt><dd>{{ fmtUptime(hostVal('host.uptime_s')) }}</dd></div>
+              <div><dt>{{ t('dashboard.load1m') }}</dt><dd>{{ fmt(hostVal('host.load.1m'), 2) }}</dd></div>
+              <div><dt>{{ t('dashboard.load5m') }}</dt><dd>{{ fmt(hostVal('host.load.5m'), 2) }}</dd></div>
+              <div><dt>{{ t('dashboard.load15m') }}</dt><dd>{{ fmt(hostVal('host.load.15m'), 2) }}</dd></div>
             </dl>
           </div>
           <!-- Network I/O -->
           <div class="host-card">
-            <div class="hc-head"><span>网络 I/O</span></div>
+            <div class="hc-head"><span>{{ t('dashboard.networkIO') }}</span></div>
             <dl class="kv">
-              <div><dt>↓ 接收</dt><dd>{{ fmtBps(hostVal('host.net.rx_bps')) }}</dd></div>
-              <div><dt>↑ 发送</dt><dd>{{ fmtBps(hostVal('host.net.tx_bps')) }}</dd></div>
+              <div><dt>{{ t('dashboard.rx') }}</dt><dd>{{ fmtBps(hostVal('host.net.rx_bps')) }}</dd></div>
+              <div><dt>{{ t('dashboard.tx') }}</dt><dd>{{ fmtBps(hostVal('host.net.tx_bps')) }}</dd></div>
             </dl>
           </div>
         </div>
@@ -267,9 +271,9 @@ onBeforeUnmount(() => {
 
       <!-- charts -->
       <div class="chart-grid">
-        <div class="card chart-card"><MetricChart title="网关 RTT (ms)" unit="ms" :samples="rtt" /></div>
+        <div class="card chart-card"><MetricChart :title="t('dashboard.chartGatewayRtt')" unit="ms" :samples="rtt" /></div>
         <div class="card chart-card">
-          <MetricChart title="网关丢包率 (%)" unit="%" :samples="loss" color="#fbbf24" />
+          <MetricChart :title="t('dashboard.chartGatewayLoss')" unit="%" :samples="loss" color="#fbbf24" />
         </div>
       </div>
 
@@ -277,14 +281,14 @@ onBeforeUnmount(() => {
       <div class="grid-2">
         <section class="panel">
           <div class="panel-head">
-            <h3>公网可达性 (ICMP)</h3>
+            <h3>{{ t('dashboard.publicReach') }}</h3>
             <span class="count">{{ publicTargets().length }}</span>
           </div>
           <div class="table-wrap">
             <table class="data-table">
-              <thead><tr><th>目标</th><th>RTT</th></tr></thead>
+              <thead><tr><th>{{ t('dashboard.thTarget') }}</th><th>{{ t('dashboard.thRtt') }}</th></tr></thead>
               <tbody>
-                <tr v-if="!publicTargets().length"><td colspan="2" class="hint">无数据</td></tr>
+                <tr v-if="!publicTargets().length"><td colspan="2" class="hint">{{ t('common.noData') }}</td></tr>
                 <tr v-for="s in publicTargets()" :key="s.target">
                   <td class="mono">{{ s.target }}</td>
                   <td>{{ s.value.toFixed(0) }} ms</td>
@@ -296,14 +300,14 @@ onBeforeUnmount(() => {
 
         <section class="panel">
           <div class="panel-head">
-            <h3>DNS 解析</h3>
+            <h3>{{ t('dashboard.dnsResolve') }}</h3>
             <span class="count">{{ dnsTargets().length }}</span>
           </div>
           <div class="table-wrap">
             <table class="data-table">
-              <thead><tr><th>域名</th><th>耗时</th></tr></thead>
+              <thead><tr><th>{{ t('dashboard.thDomain') }}</th><th>{{ t('dashboard.thElapsed') }}</th></tr></thead>
               <tbody>
-                <tr v-if="!dnsTargets().length"><td colspan="2" class="hint">无数据（去监控目标添加 DNS）</td></tr>
+                <tr v-if="!dnsTargets().length"><td colspan="2" class="hint">{{ t('dashboard.noDataDns') }}</td></tr>
                 <tr v-for="s in dnsTargets()" :key="s.target">
                   <td class="mono">{{ s.target }}</td>
                   <td>{{ s.value.toFixed(0) }} ms</td>
@@ -317,14 +321,14 @@ onBeforeUnmount(() => {
       <!-- http -->
       <section class="panel">
         <div class="panel-head">
-          <h3>HTTP / HTTPS</h3>
+          <h3>{{ t('dashboard.httpTitle') }}</h3>
           <span class="count">{{ httpRows().length }}</span>
         </div>
         <div class="table-wrap">
           <table class="data-table">
-            <thead><tr><th>URL</th><th>状态码</th><th>耗时</th></tr></thead>
+            <thead><tr><th>{{ t('dashboard.thUrl') }}</th><th>{{ t('dashboard.thStatusCode') }}</th><th>{{ t('dashboard.thElapsedHttp') }}</th></tr></thead>
             <tbody>
-              <tr v-if="!httpRows().length"><td colspan="3" class="hint">无数据（去监控目标添加 HTTP）</td></tr>
+              <tr v-if="!httpRows().length"><td colspan="3" class="hint">{{ t('dashboard.noDataHttp') }}</td></tr>
               <tr v-for="h in httpRows()" :key="h.url">
                 <td class="mono">{{ h.url }}</td>
                 <td>
@@ -340,12 +344,12 @@ onBeforeUnmount(() => {
       <!-- ifaces + lan devices -->
       <div class="grid-2">
         <section class="panel">
-          <div class="panel-head"><h3>接口状态</h3><span class="count">{{ latestIfaces().length }}</span></div>
+          <div class="panel-head"><h3>{{ t('dashboard.ifaceStatus') }}</h3><span class="count">{{ latestIfaces().length }}</span></div>
           <div class="table-wrap">
             <table class="data-table">
-              <thead><tr><th>接口</th><th>状态</th></tr></thead>
+              <thead><tr><th>{{ t('dashboard.thIface') }}</th><th>{{ t('dashboard.thStatus') }}</th></tr></thead>
               <tbody>
-                <tr v-if="!latestIfaces().length"><td colspan="2" class="hint">无数据</td></tr>
+                <tr v-if="!latestIfaces().length"><td colspan="2" class="hint">{{ t('common.noData') }}</td></tr>
                 <tr v-for="s in latestIfaces()" :key="s.target">
                   <td class="mono">{{ s.target }}</td>
                   <td>
@@ -361,12 +365,12 @@ onBeforeUnmount(() => {
         </section>
 
         <section class="panel">
-          <div class="panel-head"><h3>局域网设备（ARP 发现）</h3><span class="count">{{ devices.length }}</span></div>
+          <div class="panel-head"><h3>{{ t('dashboard.lanDevicesArp') }}</h3><span class="count">{{ devices.length }}</span></div>
           <div class="table-wrap">
             <table class="data-table">
               <thead><tr><th>IP</th><th>MAC</th></tr></thead>
               <tbody>
-                <tr v-if="!devices.length"><td colspan="2" class="hint">尚未发现设备</td></tr>
+                <tr v-if="!devices.length"><td colspan="2" class="hint">{{ t('dashboard.noDeviceYet') }}</td></tr>
                 <tr v-for="d in devices" :key="d.mac">
                   <td class="mono">{{ d.ip }}</td>
                   <td class="mono">{{ d.mac }}</td>
@@ -379,17 +383,17 @@ onBeforeUnmount(() => {
 
       <!-- agent online/offline history -->
       <section class="panel">
-        <div class="panel-head"><h3>Agent 在线/离线历史</h3><span class="count">{{ statusHistory.length }}</span></div>
+        <div class="panel-head"><h3>{{ t('dashboard.agentHistory') }}</h3><span class="count">{{ statusHistory.length }}</span></div>
         <div class="table-wrap">
           <table class="data-table">
-            <thead><tr><th>状态</th><th>时间</th></tr></thead>
+            <thead><tr><th>{{ t('dashboard.thStatus') }}</th><th>{{ t('dashboard.thTime') }}</th></tr></thead>
             <tbody>
-              <tr v-if="!statusHistory.length"><td colspan="2" class="hint">暂无状态变更记录</td></tr>
+              <tr v-if="!statusHistory.length"><td colspan="2" class="hint">{{ t('dashboard.noStatusChange') }}</td></tr>
               <tr v-for="(h, i) in statusHistory" :key="i">
                 <td>
                   <span class="badge" :class="h.status === 'online' ? 'up' : 'down'">
                     <span class="dot" :class="h.status === 'online' ? 'up' : 'down'"></span>
-                    {{ h.status === 'online' ? '上线' : '离线' }}
+                    {{ h.status === 'online' ? t('dashboard.statusOnline') : t('dashboard.statusOffline') }}
                   </span>
                 </td>
                 <td class="hint">{{ fmtTime(h.changed_at) }}</td>

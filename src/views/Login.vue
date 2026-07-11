@@ -1,7 +1,11 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 import { useRouter } from 'vue-router'
+import { useI18n } from 'vue-i18n'
 import { login } from '../auth'
+import LangSwitch from '../components/LangSwitch.vue'
+
+const { t } = useI18n()
 
 const username = ref('admin')
 const password = ref('')
@@ -26,6 +30,7 @@ async function submit() {
 <template>
   <div class="wrap">
     <div class="glow"></div>
+    <LangSwitch class="lang-corner" />
     <form class="card login" @submit.prevent="submit">
       <div class="brand">
         <span class="mark">
@@ -36,24 +41,24 @@ async function submit() {
         </span>
         <div class="brand-text">
           <b>NetTact</b>
-          <small>网络监控控制台</small>
+          <small>{{ t('app.consoleSubtitle') }}</small>
         </div>
       </div>
 
-      <h1>登录到控制台</h1>
-      <p class="lead">输入凭据以访问监控与告警数据</p>
+      <h1>{{ t('login.title') }}</h1>
+      <p class="lead">{{ t('login.lead') }}</p>
 
       <label class="field">
-        <span>用户名</span>
-        <input v-model="username" placeholder="用户名" autocomplete="username" />
+        <span>{{ t('login.username') }}</span>
+        <input v-model="username" :placeholder="t('login.usernamePlaceholder')" autocomplete="username" />
       </label>
       <label class="field">
-        <span>密码</span>
+        <span>{{ t('login.password') }}</span>
         <input v-model="password" type="password" placeholder="••••••••" autocomplete="current-password" />
       </label>
 
       <button class="btn btn-primary submit" :disabled="busy" type="submit">
-        {{ busy ? '登录中…' : '登录' }}
+        {{ busy ? t('login.signingIn') : t('login.signIn') }}
       </button>
       <p v-if="error" class="err">{{ error }}</p>
     </form>
@@ -78,6 +83,12 @@ async function submit() {
   filter: blur(20px);
   top: -120px;
   pointer-events: none;
+}
+.lang-corner {
+  position: absolute;
+  top: 20px;
+  right: 20px;
+  z-index: 2;
 }
 .login {
   position: relative;

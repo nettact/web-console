@@ -1,6 +1,10 @@
 <script setup lang="ts">
 import { ref, reactive, onMounted } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { api, type Quota, type EnrollmentToken, type Channel, type StorageStats } from '../api'
+import { toDateLocale } from '../i18n'
+
+const { t, locale } = useI18n()
 
 const quota = ref<Quota | null>(null)
 const stats = ref<StorageStats | null>(null)
@@ -67,76 +71,84 @@ async function create() {
 function copyToken() {
   navigator.clipboard?.writeText(newToken.value)
 }
-function tokenState(t: EnrollmentToken): string {
-  if (t.used_at) return '已使用'
-  return new Date(t.expires_at) < new Date() ? '已过期' : '可用'
+type TokenState = 'used' | 'expired' | 'available'
+function tokenState(tok: EnrollmentToken): TokenState {
+  if (tok.used_at) return 'used'
+  return new Date(tok.expires_at) < new Date() ? 'expired' : 'available'
 }
+const tokenStateLabel = (tok: EnrollmentToken) =>
+  ({
+    used: t('settings.tokenUsed'),
+    expired: t('settings.tokenExpired'),
+    available: t('settings.tokenAvailable'),
+  })[tokenState(tok)]
+const fmtDateTime = (s: string) => new Date(s).toLocaleString(toDateLocale(locale.value))
 onMounted(load)
 </script>
 
 <template>
   <main class="page">
     <div class="page-head">
-      <h2>设置</h2>
-      <p class="sub">配额、存储、注册令牌与通知渠道。</p>
+      <h2>{{ t('settings.title') }}</h2>
+      <p class="sub">{{ t('settings.sub') }}</p>
     </div>
 
     <div class="stat-grid">
       <div class="stat" v-if="quota">
-        <div class="label">Agent 配额</div>
+        <div class="label">{{ t('settings.agentQuota') }}</div>
         <div class="value">{{ quota.used }}<span class="unit">/ {{ quota.max === 0 ? '∞' : quota.max }}</span></div>
-        <div class="foot">已注册 / 上限</div>
+        <div class="foot">{{ t('settings.agentQuotaFoot') }}</div>
       </div>
       <template v-if="stats">
         <div class="stat">
           <div class="label">Series</div>
           <div class="value">{{ stats.series }}</div>
-          <div class="foot">时序数量</div>
+          <div class="foot">{{ t('settings.seriesFoot') }}</div>
         </div>
         <div class="stat">
-          <div class="label">Raw 样本</div>
+          <div class="label">{{ t('settings.rawSamples') }}</div>
           <div class="value">{{ stats.samples }}</div>
-          <div class="foot">短期原始点</div>
+          <div class="foot">{{ t('settings.rawSamplesFoot') }}</div>
         </div>
         <div class="stat">
-          <div class="label">降采样</div>
+          <div class="label">{{ t('settings.rollup') }}</div>
           <div class="value rollup">{{ stats.rollup_1m }}<span class="sep">·</span>{{ stats.rollup_1h }}<span
               class="sep">·</span>{{ stats.rollup_1d }}</div>
-          <div class="foot">1 分钟 · 1 小时 · 1 天</div>
+          <div class="foot">{{ t('settings.rollupFoot') }}</div>
         </div>
       </template>
     </div>
     <p class="hint storage-note" v-if="stats">
-      原始样本短期保留，按 1 分钟 / 1 小时 / 1 天降采样分级长期保留 → 多年历史占用可控。
+      {{ t('settings.storageNote') }}
     </p>
 
     <section class="panel">
-      <div class="panel-head"><h3>注册令牌</h3></div>
+      <div class="panel-head"><h3>{{ t('settings.enrollTokens') }}</h3></div>
       <div class="panel-body">
-        <p class="hint">一次性令牌，用于新 agent 注册：<code>nettact-agent --server &lt;URL&gt; --enroll-token &lt;令牌&gt;</code></p>
+        <p class="hint">{{ t('settings.enrollHintPrefix') }}<code>nettact-agent --server &lt;URL&gt; --enroll-token &lt;token&gt;</code></p>
         <div class="row">
-          <input v-model="note" placeholder="备注（可选）" />
-          <button class="btn btn-primary" @click="create">生成令牌</button>
+          <input v-model="note" :placeholder="t('settings.notePlaceholder')" />
+          <button class="btn btn-primary" @click="create">{{ t('settings.genToken') }}</button>
         </div>
         <div v-if="newToken" class="token">
-          <span class="token-label">令牌（仅显示一次）</span>
+          <span class="token-label">{{ t('settings.tokenOnce') }}</span>
           <code>{{ newToken }}</code>
-          <button class="link-btn" @click="copyToken">复制</button>
+          <button class="link-btn" @click="copyToken">{{ t('settings.copy') }}</button>
         </div>
         <p v-if="error" class="err">{{ error }}</p>
       </div>
       <div class="table-wrap">
         <table class="data-table">
           <thead>
-            <tr><th>备注</th><th>过期时间</th><th>状态</th></tr>
+            <tr><th>{{ t('settings.thNote') }}</th><th>{{ t('settings.thExpires') }}</th><th>{{ t('settings.thState') }}</th></tr>
           </thead>
           <tbody>
-            <tr v-if="!tokens.length"><td colspan="3" class="hint">暂无令牌</td></tr>
-            <tr v-for="(t, i) in tokens" :key="i">
-              <td>{{ t.note || '—' }}</td>
-              <td class="hint">{{ new Date(t.expires_at).toLocaleString() }}</td>
+            <tr v-if="!tokens.length"><td colspan="3" class="hint">{{ t('settings.noTokens') }}</td></tr>
+            <tr v-for="(tok, i) in tokens" :key="i">
+              <td>{{ tok.note || '—' }}</td>
+              <td class="hint">{{ fmtDateTime(tok.expires_at) }}</td>
               <td>
-                <span class="badge" :class="tokenState(t) === '可用' ? 'up' : 'neutral'">{{ tokenState(t) }}</span>
+                <span class="badge" :class="tokenState(tok) === 'available' ? 'up' : 'neutral'">{{ tokenStateLabel(tok) }}</span>
               </td>
             </tr>
           </tbody>
@@ -145,12 +157,12 @@ onMounted(load)
     </section>
 
     <section class="panel">
-      <div class="panel-head"><h3>通知渠道</h3><span class="count">{{ channels.length }}</span></div>
+      <div class="panel-head"><h3>{{ t('settings.channels') }}</h3><span class="count">{{ channels.length }}</span></div>
       <div class="panel-body">
-        <p class="hint">可添加多个渠道，并在「监控目标」的每条报警规则上单独勾选要通知的渠道。</p>
+        <p class="hint">{{ t('settings.channelsHint') }}</p>
 
         <div class="type-tabs" role="tablist">
-          <span class="type-label">添加通知类型</span>
+          <span class="type-label">{{ t('settings.addChannelType') }}</span>
           <button
             v-for="ct in CHANNEL_TYPES" :key="ct.value"
             class="type-tab" :class="{ active: addType === ct.value }"
@@ -161,34 +173,34 @@ onMounted(load)
 
         <div v-if="addType === 'webhook'" class="row field-row">
           <b class="ftag">Webhook</b>
-          <input v-model="webhook.name" placeholder="名称" class="tiny-name" />
+          <input v-model="webhook.name" :placeholder="t('settings.namePlaceholder')" class="tiny-name" />
           <input v-model="webhook.url" placeholder="https://hooks.example.com/…" class="wide" />
-          <button class="btn btn-primary" @click="addWebhook">添加</button>
+          <button class="btn btn-primary" @click="addWebhook">{{ t('settings.addBtn') }}</button>
         </div>
 
         <div v-else-if="addType === 'email'" class="row field-row wrap">
           <b class="ftag">Email</b>
-          <input v-model="email.name" placeholder="名称" class="tiny-name" />
-          <input v-model="email.host" placeholder="smtp 主机" />
-          <input v-model="email.port" placeholder="端口" class="tiny" />
-          <input v-model="email.from" placeholder="发件人" />
-          <input v-model="email.to" placeholder="收件人" />
-          <input v-model="email.username" placeholder="用户名(可选)" />
-          <input v-model="email.password" type="password" placeholder="密码(可选)" />
-          <button class="btn btn-primary" @click="addEmail">添加</button>
+          <input v-model="email.name" :placeholder="t('settings.namePlaceholder')" class="tiny-name" />
+          <input v-model="email.host" :placeholder="t('settings.smtpHost')" />
+          <input v-model="email.port" :placeholder="t('settings.port')" class="tiny" />
+          <input v-model="email.from" :placeholder="t('settings.from')" />
+          <input v-model="email.to" :placeholder="t('settings.to')" />
+          <input v-model="email.username" :placeholder="t('settings.usernameOpt')" />
+          <input v-model="email.password" type="password" :placeholder="t('settings.passwordOpt')" />
+          <button class="btn btn-primary" @click="addEmail">{{ t('settings.addBtn') }}</button>
         </div>
       </div>
       <div class="table-wrap">
         <table class="data-table">
-          <thead><tr><th>名称</th><th>类型</th><th>配置</th><th class="center">启用</th><th></th></tr></thead>
+          <thead><tr><th>{{ t('settings.thName') }}</th><th>{{ t('settings.thType') }}</th><th>{{ t('settings.thConfig') }}</th><th class="center">{{ t('settings.thEnabled') }}</th><th></th></tr></thead>
           <tbody>
-            <tr v-if="!channels.length"><td colspan="5" class="hint">暂无渠道</td></tr>
+            <tr v-if="!channels.length"><td colspan="5" class="hint">{{ t('settings.noChannels') }}</td></tr>
             <tr v-for="c in channels" :key="c.id">
               <td><input v-model="c.name" class="name-in" @blur="renameChannel(c)" /></td>
               <td><span class="badge neutral">{{ c.type }}</span></td>
               <td class="mono">{{ c.type === 'webhook' ? c.config.url : (c.config.from + ' → ' + c.config.to + ' @ ' + c.config.host) }}</td>
               <td class="center"><input type="checkbox" :checked="c.enabled" @change="toggleChannel(c)" /></td>
-              <td><button class="link-btn danger" @click="removeChannel(c.id)">删除</button></td>
+              <td><button class="link-btn danger" @click="removeChannel(c.id)">{{ t('common.delete') }}</button></td>
             </tr>
           </tbody>
         </table>
