@@ -4,6 +4,7 @@ import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { login } from '../auth'
 import LangSwitch from '../components/LangSwitch.vue'
+import ThemeSwitch from '../components/ThemeSwitch.vue'
 
 const { t } = useI18n()
 
@@ -30,7 +31,10 @@ async function submit() {
 <template>
   <div class="wrap">
     <div class="glow"></div>
-    <LangSwitch class="lang-corner" />
+    <div class="corner">
+      <ThemeSwitch />
+      <LangSwitch />
+    </div>
     <form class="card login" @submit.prevent="submit">
       <div class="brand">
         <span class="mark">
@@ -84,11 +88,14 @@ async function submit() {
   top: -120px;
   pointer-events: none;
 }
-.lang-corner {
+.corner {
   position: absolute;
   top: 20px;
   right: 20px;
   z-index: 2;
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 .login {
   position: relative;

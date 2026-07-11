@@ -4,9 +4,37 @@ import * as echarts from 'echarts'
 import { useI18n } from 'vue-i18n'
 import type { Sample } from '../api'
 import { toDateLocale } from '../i18n'
+import { theme } from '../theme'
 import { type Seg, boolSegments, toPoints, uptimeSegments } from '../lib/timeline'
 
 const { t, locale } = useI18n()
+
+// ECharts renders to canvas and can't read CSS custom properties, so the chart
+// chrome (axes, grid, tooltip) carries its own per-theme palette. Brand/state
+// hues (lines, timeline fills) are identical in both themes.
+const chartTheme = computed(() =>
+  theme.value === 'light'
+    ? {
+        title: '#4a5768',
+        label: '#78859a',
+        split: 'rgba(15, 23, 42, 0.08)',
+        axisLine: 'rgba(15, 23, 42, 0.18)',
+        tooltipBg: 'rgba(255, 255, 255, 0.97)',
+        tooltipBorder: 'rgba(15, 23, 42, 0.12)',
+        tooltipText: '#10192a',
+        pointer: 'rgba(15, 23, 42, 0.25)',
+      }
+    : {
+        title: '#9aa8bd',
+        label: '#5f6c80',
+        split: 'rgba(255, 255, 255, 0.06)',
+        axisLine: 'rgba(255, 255, 255, 0.12)',
+        tooltipBg: 'rgba(15, 20, 30, 0.92)',
+        tooltipBorder: 'rgba(255, 255, 255, 0.12)',
+        tooltipText: '#e8eef8',
+        pointer: 'rgba(255, 255, 255, 0.25)',
+      },
+)
 
 // A metric to plot. One monitoring target may carry several (e.g. ICMP RTT +
 // loss), which are overlaid on shared time with per-unit Y axes.
@@ -63,7 +91,7 @@ const baseTitle = () => ({
   text: props.title,
   left: 14,
   top: 10,
-  textStyle: { fontSize: 13, fontWeight: 600, color: '#9aa8bd' },
+  textStyle: { fontSize: 13, fontWeight: 600, color: chartTheme.value.title },
 })
 
 function fmtTime(ms: number): string {
@@ -83,6 +111,7 @@ function fmtDur(ms: number): string {
 // Boolean metrics that get mixed in render as a 0/1 step line on their own axis.
 function renderLines(ms: ChartMetric[]) {
   if (!chart) return
+  const ct = chartTheme.value
   const multi = ms.length > 1
   const units: string[] = []
   for (const m of ms) if (!units.includes(m.unit || '')) units.push(m.unit || '')
@@ -98,14 +127,14 @@ function renderLines(ms: ChartMetric[]) {
     nameLocation: 'middle' as const,
     nameGap: 40,
     nameRotate: 90,
-    nameTextStyle: { color: '#5f6c80', fontSize: 11 },
+    nameTextStyle: { color: ct.label, fontSize: 11 },
     axisLabel: {
-      color: '#5f6c80',
+      color: ct.label,
       fontSize: 11,
       ...(u === 'bool' ? { formatter: (v: number) => (v >= 0.5 ? t('chart.normal') : t('chart.interrupted')) } : {}),
     },
     axisLine: { show: false },
-    splitLine: i === 0 ? { lineStyle: { color: 'rgba(255,255,255,0.06)' } } : { show: false },
+    splitLine: i === 0 ? { lineStyle: { color: ct.split } } : { show: false },
     ...(u === 'bool' ? { min: 0, max: 1, interval: 1 } : {}),
   }))
 
@@ -139,22 +168,22 @@ function renderLines(ms: ChartMetric[]) {
       title: baseTitle(),
       tooltip: {
         trigger: 'axis',
-        backgroundColor: 'rgba(15, 20, 30, 0.92)',
-        borderColor: 'rgba(255,255,255,0.12)',
+        backgroundColor: ct.tooltipBg,
+        borderColor: ct.tooltipBorder,
         borderWidth: 1,
-        textStyle: { color: '#e8eef8', fontSize: 12 },
-        axisPointer: { lineStyle: { color: 'rgba(255,255,255,0.25)' } },
+        textStyle: { color: ct.tooltipText, fontSize: 12 },
+        axisPointer: { lineStyle: { color: ct.pointer } },
       },
       // Only the title (left) and legend (right) share the top row now; axis unit
       // names live on the sides, so a small top margin is enough.
       legend: multi
-        ? { top: 8, right: 12, textStyle: { color: '#9aa8bd', fontSize: 11 }, itemWidth: 14, itemHeight: 8 }
+        ? { top: 8, right: 12, textStyle: { color: ct.title, fontSize: 11 }, itemWidth: 14, itemHeight: 8 }
         : undefined,
       grid: { left: 58, right: axisUnits.length > 1 ? 58 : 22, top: multi ? 44 : 40, bottom: 28 },
       xAxis: {
         type: 'time',
-        axisLine: { lineStyle: { color: 'rgba(255,255,255,0.12)' } },
-        axisLabel: { color: '#5f6c80', fontSize: 11 },
+        axisLine: { lineStyle: { color: ct.axisLine } },
+        axisLabel: { color: ct.label, fontSize: 11 },
         splitLine: { show: false },
       },
       yAxis,
@@ -166,30 +195,31 @@ function renderLines(ms: ChartMetric[]) {
 
 function renderTimeline(segs: Seg[], onLabel: string, offLabel: string, restarts: number[] = []) {
   if (!chart) return
+  const ct = chartTheme.value
   chart.setOption(
     {
       title: baseTitle(),
       tooltip: {
         trigger: 'item',
-        backgroundColor: 'rgba(15, 20, 30, 0.92)',
-        borderColor: 'rgba(255,255,255,0.12)',
+        backgroundColor: ct.tooltipBg,
+        borderColor: ct.tooltipBorder,
         borderWidth: 1,
-        textStyle: { color: '#e8eef8', fontSize: 12 },
+        textStyle: { color: ct.tooltipText, fontSize: 12 },
         formatter: (p: { value: [number, number, number] }) => {
           const [start, end, ok] = p.value
           const label = ok ? onLabel : offLabel
           const dot = ok ? STATE_ON : STATE_OFF
           return (
             `<span style="display:inline-block;width:8px;height:8px;border-radius:2px;background:${dot};margin-right:6px"></span>` +
-            `<b>${label}</b><br/>${fmtTime(start)} → ${fmtTime(end)}<br/><span style="color:#9aa8bd">${t('chart.duration', { dur: fmtDur(end - start) })}</span>`
+            `<b>${label}</b><br/>${fmtTime(start)} → ${fmtTime(end)}<br/><span style="color:${ct.label}">${t('chart.duration', { dur: fmtDur(end - start) })}</span>`
           )
         },
       },
       grid: { left: 16, right: 20, top: 46, bottom: 28 },
       xAxis: {
         type: 'time',
-        axisLine: { lineStyle: { color: 'rgba(255,255,255,0.12)' } },
-        axisLabel: { color: '#5f6c80', fontSize: 11 },
+        axisLine: { lineStyle: { color: ct.axisLine } },
+        axisLabel: { color: ct.label, fontSize: 11 },
         splitLine: { show: false },
       },
       yAxis: { type: 'category', data: ['status'], show: false, boundaryGap: true },
@@ -267,8 +297,13 @@ onBeforeUnmount(() => {
   chart?.dispose()
 })
 
-// `locale` is included so axis labels, legends and tooltips re-render on language switch.
-watch(() => [props.metrics, props.samples, props.color, props.kind, props.unit, locale.value], render, { deep: true })
+// `locale` re-renders axis labels/legends/tooltips on language switch; `theme`
+// re-renders the chart chrome palette on light/dark switch.
+watch(
+  () => [props.metrics, props.samples, props.color, props.kind, props.unit, locale.value, theme.value],
+  render,
+  { deep: true },
+)
 </script>
 
 <template>

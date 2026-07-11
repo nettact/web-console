@@ -4,6 +4,7 @@ import { useRouter, useRoute, RouterLink, RouterView } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { auth, logout } from './auth'
 import LangSwitch from './components/LangSwitch.vue'
+import ThemeSwitch from './components/ThemeSwitch.vue'
 
 const router = useRouter()
 const route = useRoute()
@@ -109,6 +110,7 @@ const initials = computed(() => (auth.user?.username ?? '?').slice(0, 1).toUpper
           <span class="crumb-cur">{{ sectionTitle }}</span>
         </div>
         <span class="spacer"></span>
+        <ThemeSwitch />
         <LangSwitch />
         <div class="user-chip">
           <span class="avatar">{{ initials }}</span>
@@ -145,7 +147,7 @@ const initials = computed(() => (auth.user?.username ?? '?').slice(0, 1).toUpper
   flex-direction: column;
   padding: 20px 14px;
   border-right: 1px solid var(--border);
-  background: linear-gradient(180deg, rgba(13, 18, 28, 0.9), rgba(8, 11, 17, 0.72));
+  background: var(--sidebar-bg);
   backdrop-filter: blur(12px);
   position: sticky;
   top: 0;
@@ -262,7 +264,7 @@ const initials = computed(() => (auth.user?.username ?? '?').slice(0, 1).toUpper
   height: 60px;
   padding: 0 30px;
   border-bottom: 1px solid var(--border);
-  background: rgba(8, 11, 17, 0.62);
+  background: var(--topbar-bg);
   backdrop-filter: blur(14px);
 }
 .crumb {

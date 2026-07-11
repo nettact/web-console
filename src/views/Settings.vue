@@ -273,7 +273,7 @@ code {
   color: var(--text-dim);
 }
 .token code {
-  background: rgba(0, 0, 0, 0.25);
+  background: var(--code-bg);
   word-break: break-all;
   color: var(--primary);
   border-color: transparent;
