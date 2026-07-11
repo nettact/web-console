@@ -19,6 +19,7 @@ const router = createRouter({
     { path: '/history', component: History },
     { path: '/monitoring', component: Monitoring },
     { path: '/monitoring/new', component: MonitorForm },
+    { path: '/monitoring/new-host', component: MonitorForm },
     { path: '/monitoring/:id/edit', component: MonitorForm },
     { path: '/incidents', component: Incidents },
     { path: '/agents', component: Agents },

@@ -29,6 +29,13 @@ function typeLabel(t: ProbeTarget): string {
   return t.kind.toUpperCase()
 }
 
+// Host anchors carry a metric-series string as their target ("host" for the
+// whole machine, a mount point for disk); show the whole-machine one as a label.
+function targetLabel(t: ProbeTarget): string {
+  if (t.kind === 'host' && t.target === 'host') return tr('monitoring.hostWhole')
+  return t.target
+}
+
 async function removeTarget(t: ProbeTarget) {
   if (!t.id) return
   if (!confirm(tr('common.delete') + ' ' + (t.name || t.target) + ' ?')) return
@@ -75,7 +82,8 @@ onMounted(load)
       <div class="panel-head">
         <h3>{{ tr('monitoring.probeTargets') }}</h3>
         <span class="count">{{ targets.length }}</span>
-        <router-link to="/monitoring/new" class="btn btn-primary head-btn">{{ tr('monitoring.newMonitor') }}</router-link>
+        <router-link to="/monitoring/new-host" class="btn head-btn">{{ tr('monitoring.newHostMonitor') }}</router-link>
+        <router-link to="/monitoring/new" class="btn btn-primary">{{ tr('monitoring.newMonitor') }}</router-link>
       </div>
       <div class="table-wrap">
         <table class="data-table">
@@ -92,7 +100,7 @@ onMounted(load)
             <tr v-for="t in targets" :key="t.id">
               <td>{{ t.name || tr('monitoring.unnamed') }}</td>
               <td>{{ typeLabel(t) }}</td>
-              <td class="mono">{{ t.target }}<span v-if="t.kind === 'tcp' && t.params?.port">:{{ t.params.port }}</span></td>
+              <td class="mono">{{ targetLabel(t) }}<span v-if="t.kind === 'tcp' && t.params?.port">:{{ t.params.port }}</span></td>
               <td class="center"><span :class="['dot', t.enabled ? 'on' : 'off']"></span></td>
               <td class="actions">
                 <router-link :to="`/monitoring/${t.id}/edit`" class="link-btn">{{ tr('monitoring.editMonitor') }}</router-link>
@@ -131,7 +139,7 @@ onMounted(load)
   font-size: 12px; font-weight: 600; color: var(--text-dim);
   background: var(--surface-2); border: 1px solid var(--border); text-align: center;
 }
-.head-btn { margin-left: auto; }
+.head-btn { margin-left: auto; margin-right: 8px; }
 .mono { font-family: var(--font-mono, monospace); font-size: 12.5px; }
 .actions { display: flex; gap: 10px; justify-content: flex-end; }
 .dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; }

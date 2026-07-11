@@ -10,9 +10,27 @@ const router = useRouter()
 
 const SITE = 'site_default'
 const editingId = computed(() => (route.params.id as string) || '')
+// The host flow has its own create route so it can open without the type
+// dropdown and seed a whole-machine anchor (target "host") straight away.
+const isNewHost = computed(() => route.path.endsWith('/new-host'))
 
 const all = ref<ProbeTarget[]>([])
 const form = reactive<ProbeTarget>(blank())
+if (isNewHost.value) { form.kind = 'host'; form.target = 'host' }
+
+// A "系统状态" (host) target is not a probe: host.* metrics are emitted by the
+// agent itself (--report-host); this target is purely a server-side alerting
+// anchor whose `target` string must equal the metric series' target — "host"
+// for CPU/memory/load, or a mount point for disk. So the host flow hides the
+// type dropdown and swaps the free-text target for a guided subject selector.
+const isHostMode = computed(() => form.kind === 'host')
+// Whole-machine (target "host") vs a specific disk partition (target = mount
+// point). Selecting "whole" pins target to "host"; "disk" clears it so the user
+// types the mount point, which must match what the agent reports (e.g. "C:").
+const hostSubject = computed<'whole' | 'disk'>({
+  get: () => (form.target === 'host' ? 'whole' : 'disk'),
+  set: (v) => { form.target = v === 'whole' ? 'host' : '' },
+})
 const headersText = ref('')
 const error = ref('')
 const saved = ref(false)
@@ -41,7 +59,6 @@ function placeholderFor(kind: string): string {
   if (kind === 'dns') return 'example.com'
   if (kind === 'http') return 'https://example.com'
   if (kind === 'tcp') return 'example.com'
-  if (kind === 'host') return tr('monitoring.hostPlaceholder')
   return '1.1.1.1'
 }
 
@@ -142,7 +159,11 @@ const rules = ref<Rule[]>([])
 // comparator + threshold model behind a friendly label. `fixed` presets are
 // on/off failures (no number to enter); the rest compare a measured value
 // (`unit`, seeded from `def`) against a user-entered threshold.
-type Preset = { key: string; label: string; metric: string; comparator: string; fixed?: number; unit?: string; def?: number }
+// `scale` bridges a user-friendly display unit and the raw metric unit: the
+// entered/shown value is in `unit`, the stored threshold is value × scale (e.g.
+// network is stored bytes/s but entered as MB/s with scale 1048576). Omit → 1.
+type Preset = { key: string; label: string; metric: string; comparator: string; fixed?: number; unit?: string; def?: number; scale?: number }
+const MIB = 1024 * 1024 // matches the dashboard's base-1024 byte formatting
 const CONDITION_PRESETS: Record<string, Preset[]> = {
   icmp: [
     { key: 'down', label: 'mform.condDown', metric: 'probe.icmp.loss_pct', comparator: 'gte', fixed: 100 },
@@ -161,13 +182,27 @@ const CONDITION_PRESETS: Record<string, Preset[]> = {
     { key: 'down', label: 'mform.condConnectFail', metric: 'probe.tcp.ok', comparator: 'lt', fixed: 1 },
     { key: 'slow', label: 'mform.condConnectSlow', metric: 'probe.tcp.connect_ms', comparator: 'gt', unit: 'ms', def: 1000 },
   ],
-  host: [
+}
+// Host presets depend on the chosen subject: whole-machine metrics live on the
+// "host" series (CPU/memory), disk usage on the per-mount series. Splitting them
+// this way guarantees a rule's metric always matches the anchor's target string,
+// so the condition can actually fire.
+const HOST_PRESETS: Record<'whole' | 'disk', Preset[]> = {
+  whole: [
     { key: 'cpu', label: 'mform.condCpu', metric: 'host.cpu.pct', comparator: 'gt', unit: '%', def: 90 },
     { key: 'mem', label: 'mform.condMem', metric: 'host.mem.pct', comparator: 'gt', unit: '%', def: 90 },
+    { key: 'load1', label: 'mform.condLoad1', metric: 'host.load.1m', comparator: 'gt', unit: '', def: 4 },
+    { key: 'load5', label: 'mform.condLoad5', metric: 'host.load.5m', comparator: 'gt', unit: '', def: 4 },
+    { key: 'load15', label: 'mform.condLoad15', metric: 'host.load.15m', comparator: 'gt', unit: '', def: 4 },
+    { key: 'netrx', label: 'mform.condNetRx', metric: 'host.net.rx_bps', comparator: 'gt', unit: 'MB/s', def: 100, scale: MIB },
+    { key: 'nettx', label: 'mform.condNetTx', metric: 'host.net.tx_bps', comparator: 'gt', unit: 'MB/s', def: 100, scale: MIB },
+  ],
+  disk: [
     { key: 'disk', label: 'mform.condDisk', metric: 'host.disk.pct', comparator: 'gt', unit: '%', def: 90 },
   ],
 }
 function presetsForKind(kind: string): Preset[] {
+  if (kind === 'host') return HOST_PRESETS[hostSubject.value]
   return CONDITION_PRESETS[kind] || CONDITION_PRESETS.icmp
 }
 // Reverse-map a stored rule to its preset (by metric; fixed presets also match on
@@ -185,7 +220,17 @@ function applyPreset(r: Rule, key: string) {
   if (!p) return
   r.metric_kind = p.metric
   r.comparator = p.comparator
-  r.threshold = p.fixed != null ? p.fixed : (p.def ?? 0)
+  r.threshold = p.fixed != null ? p.fixed : (p.def ?? 0) * (p.scale ?? 1)
+}
+// The stored threshold is always in the raw metric unit; the editor shows/edits
+// it in the preset's display unit (threshold ÷ scale).
+function thresholdDisplay(r: Rule): number {
+  const s = presetByKey(presetKeyOf(r))?.scale ?? 1
+  return s === 1 ? r.threshold : r.threshold / s
+}
+function setThreshold(r: Rule, v: number) {
+  const s = presetByKey(presetKeyOf(r))?.scale ?? 1
+  r.threshold = (Number.isNaN(v) ? 0 : v) * s
 }
 function severityLabel(s: string): string {
   return tr('mform.sev_' + s)
@@ -194,7 +239,7 @@ function severityLabel(s: string): string {
 function ruleSentence(r: Rule): string {
   const p = presetByKey(presetKeyOf(r))
   const cond = p ? tr(p.label) : r.metric_kind
-  const val = p && p.fixed == null ? ` ${r.threshold}${p.unit || ''}` : ''
+  const val = p && p.fixed == null ? ` ${thresholdDisplay(r)}${p.unit || ''}` : ''
   return tr('mform.rulePreview', { cond: cond + val, n: r.fail_threshold, sev: severityLabel(r.severity) })
 }
 function layerForKind(kind: string): string {
@@ -262,8 +307,8 @@ onMounted(loadAll)
 <template>
   <main class="page">
     <div class="page-head">
-      <h2>{{ editingId ? tr('mform.editTitle') : tr('mform.newTitle') }}</h2>
-      <p class="sub">{{ tr('mform.sub') }}</p>
+      <h2>{{ isHostMode ? (editingId ? tr('mform.hostEditTitle') : tr('mform.hostNewTitle')) : (editingId ? tr('mform.editTitle') : tr('mform.newTitle')) }}</h2>
+      <p class="sub">{{ isHostMode ? tr('mform.hostSub') : tr('mform.sub') }}</p>
     </div>
     <p v-if="error" class="err">{{ error }}</p>
 
@@ -272,24 +317,43 @@ onMounted(loadAll)
     </p>
 
     <template v-else>
+      <p v-if="isHostMode" class="host-intro">{{ tr('mform.hostIntro') }}</p>
       <section class="panel">
         <div class="panel-head"><h3>{{ tr('mform.secGeneral') }}</h3></div>
         <div class="form-grid">
-          <label class="field">
+          <label class="field" v-if="!isHostMode">
             <span>{{ tr('mform.monitorType') }}</span>
             <select v-model="form.kind">
               <option value="icmp">{{ tr('mform.typeIcmp') }}</option>
               <option value="http">{{ tr('mform.typeHttp') }}</option>
               <option value="tcp">{{ tr('mform.typeTcp') }}</option>
               <option value="dns">{{ tr('mform.typeDns') }}</option>
-              <option value="host">{{ tr('mform.typeHost') }}</option>
             </select>
           </label>
           <label class="field">
             <span>{{ tr('mform.displayName') }}</span>
             <input v-model="form.name" :placeholder="tr('mform.displayNamePlaceholder')" />
           </label>
-          <label class="field wide">
+          <!-- host: guided subject selector instead of a free-text target -->
+          <template v-if="isHostMode">
+            <label class="field">
+              <span>{{ tr('mform.hostSubject') }}</span>
+              <!-- Locked once rules exist: rules bind to this anchor's target, so
+                   switching the subject would silently orphan every rule (e.g. a
+                   host.cpu.pct rule left pointing at a disk mount never matches). -->
+              <select v-model="hostSubject" :disabled="rules.length > 0">
+                <option value="whole">{{ tr('mform.hostSubjectWhole') }}</option>
+                <option value="disk">{{ tr('mform.hostSubjectDisk') }}</option>
+              </select>
+            </label>
+            <label class="field" v-if="hostSubject === 'disk'">
+              <span>{{ tr('mform.hostMountLabel') }}</span>
+              <input v-model="form.target" :placeholder="tr('mform.hostMountPlaceholder')" />
+            </label>
+            <p class="hint tiny wide" v-if="rules.length">{{ tr('mform.hostSubjectLocked') }}</p>
+            <p class="hint tiny wide" v-else-if="hostSubject === 'disk'">{{ tr('mform.hostMountHint') }}</p>
+          </template>
+          <label class="field wide" v-else>
             <span>{{ form.kind === 'http' ? tr('mform.url') : (form.kind === 'tcp' || form.kind === 'dns' ? tr('mform.hostname') : tr('mform.target')) }}</span>
             <input v-model="form.target" :placeholder="placeholderFor(form.kind)" />
           </label>
@@ -305,7 +369,7 @@ onMounted(loadAll)
               <span>{{ tr('mform.keywordInvert') }}</span>
             </label>
           </div>
-          <label class="field">
+          <label class="field" v-if="!isHostMode">
             <span>{{ tr('mform.interval') }}</span>
             <input type="number" v-model.number="form.params!.interval_seconds" :placeholder="tr('monitoring.default')" />
           </label>
@@ -399,7 +463,7 @@ onMounted(loadAll)
                   <option v-for="p in presetsForKind(form.kind)" :key="p.key" :value="p.key">{{ tr(p.label) }}</option>
                 </select>
                 <template v-if="presetByKey(presetKeyOf(r))?.fixed == null">
-                  <input type="number" step="any" v-model.number="r.threshold" class="num" />
+                  <input type="number" step="any" :value="thresholdDisplay(r)" @input="setThreshold(r, ($event.target as HTMLInputElement).valueAsNumber)" class="num" />
                   <span class="unit">{{ presetByKey(presetKeyOf(r))?.unit }}</span>
                 </template>
                 <label class="inline">{{ tr('monitoring.consecutive') }}<input type="number" v-model.number="r.fail_threshold" class="num sm" />{{ tr('monitoring.times') }}</label>
@@ -439,6 +503,17 @@ onMounted(loadAll)
 
 <style scoped>
 .page { max-width: 860px; }
+.host-intro {
+  margin: 0 0 16px;
+  padding: 11px 14px;
+  font-size: 12.5px;
+  line-height: 1.6;
+  color: var(--text-dim);
+  background: var(--primary-soft, var(--surface-2));
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--primary);
+  border-radius: var(--radius-sm);
+}
 .panel { margin-bottom: 18px; }
 .form-grid {
   display: grid;
