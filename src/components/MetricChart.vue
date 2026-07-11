@@ -4,24 +4,50 @@ import * as echarts from 'echarts'
 import type { Sample } from '../api'
 import { type Seg, boolSegments, toPoints, uptimeSegments } from '../lib/timeline'
 
-const props = defineProps<{ title: string; unit: string; samples: Sample[]; color?: string; kind?: string }>()
+// A metric to plot. One monitoring target may carry several (e.g. ICMP RTT +
+// loss), which are overlaid on shared time with per-unit Y axes.
+interface ChartMetric {
+  key: string
+  label: string
+  kind: string
+  unit: string
+  color: string
+  samples: Sample[]
+}
+
+// Legacy single-series props (Dashboard) are still accepted; History passes the
+// richer `metrics` array. Both normalize to `metrics` below.
+const props = defineProps<{
+  title: string
+  unit?: string
+  samples?: Sample[]
+  color?: string
+  kind?: string
+  metrics?: ChartMetric[]
+}>()
 
 const el = ref<HTMLDivElement>()
 let chart: echarts.ECharts | null = null
 
-// Status/heartbeat series are step-shaped, not trends: a smooth line lies about
-// them (interpolating a 1→0 interface flap into a diagonal, or drawing the
-// uptime counter as a sawtooth). Render those as a state timeline instead so a
-// glance answers "when did it fail / when was it enabled vs disabled". The
-// segment math lives in ../lib/timeline so the summary stats stay consistent.
 const STATE_ON = '#34d399' // 正常 / 在线 / 启用
 const STATE_OFF = '#f87171' // 故障 / 中断 / 禁用
 const MARK = '#fbbf24'
 
-const mode = computed<'line' | 'state' | 'uptime'>(() => {
-  if (props.kind === 'agent.uptime_s') return 'uptime'
-  if (props.unit === 'bool') return 'state'
-  return 'line'
+const UNIT_LABEL: Record<string, string> = { ms: 'ms', pct: '%', code: '状态码', bool: '状态', s: '秒', count: '' }
+const unitName = (u: string) => UNIT_LABEL[u] ?? u
+
+const metrics = computed<ChartMetric[]>(() => {
+  if (props.metrics && props.metrics.length) return props.metrics
+  return [
+    {
+      key: 'm',
+      label: props.title,
+      kind: props.kind ?? '',
+      unit: props.unit ?? '',
+      color: props.color ?? '#38bdf8',
+      samples: props.samples ?? [],
+    },
+  ]
 })
 
 const baseTitle = () => ({
@@ -44,10 +70,61 @@ function fmtDur(ms: number): string {
   return `${(h / 24).toFixed(1)} 天`
 }
 
-function renderLine() {
+// Trend metrics: one smooth line each, grouped onto up to two Y axes by unit.
+// Boolean metrics that get mixed in render as a 0/1 step line on their own axis.
+function renderLines(ms: ChartMetric[]) {
   if (!chart) return
-  const accent = props.color ?? '#38bdf8'
-  const data = props.samples.map((s) => [new Date(s.ts).getTime(), s.value] as [number, number])
+  const multi = ms.length > 1
+  const units: string[] = []
+  for (const m of ms) if (!units.includes(m.unit || '')) units.push(m.unit || '')
+  const axisUnits = (units.length ? units : ['']).slice(0, 2)
+
+  const yAxis = axisUnits.map((u, i) => ({
+    type: 'value' as const,
+    name: unitName(u),
+    position: i === 0 ? ('left' as const) : ('right' as const),
+    // Unit label runs vertically along the middle of the axis (not parked in the
+    // top corner) so it never collides with the title or the legend — the cause
+    // of the RTT/丢包率/ms and DNS 解析时延/ms overlaps.
+    nameLocation: 'middle' as const,
+    nameGap: 40,
+    nameRotate: 90,
+    nameTextStyle: { color: '#5f6c80', fontSize: 11 },
+    axisLabel: {
+      color: '#5f6c80',
+      fontSize: 11,
+      ...(u === 'bool' ? { formatter: (v: number) => (v >= 0.5 ? '正常' : '中断') } : {}),
+    },
+    axisLine: { show: false },
+    splitLine: i === 0 ? { lineStyle: { color: 'rgba(255,255,255,0.06)' } } : { show: false },
+    ...(u === 'bool' ? { min: 0, max: 1, interval: 1 } : {}),
+  }))
+
+  const series = ms.map((m) => {
+    const isBool = m.unit === 'bool'
+    const ai = Math.max(0, axisUnits.indexOf(m.unit || ''))
+    return {
+      name: m.label,
+      type: 'line' as const,
+      showSymbol: false,
+      smooth: !isBool,
+      step: isBool ? ('end' as const) : (false as const),
+      yAxisIndex: ai,
+      data: m.samples.map((s) => [new Date(s.ts).getTime(), s.value] as [number, number]),
+      lineStyle: { width: 2, color: m.color },
+      itemStyle: { color: m.color },
+      // Fill only when a single line owns the chart; overlaid areas muddy each other.
+      areaStyle: multi
+        ? undefined
+        : {
+            color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
+              { offset: 0, color: m.color + '55' },
+              { offset: 1, color: m.color + '00' },
+            ]),
+          },
+    }
+  })
+
   chart.setOption(
     {
       title: baseTitle(),
@@ -59,37 +136,20 @@ function renderLine() {
         textStyle: { color: '#e8eef8', fontSize: 12 },
         axisPointer: { lineStyle: { color: 'rgba(255,255,255,0.25)' } },
       },
-      grid: { left: 48, right: 20, top: 46, bottom: 28 },
+      // Only the title (left) and legend (right) share the top row now; axis unit
+      // names live on the sides, so a small top margin is enough.
+      legend: multi
+        ? { top: 8, right: 12, textStyle: { color: '#9aa8bd', fontSize: 11 }, itemWidth: 14, itemHeight: 8 }
+        : undefined,
+      grid: { left: 58, right: axisUnits.length > 1 ? 58 : 22, top: multi ? 44 : 40, bottom: 28 },
       xAxis: {
         type: 'time',
         axisLine: { lineStyle: { color: 'rgba(255,255,255,0.12)' } },
         axisLabel: { color: '#5f6c80', fontSize: 11 },
         splitLine: { show: false },
       },
-      yAxis: {
-        type: 'value',
-        name: props.unit,
-        nameTextStyle: { color: '#5f6c80', fontSize: 11 },
-        axisLabel: { color: '#5f6c80', fontSize: 11 },
-        axisLine: { show: false },
-        splitLine: { lineStyle: { color: 'rgba(255,255,255,0.06)' } },
-      },
-      series: [
-        {
-          type: 'line',
-          showSymbol: false,
-          smooth: true,
-          data,
-          lineStyle: { width: 2, color: accent },
-          itemStyle: { color: accent },
-          areaStyle: {
-            color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
-              { offset: 0, color: accent + '55' },
-              { offset: 1, color: accent + '00' },
-            ]),
-          },
-        },
-      ],
+      yAxis,
+      series,
     },
     true,
   )
@@ -123,12 +183,7 @@ function renderTimeline(segs: Seg[], onLabel: string, offLabel: string, restarts
         axisLabel: { color: '#5f6c80', fontSize: 11 },
         splitLine: { show: false },
       },
-      yAxis: {
-        type: 'category',
-        data: ['status'],
-        show: false,
-        boundaryGap: true,
-      },
+      yAxis: { type: 'category', data: ['status'], show: false, boundaryGap: true },
       series: [
         {
           type: 'custom',
@@ -157,12 +212,7 @@ function renderTimeline(segs: Seg[], onLabel: string, offLabel: string, restarts
                 symbol: 'none',
                 silent: false,
                 lineStyle: { color: MARK, type: 'dashed', width: 1 },
-                label: {
-                  formatter: '重启',
-                  color: MARK,
-                  fontSize: 10,
-                  position: 'insideEndTop',
-                },
+                label: { formatter: '重启', color: MARK, fontSize: 10, position: 'insideEndTop' },
                 data: restarts.map((t) => ({ xAxis: t })),
               }
             : undefined,
@@ -175,14 +225,22 @@ function renderTimeline(segs: Seg[], onLabel: string, offLabel: string, restarts
 
 function render() {
   if (!chart) return
-  if (mode.value === 'state') {
-    renderTimeline(boolSegments(toPoints(props.samples), Date.now()), '正常 / 启用', '中断 / 禁用')
-  } else if (mode.value === 'uptime') {
-    const { segs, restarts } = uptimeSegments(toPoints(props.samples), Date.now())
-    renderTimeline(segs, '在线', '离线 / 故障', restarts)
-  } else {
-    renderLine()
+  const ms = metrics.value
+  // A lone status/heartbeat metric keeps its dedicated state timeline; anything
+  // else (including several trend metrics) is overlaid as lines.
+  if (ms.length === 1) {
+    const m = ms[0]
+    if (m.unit === 'bool') {
+      renderTimeline(boolSegments(toPoints(m.samples), Date.now()), '正常 / 启用', '中断 / 禁用')
+      return
+    }
+    if (m.kind === 'agent.uptime_s') {
+      const { segs, restarts } = uptimeSegments(toPoints(m.samples), Date.now())
+      renderTimeline(segs, '在线', '离线 / 故障', restarts)
+      return
+    }
   }
+  renderLines(ms)
 }
 
 function resize() {
@@ -200,8 +258,7 @@ onBeforeUnmount(() => {
   chart?.dispose()
 })
 
-watch(() => props.samples, render, { deep: true })
-watch([() => props.color, () => props.kind], render)
+watch(() => [props.metrics, props.samples, props.color, props.kind, props.unit], render, { deep: true })
 </script>
 
 <template>

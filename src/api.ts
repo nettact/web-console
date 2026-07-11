@@ -196,6 +196,12 @@ export const api = {
   incidents: () => req<Incident[]>('GET', '/api/v1/incidents'),
   timeline: (id: string) => req<TimelineEntry[]>('GET', `/api/v1/incidents/${encodeURIComponent(id)}/timeline`),
   alerts: () => req<Alert[]>('GET', '/api/v1/alerts'),
+  // Alarm history (firing + resolved) for one agent+target, newest first.
+  agentAlerts: (id: string, target: string, limit = 10) => {
+    const p = new URLSearchParams({ limit: String(limit) })
+    if (target) p.set('target', target)
+    return req<Alert[]>('GET', `/api/v1/agents/${encodeURIComponent(id)}/alerts?${p.toString()}`)
+  },
   // Alarm rules are configured per monitoring target.
   targetRules: (probeTaskId: string) =>
     req<Rule[]>('GET', `/api/v1/targets/${encodeURIComponent(probeTaskId)}/rules`),
