@@ -1,10 +1,12 @@
 <script setup lang="ts">
 import { ref, onMounted, onBeforeUnmount } from 'vue'
+import { useRoute } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { api, type Incident, type TimelineEntry, type Alert } from '../api'
 import { toDateLocale } from '../i18n'
 
 const { t, te, locale } = useI18n()
+const route = useRoute()
 
 const incidents = ref<Incident[]>([])
 const alerts = ref<Alert[]>([])
@@ -17,6 +19,9 @@ const layerLabel = (l: string) => {
   const key = `incidents.layer.${l}`
   return l && te(key) ? t(key) : l || '—'
 }
+// Severity + timeline-kind are raw server codes; localize them for display.
+const sevLabel = (s: string) => (s && te(`mform.sev_${s}`) ? t(`mform.sev_${s}`) : s || '—')
+const kindLabel = (k: string) => (k && te(`incidents.kind.${k}`) ? t(`incidents.kind.${k}`) : k)
 const fmtTime = (s: string) => new Date(s).toLocaleTimeString(toDateLocale(locale.value))
 const fmtDateTime = (s: string) => new Date(s).toLocaleString(toDateLocale(locale.value))
 
@@ -33,6 +38,10 @@ async function select(id: string) {
   timeline.value = await api.timeline(id)
 }
 onMounted(async () => {
+  // Deep link from a notification: ?incident=<id> auto-opens that incident's
+  // timeline. Setting selected before load() makes load() fetch the timeline too.
+  const deep = route.query.incident
+  if (typeof deep === 'string' && deep) selected.value = deep
   await load()
   timer = window.setInterval(load, 5000)
 })
@@ -91,7 +100,7 @@ onBeforeUnmount(() => {
                 </span>
               </td>
               <td>{{ layerLabel(i.suspected_layer) }}</td>
-              <td>{{ i.severity }}</td>
+              <td><span class="badge sev" :class="i.severity">{{ sevLabel(i.severity) }}</span></td>
               <td>{{ i.summary }}</td>
               <td class="hint">{{ fmtDateTime(i.opened_at) }}</td>
             </tr>
@@ -108,7 +117,7 @@ onBeforeUnmount(() => {
           <li v-for="(entry, idx) in timeline" :key="idx">
             <span class="node"></span>
             <span class="ts">{{ fmtTime(entry.ts) }}</span>
-            <span class="kind">{{ entry.kind }}</span>
+            <span class="kind">{{ kindLabel(entry.kind) }}</span>
             <span class="msg">{{ entry.message }}</span>
           </li>
         </ul>

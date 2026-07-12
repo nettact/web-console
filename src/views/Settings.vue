@@ -24,22 +24,48 @@ const CHANNEL_TYPES = computed(() => {
   return types
 })
 const addType = ref('webhook')
-const webhook = reactive({ name: '', url: '' })
-const email = reactive({ name: '', host: '', port: '587', from: '', to: '', username: '', password: '' })
-const system = reactive({ name: '' })
+// 通知渠道语言：决定该渠道推送的告警文案用中文还是英文（服务端在投递时渲染）。
+const LANGS = [
+  { value: 'zh', label: '中文' },
+  { value: 'en', label: 'English' },
+]
+const webhook = reactive({ name: '', url: '', lang: 'zh' })
+const email = reactive({ name: '', host: '', port: '587', from: '', to: '', username: '', password: '', lang: 'zh' })
+const system = reactive({ name: '', lang: 'zh' })
+
+// 控制台地址：通知里深链回本事故详情页的基础 URL（如 http://localhost:8080）。
+const consoleUrl = ref('')
+const consoleSaved = ref(false)
 
 async function load() {
   try {
-    ;[quota.value, stats.value, channels.value, serverInfo.value] = await Promise.all([
-      api.quota(), api.stats(), api.channels(), api.serverInfo(),
+    const [q, s, ch, si, settings] = await Promise.all([
+      api.quota(), api.stats(), api.channels(), api.serverInfo(), api.settings(),
     ])
+    quota.value = q
+    stats.value = s
+    channels.value = ch
+    serverInfo.value = si
+    // Prefill with the current origin when unset, so the field always shows a
+    // concrete, saveable value instead of only the placeholder (which looks like
+    // a value but saves empty). Entering the console also auto-sets it (see auth).
+    consoleUrl.value = settings['console_base_url'] || window.location.origin
+  } catch (e) {
+    error.value = String((e as Error).message || e)
+  }
+}
+async function saveConsoleUrl() {
+  try {
+    await api.updateSettings({ console_base_url: consoleUrl.value.trim() })
+    consoleSaved.value = true
+    setTimeout(() => (consoleSaved.value = false), 2000)
   } catch (e) {
     error.value = String((e as Error).message || e)
   }
 }
 async function addWebhook() {
   if (!webhook.url) return
-  await api.createChannel(webhook.name || 'Webhook', 'webhook', { url: webhook.url })
+  await api.createChannel(webhook.name || 'Webhook', 'webhook', { url: webhook.url, lang: webhook.lang })
   webhook.name = ''
   webhook.url = ''
   await load()
@@ -51,7 +77,7 @@ async function addEmail() {
   await load()
 }
 async function addSystem() {
-  await api.createChannel(system.name || 'System', 'system', {})
+  await api.createChannel(system.name || 'System', 'system', { lang: system.lang })
   system.name = ''
   await load()
 }
@@ -108,6 +134,18 @@ onMounted(load)
     <p v-if="error" class="err">{{ error }}</p>
 
     <section class="panel">
+      <div class="panel-head"><h3>{{ t('settings.consoleUrl') }}</h3></div>
+      <div class="panel-body">
+        <p class="hint">{{ t('settings.consoleUrlHint') }}</p>
+        <div class="row field-row">
+          <input v-model="consoleUrl" placeholder="http://localhost:8080" class="wide" />
+          <button class="btn btn-primary" @click="saveConsoleUrl">{{ t('common.save') }}</button>
+          <span v-if="consoleSaved" class="hint saved">✓ {{ t('common.saved') }}</span>
+        </div>
+      </div>
+    </section>
+
+    <section class="panel">
       <div class="panel-head"><h3>{{ t('settings.channels') }}</h3><span class="count">{{ channels.length }}</span></div>
       <div class="panel-body">
         <p class="hint">{{ t('settings.channelsHint') }}</p>
@@ -126,6 +164,9 @@ onMounted(load)
           <b class="ftag">Webhook</b>
           <input v-model="webhook.name" :placeholder="t('settings.namePlaceholder')" class="tiny-name" />
           <input v-model="webhook.url" placeholder="https://hooks.example.com/…" class="wide" />
+          <select v-model="webhook.lang" :title="t('settings.langLabel')">
+            <option v-for="l in LANGS" :key="l.value" :value="l.value">{{ l.label }}</option>
+          </select>
           <button class="btn btn-primary" @click="addWebhook">{{ t('settings.addBtn') }}</button>
         </div>
 
@@ -138,12 +179,18 @@ onMounted(load)
           <input v-model="email.to" :placeholder="t('settings.to')" />
           <input v-model="email.username" :placeholder="t('settings.usernameOpt')" />
           <input v-model="email.password" type="password" :placeholder="t('settings.passwordOpt')" />
+          <select v-model="email.lang" :title="t('settings.langLabel')">
+            <option v-for="l in LANGS" :key="l.value" :value="l.value">{{ l.label }}</option>
+          </select>
           <button class="btn btn-primary" @click="addEmail">{{ t('settings.addBtn') }}</button>
         </div>
 
         <div v-else-if="addType === 'system'" class="row field-row">
           <b class="ftag">{{ t('settings.sysNotify') }}</b>
           <input v-model="system.name" :placeholder="t('settings.namePlaceholder')" class="tiny-name" />
+          <select v-model="system.lang" :title="t('settings.langLabel')">
+            <option v-for="l in LANGS" :key="l.value" :value="l.value">{{ l.label }}</option>
+          </select>
           <span class="hint">{{ t('settings.sysNotifyHint') }}</span>
           <button class="btn btn-primary" @click="addSystem">{{ t('settings.addBtn') }}</button>
         </div>

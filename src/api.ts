@@ -280,6 +280,9 @@ export const api = {
     req<unknown>('PUT', `/api/v1/agent-groups/${encodeURIComponent(id)}`, { name, agent_ids: agentIds }),
   deleteAgentGroup: (id: string) => req<unknown>('DELETE', `/api/v1/agent-groups/${encodeURIComponent(id)}`),
   listDevices: (siteID: string) => req<Device[]>('GET', `/api/v1/sites/${encodeURIComponent(siteID)}/devices`),
+  // Global server settings (flat key/value map, e.g. console_base_url).
+  settings: () => req<Record<string, string>>('GET', '/api/v1/settings'),
+  updateSettings: (patch: Record<string, string>) => req<unknown>('PUT', '/api/v1/settings', patch),
   incidents: () => req<Incident[]>('GET', '/api/v1/incidents'),
   timeline: (id: string) => req<TimelineEntry[]>('GET', `/api/v1/incidents/${encodeURIComponent(id)}/timeline`),
   alerts: () => req<Alert[]>('GET', '/api/v1/alerts'),

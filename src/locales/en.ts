@@ -3,6 +3,7 @@ export default {
   common: {
     refresh: 'Refresh',
     save: 'Save',
+    saved: 'Saved',
     delete: 'Delete',
     add: 'Add',
     noData: 'No data',
@@ -127,6 +128,13 @@ export default {
       dns: 'DNS',
       service: 'Service',
       wireless: 'Wireless',
+    },
+    kind: {
+      'alert.raised': 'Alert raised',
+      'alert.resolved': 'Alert resolved',
+      'incident.opened': 'Incident opened',
+      'incident.updated': 'Incident updated',
+      'incident.resolved': 'Incident resolved',
     },
   },
 
@@ -361,6 +369,9 @@ export default {
     sysNotify: 'System notification',
     sysNotifyHint: 'Pops a desktop notification on the host running the server (Windows / macOS only).',
     sysNotifyConfig: 'Local desktop notification',
+    langLabel: 'Notification language',
+    consoleUrl: 'Console URL',
+    consoleUrlHint: 'Used to build the "View details" link in notifications that points back to the incident page (e.g. http://localhost:8080). Leave empty to omit the link.',
     thName: 'Name',
     thType: 'Type',
     thConfig: 'Config',

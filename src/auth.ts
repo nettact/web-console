@@ -16,11 +16,30 @@ export async function refresh(): Promise<void> {
   } finally {
     auth.ready = true
   }
+  if (auth.user) await ensureConsoleBaseURL()
 }
 
 export async function login(username: string, password: string): Promise<void> {
   auth.user = await api.login(username, password)
   auth.ready = true
+  await ensureConsoleBaseURL()
+}
+
+// ensureConsoleBaseURL defaults the console base URL — used to build deep links
+// in alert notifications — to the address the admin is actually using, the first
+// time they enter the console with it unset. This spares the user from having to
+// configure it manually (and from the placeholder-looks-like-a-value trap on the
+// Settings page). Best-effort: never blocks entry, and never overwrites a value
+// the admin has already set.
+async function ensureConsoleBaseURL(): Promise<void> {
+  try {
+    const s = await api.settings()
+    if (!s['console_base_url']) {
+      await api.updateSettings({ console_base_url: window.location.origin })
+    }
+  } catch {
+    // ignore — the Settings page still lets the admin set/override it manually
+  }
 }
 
 export async function logout(): Promise<void> {

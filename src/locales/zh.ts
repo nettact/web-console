@@ -6,6 +6,7 @@ export default {
   common: {
     refresh: '刷新',
     save: '保存',
+    saved: '已保存',
     delete: '删除',
     add: '添加',
     noData: '无数据',
@@ -130,6 +131,13 @@ export default {
       dns: 'DNS',
       service: '服务',
       wireless: '无线',
+    },
+    kind: {
+      'alert.raised': '告警触发',
+      'alert.resolved': '告警恢复',
+      'incident.opened': '事故开始',
+      'incident.updated': '事故更新',
+      'incident.resolved': '事故恢复',
     },
   },
 
@@ -371,6 +379,9 @@ export default {
     sysNotify: '系统通知',
     sysNotifyHint: '报警时在运行 server 的本机桌面弹出系统通知（仅 Windows / macOS）。',
     sysNotifyConfig: '本机桌面通知',
+    langLabel: '通知语言',
+    consoleUrl: '控制台地址',
+    consoleUrlHint: '通知里的「查看详情」链接会用它拼出事故详情页地址（如 http://localhost:8080）。留空则通知不含链接。',
     thName: '名称',
     thType: '类型',
     thConfig: '配置',
