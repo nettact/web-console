@@ -58,6 +58,14 @@ async function refreshAgent() {
   }
 }
 
+// The snapshot POST is rejected immediately with `{"error":"agent offline"}`
+// (HTTP 409) when the agent has no live connection — surface that as a clear
+// localized message instead of the raw server string.
+function snapshotErrMsg(e: unknown): string {
+  const msg = String((e as Error).message || e)
+  return msg === 'agent offline' ? t('processes.agentOffline') : msg
+}
+
 // Ask the agent for a fresh snapshot, then poll until it returns (round-trip is
 // bounded by the agent's upload interval, typically a few seconds).
 async function requestSnapshot() {
@@ -90,13 +98,13 @@ async function requestSnapshot() {
           stopPoll()
         }
       } catch (e) {
-        error.value = String((e as Error).message || e)
+        error.value = snapshotErrMsg(e)
         loading.value = false
         stopPoll()
       }
     }, 1000)
   } catch (e) {
-    error.value = String((e as Error).message || e)
+    error.value = snapshotErrMsg(e)
     loading.value = false
   }
 }

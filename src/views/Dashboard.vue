@@ -30,7 +30,12 @@ const onlineCount = computed(() => agents.value.filter((agent) => agent.status =
 async function loadAgents() {
   try {
     ;[agents.value, quota.value] = await Promise.all([api.agents(), api.quota()])
-    if (!selected.value && agents.value.length) selected.value = agents.value[0].id
+    // (Re)select when nothing is selected yet, or when the selected agent was
+    // deleted — a stale id would pin every metric poll to a gone agent and
+    // block auto-selecting newly enrolled ones.
+    const stillExists = agents.value.some((a) => a.id === selected.value)
+    if ((!selected.value || !stillExists) && agents.value.length) selected.value = agents.value[0].id
+    else if (!stillExists) selected.value = ''
   } catch (e) {
     error.value = String((e as Error).message || e)
   } finally {
@@ -201,7 +206,13 @@ const fmtTime = (value: string | null | undefined) =>
 onMounted(async () => {
   await loadAgents()
   await loadMetrics()
-  timer = window.setInterval(loadMetrics, 5000)
+  // Refresh agents alongside metrics: status now flips within seconds
+  // server-side. loadAgents only assigns `selected` when it's empty, so the
+  // current selection survives every refresh.
+  timer = window.setInterval(() => {
+    loadMetrics()
+    loadAgents()
+  }, 5000)
 })
 onBeforeUnmount(() => {
   if (timer) window.clearInterval(timer)

@@ -214,6 +214,7 @@ export default {
     thRemoteAddr: 'Remote address',
     thProcess: 'Process',
     waitTimeout: 'Timed out waiting for the agent (it may be offline)',
+    agentOffline: 'Agent is offline — live snapshot unavailable',
   },
 
   monitoring: {

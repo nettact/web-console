@@ -217,6 +217,7 @@ export default {
     thRemoteAddr: '远程地址',
     thProcess: '进程',
     waitTimeout: '等待 agent 响应超时（agent 可能离线）',
+    agentOffline: 'Agent 已离线，无法获取实时快照',
   },
 
   monitoring: {

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, onBeforeUnmount } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { api, type Agent, type EnrollmentToken, type AgentGroup } from '../api'
 import { toDateLocale } from '../i18n'
@@ -25,6 +25,29 @@ async function load() {
     ])
   } catch (e) {
     error.value = String((e as Error).message || e)
+  }
+}
+
+// Agent status now flips within seconds server-side, so poll just the agent
+// list (tokens/groups change only via user actions on this page, which reload).
+// Skip a tick while a previous fetch is in flight, and while any input on the
+// page is focused — replacing agents.value re-renders the rename inputs and
+// would clobber an in-progress edit before its @blur save fires. The focus
+// check runs both before AND after the await: the user may have started
+// typing while the request was in flight.
+let refreshInFlight = false
+async function refreshAgents() {
+  if (refreshInFlight) return
+  if (document.activeElement instanceof HTMLInputElement) return
+  refreshInFlight = true
+  try {
+    const next = await api.agents()
+    if (document.activeElement instanceof HTMLInputElement) return
+    agents.value = next
+  } catch {
+    /* transient poll failure — keep showing the last known list */
+  } finally {
+    refreshInFlight = false
   }
 }
 
@@ -129,7 +152,15 @@ const tokenStateLabel = (tok: EnrollmentToken) =>
   })[tokenState(tok)]
 
 const fmtDateTime = (s: string) => new Date(s).toLocaleString(toDateLocale(locale.value))
-onMounted(load)
+
+let timer: number | undefined
+onMounted(() => {
+  load()
+  timer = window.setInterval(refreshAgents, 5000)
+})
+onBeforeUnmount(() => {
+  if (timer) window.clearInterval(timer)
+})
 </script>
 
 <template>
