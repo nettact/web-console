@@ -244,6 +244,11 @@ export default {
       probe_http_latency_ms: '响应延迟 (ms)',
       probe_tcp_ok: '连接成功 (1/0)',
       probe_tcp_connect_ms: '连接耗时 (ms)',
+      probe_nat_ok: '绑定测试 (1/0)',
+      probe_nat_rtt_ms: '绑定耗时 (ms)',
+      probe_nat_mapping: '映射行为',
+      probe_nat_filtering: '过滤行为',
+      probe_nat_type: 'NAT 类型',
       host_cpu_pct: 'CPU 使用率 (%)',
       host_mem_pct: '内存使用率 (%)',
       host_disk_pct: '磁盘使用率 (%)',
@@ -298,6 +303,7 @@ export default {
     typeHttpKeyword: 'HTTP(s) - 关键字',
     typeTcp: 'TCP 端口',
     typeDns: 'DNS',
+    typeNat: 'NAT 类型',
     typeHost: '系统状态',
     // ping
     packetCount: '数据包最大数量',
@@ -326,6 +332,13 @@ export default {
     requestBody: '请求体',
     // tcp
     tcpTls: '连接后进行 TLS 握手（SSL/TLS）',
+    // nat
+    secNat: 'NAT 检测选项',
+    stunServer: 'STUN 服务器',
+    natTransport: '传输协议',
+    natServer2: '备用 STUN 服务器',
+    natHint: '通过 STUN 探测本机所处 NAT 的映射行为、过滤行为与 NAT 类型。服务器地址可附带端口（如 host:3478）；不填端口则按协议自动匹配（UDP/TCP 用 3478，TLS/DTLS 用 5349）。仅 UDP 支持完整探测；TCP/TLS/DTLS 仅做绑定测试（可达性与公网映射地址）。',
+    natServer2Hint: '当主 STUN 服务器未返回 OTHER-ADDRESS 时，用备用服务器辅助判断映射行为（可选，填 主机:端口）。',
     // 通知
     validationHint: '为该监控项配置报警规则（连续失败 N 次触发）与通知渠道。',
     saveFirstForRules: '请先保存该监控项，然后再配置报警规则。',
@@ -348,6 +361,10 @@ export default {
     condUnavailable: '网站不可用',
     condConnectFail: '端口连接失败',
     condConnectSlow: '连接耗时高于',
+    condNatP2P: 'P2P 直连可能失败（对称型 NAT）',
+    condNatProbeFail: 'STUN 探测失败，无法检测 NAT 类型',
+    natRuleHint:
+      'NAT 类型决定能否点对点直连：检测到「对称型 NAT」时，联机游戏、语音/视频通话、远程访问等通常无法直连（需经中继服务器）；「STUN 探测失败」则表示探测本身不通（网络异常或服务器无响应）。',
     condCpu: 'CPU 使用率高于',
     condMem: '内存使用率高于',
     condDisk: '磁盘使用率高于',
@@ -492,6 +509,7 @@ export default {
       probe_icmp: 'ICMP',
       probe_dns: 'DNS',
       probe_http: 'HTTP',
+      probe_nat: 'NAT',
       iface: '接口',
       agent: 'Agent',
       host: '系统',
@@ -505,6 +523,11 @@ export default {
       probe_http_status: '状态码',
       probe_http_latency_ms: '延迟',
       probe_http_ok: '请求成功',
+      probe_nat_ok: '绑定测试',
+      probe_nat_rtt_ms: '绑定耗时',
+      probe_nat_mapping: '映射行为',
+      probe_nat_filtering: '过滤行为',
+      probe_nat_type: 'NAT 类型',
       iface_up: '接口状态',
       agent_uptime_s: '运行状态',
       host_cpu_pct: 'CPU',
@@ -523,6 +546,16 @@ export default {
       host_uptime_s: '运行时长',
       host_net_rx_bps: '接收速率',
       host_net_tx_bps: '发送速率',
+    },
+    nat: {
+      foot: '更新于 {time}',
+      footStale: '本次探测未获结果，显示最近有效值（{time}）',
+      infoMapping:
+        '映射行为：同一内网端口经 NAT 后的公网映射如何随目标变化。\n• Endpoint-Independent：对任意目标都用同一个外部地址端口（最宽松，利于 P2P）。\n• Address-Dependent：目标 IP 不同则映射不同。\n• Address-and-Port-Dependent：目标 IP 或端口不同则映射就不同（对称型，P2P 困难）。',
+      infoFiltering:
+        '过滤行为：NAT 允许哪些外部端点主动把包发进来。\n• Endpoint-Independent：只要建立过映射，任意外部端点都能进（完全锥型）。\n• Address-Dependent：仅曾通信过的目标 IP（任意端口）可进（受限锥型）。\n• Address-and-Port-Dependent：仅曾通信过的 IP+端口可进（端口受限锥型，最严格）。',
+      infoType:
+        'NAT 类型：由映射 + 过滤行为归纳（RFC 3489）。\n• Open Internet：无 NAT，公网可直连。\n• Full Cone：端点无关映射 + 端点无关过滤，最利于 P2P。\n• Restricted Cone：端点无关映射 + 地址相关过滤。\n• Port-Restricted Cone：端点无关映射 + 地址端口相关过滤（家用最常见）。\n• Symmetric：地址端口相关映射，P2P 打洞最难。',
     },
   },
 

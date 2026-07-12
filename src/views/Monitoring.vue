@@ -33,6 +33,7 @@ function typeLabel(t: ProbeTarget): string {
   if (t.kind === 'icmp') return tr('mform.typeIcmp')
   if (t.kind === 'tcp') return tr('mform.typeTcp')
   if (t.kind === 'dns') return tr('mform.typeDns')
+  if (t.kind === 'nat') return tr('mform.typeNat')
   if (t.kind === 'host') return tr('mform.typeHost')
   if (t.kind === 'http') return tr('mform.typeHttp')
   return t.kind.toUpperCase()

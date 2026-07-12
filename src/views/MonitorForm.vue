@@ -3,6 +3,7 @@ import { ref, reactive, computed, onMounted, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
 import { api, type ProbeTarget, type ProbeParams, type Rule, type Channel, type AgentGroup } from '../api'
+import ComboInput from '../components/ComboInput.vue'
 
 const { t: tr } = useI18n()
 const route = useRoute()
@@ -70,10 +71,26 @@ const resolverServerPlaceholder = computed(() =>
 )
 const resolverPortPlaceholder = computed(() => (dnsProto.value === 'dot' ? '853' : '53'))
 
+// Suggested public STUN servers for the NAT monitor, offered as a pickable list on
+// the (still free-text) server field. A value may include a port (host:port);
+// without one the agent uses the transport's default STUN port (3478 for UDP/TCP,
+// 5349 for TLS/DTLS). Not all public servers implement RFC 5780 OTHER-ADDRESS, so
+// behavior discovery may be inconclusive.
+const STUN_PRESETS = [
+  'stun.hot-chilli.net',
+  'stun.fitauto.ru',
+  'stun.internetcalls.com',
+  'stun.voip.aebc.com',
+  'stun.voipbuster.com',
+  'stun.voipstunt.com',
+  'stun.miwifi.com',
+]
+
 function placeholderFor(kind: string): string {
   if (kind === 'dns') return 'example.com'
   if (kind === 'http') return 'https://example.com'
   if (kind === 'tcp') return 'example.com'
+  if (kind === 'nat') return 'stun.example.com'
   return '1.1.1.1'
 }
 
@@ -97,6 +114,7 @@ async function loadAll() {
     if (!found) { notFound.value = true; return }
     Object.assign(form, JSON.parse(JSON.stringify(found)))
     if (!form.params) form.params = {}
+    if (form.kind === 'nat' && !form.params.nat_transport) form.params.nat_transport = 'udp'
     headersText.value = headersToText(form.params.headers)
     await loadRules()
   }
@@ -207,6 +225,13 @@ const CONDITION_PRESETS: Record<string, Preset[]> = {
     { key: 'down', label: 'mform.condConnectFail', metric: 'probe.tcp.ok', comparator: 'lt', fixed: 1 },
     { key: 'slow', label: 'mform.condConnectSlow', metric: 'probe.tcp.connect_ms', comparator: 'gt', unit: 'ms', def: 1000 },
   ],
+  // Framed by outcome, not NAT jargon: the NAT type already summarizes mapping +
+  // filtering, so we only surface what a user actually feels — symmetric NAT breaks
+  // P2P (games/calls/remote access), and a failed probe means no NAT info at all.
+  nat: [
+    { key: 'p2p', label: 'mform.condNatP2P', metric: 'probe.nat.type', comparator: 'gte', fixed: 5 },
+    { key: 'probefail', label: 'mform.condNatProbeFail', metric: 'probe.nat.ok', comparator: 'lt', fixed: 1 },
+  ],
 }
 // Host presets depend on the chosen subject: whole-machine metrics live on the
 // "host" series (CPU/memory), disk usage on the per-mount series. Splitting them
@@ -271,6 +296,7 @@ function layerForKind(kind: string): string {
   if (kind === 'dns') return 'dns'
   if (kind === 'http') return 'service'
   if (kind === 'tcp') return 'service'
+  if (kind === 'nat') return 'wan'
   if (kind === 'host') return 'local'
   return 'internet'
 }
@@ -335,6 +361,9 @@ watch(() => form.kind, (k) => {
     form.params.keyword = ''
     form.params.keyword_invert = false
   }
+  // Default the NAT transport so the select shows a concrete value (UDP) rather
+  // than an empty/placeholder state.
+  if (k === 'nat' && !form.params.nat_transport) form.params.nat_transport = 'udp'
 })
 
 onMounted(loadAll)
@@ -364,6 +393,7 @@ onMounted(loadAll)
               <option value="http">{{ tr('mform.typeHttp') }}</option>
               <option value="tcp">{{ tr('mform.typeTcp') }}</option>
               <option value="dns">{{ tr('mform.typeDns') }}</option>
+              <option value="nat">{{ tr('mform.typeNat') }}</option>
             </select>
           </label>
           <label class="field">
@@ -390,8 +420,9 @@ onMounted(loadAll)
             <p class="hint tiny wide" v-else-if="hostSubject === 'disk'">{{ tr('mform.hostMountHint') }}</p>
           </template>
           <label class="field wide" v-else>
-            <span>{{ form.kind === 'http' ? tr('mform.url') : (form.kind === 'tcp' || form.kind === 'dns' ? tr('mform.hostname') : tr('mform.target')) }}</span>
-            <input v-model="form.target" :placeholder="placeholderFor(form.kind)" />
+            <span>{{ form.kind === 'http' ? tr('mform.url') : (form.kind === 'nat' ? tr('mform.stunServer') : (form.kind === 'tcp' || form.kind === 'dns' ? tr('mform.hostname') : tr('mform.target'))) }}</span>
+            <ComboInput v-if="form.kind === 'nat'" v-model="form.target" :options="STUN_PRESETS" :placeholder="placeholderFor('nat')" />
+            <input v-else v-model="form.target" :placeholder="placeholderFor(form.kind)" />
           </label>
           <label class="field" v-if="form.kind === 'tcp'">
             <span>{{ tr('mform.port') }}</span>
@@ -508,10 +539,36 @@ onMounted(loadAll)
         </div>
       </section>
 
+      <!-- NAT options -->
+      <section class="panel" v-if="form.kind === 'nat'">
+        <div class="panel-head"><h3>{{ tr('mform.secNat') }}</h3></div>
+        <div class="form-grid">
+          <label class="field">
+            <span>{{ tr('mform.natTransport') }}</span>
+            <select v-model="form.params!.nat_transport">
+              <option value="udp">UDP</option>
+              <option value="tcp">TCP</option>
+              <option value="tls">TLS</option>
+              <option value="dtls">DTLS</option>
+            </select>
+          </label>
+          <label class="field check" v-if="form.params!.nat_transport === 'tls'">
+            <input type="checkbox" v-model="form.params!.ignore_tls" /><span>{{ tr('mform.ignoreTls') }}</span>
+          </label>
+          <label class="field wide" v-if="!form.params!.nat_transport || form.params!.nat_transport === 'udp'">
+            <span>{{ tr('mform.natServer2') }}</span>
+            <ComboInput :model-value="form.params!.stun_server2 || ''" @update:model-value="form.params!.stun_server2 = $event" :options="STUN_PRESETS" placeholder="stun2.example.com:3478" />
+          </label>
+          <p class="hint tiny wide">{{ tr('mform.natHint') }}</p>
+          <p class="hint tiny wide" v-if="!form.params!.nat_transport || form.params!.nat_transport === 'udp'">{{ tr('mform.natServer2Hint') }}</p>
+        </div>
+      </section>
+
       <!-- Validation / notifications -->
       <section class="panel">
         <div class="panel-head"><h3>{{ tr('mform.secValidation') }}</h3></div>
         <p class="hint panel-hint">{{ tr('mform.validationHint') }}</p>
+        <p class="hint panel-hint" v-if="form.kind === 'nat'">{{ tr('mform.natRuleHint') }}</p>
         <div class="panel-body">
           <p v-if="!form.id" class="hint tiny">{{ tr('mform.saveFirstForRules') }}</p>
           <template v-else>

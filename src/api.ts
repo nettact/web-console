@@ -93,6 +93,9 @@ export interface ProbeParams {
   // tcp
   port?: number
   tls?: boolean
+  // nat (STUN behavior discovery)
+  nat_transport?: string
+  stun_server2?: string
 }
 export interface ProbeTarget {
   id?: string
