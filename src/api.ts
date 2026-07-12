@@ -145,16 +145,27 @@ export interface TimelineEntry {
   kind: string
   message: string
 }
+export interface IncidentPage {
+  items: Incident[]
+  total: number
+  page: number
+  page_size: number
+}
 export interface Alert {
   id: string
   rule_name: string
   agent_id: string
+  agent_host: string
   target: string
+  target_name?: string
   layer: string
   severity: string
   state: string
   value: number
   started_at: string
+  // Human description of the fault, rendered server-side in both languages.
+  desc_zh?: string
+  desc_en?: string
 }
 export interface Rule {
   id: string
@@ -283,7 +294,8 @@ export const api = {
   // Global server settings (flat key/value map, e.g. console_base_url).
   settings: () => req<Record<string, string>>('GET', '/api/v1/settings'),
   updateSettings: (patch: Record<string, string>) => req<unknown>('PUT', '/api/v1/settings', patch),
-  incidents: () => req<Incident[]>('GET', '/api/v1/incidents'),
+  incidents: (page = 1, pageSize = 15) =>
+    req<IncidentPage>('GET', `/api/v1/incidents?page=${page}&page_size=${pageSize}`),
   timeline: (id: string) => req<TimelineEntry[]>('GET', `/api/v1/incidents/${encodeURIComponent(id)}/timeline`),
   alerts: () => req<Alert[]>('GET', '/api/v1/alerts'),
   // Alarm history (firing + resolved) for one agent+target, newest first.
