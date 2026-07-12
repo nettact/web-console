@@ -20,6 +20,10 @@ const loading = ref(false)
 const error = ref('')
 const sortKey = ref<'cpu' | 'ram' | 'name'>('cpu')
 const tab = ref<'processes' | 'connections'>('processes')
+// When set, the 网络连接 tab is filtered to a single process (strictly by PID).
+// `name` is retained so we can re-validate the filter after a fresh snapshot and
+// avoid matching a recycled PID (see revalidateConnFilter).
+const connFilter = ref<{ pid: number; name: string } | null>(null)
 let poll: number | undefined
 
 const canProcs = computed(() => agent.value?.capabilities?.includes('host.process.read') ?? false)
@@ -90,6 +94,7 @@ async function requestSnapshot() {
         const res = await api.getSnapshot(selected.value)
         if (res.snapshot && res.snapshot.request_id === request_id) {
           snapshot.value = res.snapshot
+          revalidateConnFilter()
           loading.value = false
           stopPoll()
         } else if (tries > 25) {
@@ -127,6 +132,76 @@ const processes = computed<ProcessInfo[]>(() => {
 })
 const connections = computed<ConnectionInfo[]>(() => snapshot.value?.connections || [])
 
+// Connections narrowed to the selected process. The match is strictly by PID;
+// no filter (null) means show everything.
+const filteredConnections = computed<ConnectionInfo[]>(() => {
+  const cs = connections.value
+  if (!connFilter.value) return cs
+  const pid = connFilter.value.pid
+  return cs.filter((c) => c.pid === pid)
+})
+
+// Options for the connections-tab process filter. The full process list is the
+// primary source, so processes with zero connections are still selectable; a
+// connection-only agent (no process list) derives options from the connections
+// themselves. Connections without a PID are skipped — they can't be filtered by
+// PID. The current filter is injected if momentarily absent so the <select>
+// keeps showing it instead of snapping back to "all".
+const connFilterOptions = computed<{ pid: number; name: string }[]>(() => {
+  const opts: { pid: number; name: string }[] = []
+  const seen = new Set<number>()
+  for (const p of snapshot.value?.processes || []) {
+    if (seen.has(p.pid)) continue
+    seen.add(p.pid)
+    opts.push({ pid: p.pid, name: p.name })
+  }
+  for (const c of connections.value) {
+    if (c.pid == null || seen.has(c.pid)) continue
+    seen.add(c.pid)
+    opts.push({ pid: c.pid, name: c.process_name || '' })
+  }
+  if (connFilter.value && !seen.has(connFilter.value.pid)) {
+    opts.push({ pid: connFilter.value.pid, name: connFilter.value.name })
+  }
+  opts.sort((a, b) => a.name.localeCompare(b.name) || a.pid - b.pid)
+  return opts
+})
+
+// Bridge between the <select>'s string value and the {pid,name} filter object.
+const connFilterValue = computed<string>({
+  get: () => (connFilter.value ? String(connFilter.value.pid) : ''),
+  set: (v) => {
+    if (!v) {
+      connFilter.value = null
+      return
+    }
+    const pid = Number(v)
+    const opt = connFilterOptions.value.find((o) => o.pid === pid)
+    connFilter.value = opt ? { pid: opt.pid, name: opt.name } : { pid, name: '' }
+  },
+})
+
+// Jump from a process row to its connections without asking for a new snapshot —
+// just filter the already-loaded data and switch tabs.
+function viewConnections(p: ProcessInfo) {
+  connFilter.value = { pid: p.pid, name: p.name }
+  tab.value = 'connections'
+}
+
+// After a fresh snapshot, keep the filter only if the same PID still maps to the
+// same process name (PIDs are recycled, so a bare PID match isn't enough). Prefer
+// the process list; fall back to the connection side for a connection-only agent.
+function revalidateConnFilter() {
+  const f = connFilter.value
+  if (!f) return
+  const procs = snapshot.value?.processes || []
+  const conns = snapshot.value?.connections || []
+  const stillValid =
+    procs.some((p) => p.pid === f.pid && p.name === f.name) ||
+    conns.some((c) => c.pid === f.pid && c.process_name === f.name)
+  if (!stillValid) connFilter.value = null
+}
+
 function fmtRun(sec: number): string {
   const h = Math.floor(sec / 3600)
   const m = Math.floor((sec % 3600) / 60)
@@ -135,6 +210,8 @@ function fmtRun(sec: number): string {
 }
 
 async function onAgentChange() {
+  // Switching agents must not carry a process filter across to unrelated data.
+  connFilter.value = null
   await refreshAgent()
   await requestSnapshot()
 }
@@ -223,11 +300,12 @@ onBeforeUnmount(stopPoll)
                 <th>{{ t('processes.thProcName') }}</th><th>PID</th><th>{{ t('processes.thStatus') }}</th><th>{{ t('processes.thUser') }}</th>
                 <th class="num">CPU %</th><th class="num">{{ t('processes.thMem') }}</th><th class="num">{{ t('processes.thVirt') }}</th>
                 <th class="num">{{ t('processes.thDisk') }}</th><th class="num">{{ t('processes.thRuntime') }}</th>
+                <th v-if="canConns"></th>
               </tr>
             </thead>
             <tbody>
-              <tr v-if="loading && !processes.length"><td colspan="9" class="hint">{{ t('processes.fetching') }}</td></tr>
-              <tr v-else-if="!processes.length"><td colspan="9" class="hint">{{ t('common.noData') }}</td></tr>
+              <tr v-if="loading && !processes.length"><td :colspan="canConns ? 10 : 9" class="hint">{{ t('processes.fetching') }}</td></tr>
+              <tr v-else-if="!processes.length"><td :colspan="canConns ? 10 : 9" class="hint">{{ t('common.noData') }}</td></tr>
               <tr v-for="p in processes" :key="p.pid">
                 <td class="mono">{{ p.name }}</td>
                 <td class="mono">{{ p.pid }}</td>
@@ -238,6 +316,15 @@ onBeforeUnmount(stopPoll)
                 <td class="num dim">{{ fmtBytes(p.virt_bytes) }}</td>
                 <td class="num dim">{{ fmtBytes(p.disk_read_bytes) }} / {{ fmtBytes(p.disk_write_bytes) }}</td>
                 <td class="num dim">{{ fmtRun(p.run_time_seconds) }}</td>
+                <td v-if="canConns" class="num">
+                  <button
+                    class="link-btn"
+                    :aria-label="t('processes.viewConnsAria', { name: p.name, pid: p.pid })"
+                    @click="viewConnections(p)"
+                  >
+                    {{ t('processes.viewConns') }}
+                  </button>
+                </td>
               </tr>
             </tbody>
           </table>
@@ -246,6 +333,18 @@ onBeforeUnmount(stopPoll)
 
       <!-- connections -->
       <section class="panel" v-if="canConns" v-show="tab === 'connections'">
+        <div class="panel-head">
+          <span class="spacer"></span>
+          <div class="sort">
+            <label for="conn-filter">{{ t('processes.connFilterLabel') }}</label>
+            <select id="conn-filter" v-model="connFilterValue">
+              <option value="">{{ t('processes.connFilterAll') }}</option>
+              <option v-for="o in connFilterOptions" :key="o.pid" :value="String(o.pid)">
+                {{ o.name || '—' }} ({{ o.pid }})
+              </option>
+            </select>
+          </div>
+        </div>
         <div class="table-wrap">
           <table class="data-table">
             <thead>
@@ -253,8 +352,14 @@ onBeforeUnmount(stopPoll)
             </thead>
             <tbody>
               <tr v-if="loading && !connections.length"><td colspan="6" class="hint">{{ t('processes.fetching') }}</td></tr>
+              <tr v-else-if="connFilter && !filteredConnections.length">
+                <td colspan="6" class="hint">
+                  {{ t('processes.noConnsForProcess', { name: connFilter.name || '—', pid: connFilter.pid }) }}
+                  <button class="link-btn" @click="connFilter = null">{{ t('processes.clearFilter') }}</button>
+                </td>
+              </tr>
               <tr v-else-if="!connections.length"><td colspan="6" class="hint">{{ t('common.noData') }}</td></tr>
-              <tr v-for="(c, i) in connections" :key="i">
+              <tr v-for="(c, i) in filteredConnections" :key="i">
                 <td class="mono">{{ c.proto }}</td>
                 <td class="mono">{{ c.local_addr }}</td>
                 <td class="mono dim">{{ c.remote_addr || '—' }}</td>
@@ -339,6 +444,28 @@ onBeforeUnmount(stopPoll)
   display: flex;
   align-items: center;
   gap: 8px;
+}
+/* Let the connections filter drop below the row on narrow screens instead of
+   overflowing, and keep the <select> from bleeding past the panel edge. */
+.panel-head {
+  flex-wrap: wrap;
+}
+.sort select {
+  max-width: 100%;
+}
+/* Native buttons that read as links: focusable (keyboard-accessible) yet inline
+   with surrounding text. Used for the row "view connections" action and the
+   "clear filter" affordance in the empty state. */
+.link-btn {
+  border: none;
+  background: transparent;
+  color: var(--primary);
+  font: inherit;
+  padding: 0;
+  cursor: pointer;
+}
+.link-btn:hover {
+  text-decoration: underline;
 }
 .empty {
   text-align: center;
