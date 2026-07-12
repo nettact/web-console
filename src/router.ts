@@ -3,7 +3,8 @@ import { auth, refresh } from './auth'
 import Login from './views/Login.vue'
 import Dashboard from './views/Dashboard.vue'
 import Processes from './views/Processes.vue'
-import History from './views/History.vue'
+import TargetStatus from './views/TargetStatus.vue'
+import HostMetrics from './views/HostMetrics.vue'
 import Monitoring from './views/Monitoring.vue'
 import MonitorForm from './views/MonitorForm.vue'
 import Incidents from './views/Incidents.vue'
@@ -16,7 +17,8 @@ const router = createRouter({
     { path: '/login', component: Login },
     { path: '/', component: Dashboard },
     { path: '/processes', component: Processes },
-    { path: '/history', component: History },
+    { path: '/target-status', component: TargetStatus },
+    { path: '/host-metrics', component: HostMetrics },
     { path: '/monitoring', component: Monitoring },
     { path: '/monitoring/new', component: MonitorForm },
     { path: '/monitoring/new-host', component: MonitorForm },

@@ -65,6 +65,9 @@ export interface Sample {
   layer: string
   value: number
   unit: string
+  // The user-created monitor that produced this sample; absent for system
+  // series (host.*, iface.up, agent.*, the built-in gateway probe).
+  monitor_id?: string
 }
 export interface ProbeParams {
   interval_seconds?: number
@@ -210,6 +213,7 @@ export interface SeriesInfo {
   target: string
   layer: string
   unit: string
+  monitor_id?: string
 }
 
 export class AuthError extends Error {}
@@ -260,10 +264,18 @@ export const api = {
       'GET',
       `/api/v1/agents/${encodeURIComponent(id)}/snapshot`,
     ),
-  metrics: (id: string, kind: string, target?: string, limit = 200, sinceSeconds?: number) => {
-    const p = new URLSearchParams({ kind, limit: String(limit) })
-    if (target) p.set('target', target)
-    if (sinceSeconds) p.set('since_seconds', String(sinceSeconds))
+  // Samples for one kind, scoped by monitor (user-created monitors) or by
+  // target string (system series). When `monitor` is set the server filters on
+  // the series' monitor_id, so two monitors sharing a target never mix.
+  metrics: (
+    id: string,
+    kind: string,
+    opts: { target?: string; monitor?: string; limit?: number; sinceSeconds?: number } = {},
+  ) => {
+    const p = new URLSearchParams({ kind, limit: String(opts.limit ?? 200) })
+    if (opts.target) p.set('target', opts.target)
+    if (opts.monitor) p.set('monitor', opts.monitor)
+    if (opts.sinceSeconds) p.set('since_seconds', String(opts.sinceSeconds))
     return req<Sample[]>('GET', `/api/v1/agents/${encodeURIComponent(id)}/metrics?${p.toString()}`)
   },
   // Latest value per series (one point per target) — cheap "current status".
@@ -283,6 +295,11 @@ export const api = {
   listTargets: (siteID: string) => req<ProbeTarget[]>('GET', `/api/v1/sites/${encodeURIComponent(siteID)}/targets`),
   setTargets: (siteID: string, targets: ProbeTarget[]) =>
     req<unknown>('PUT', `/api/v1/sites/${encodeURIComponent(siteID)}/targets`, { targets }),
+  // History purges: per user-created monitor (across all agents), or by target
+  // string for SYSTEM series only (e.g. a removed interface) — the string form
+  // never touches monitor data.
+  purgeMonitor: (siteID: string, monitorID: string) =>
+    req<{ purged_series: number }>('POST', `/api/v1/sites/${encodeURIComponent(siteID)}/purge-target`, { monitor_id: monitorID }),
   purgeTarget: (siteID: string, target: string) =>
     req<{ purged_series: number }>('POST', `/api/v1/sites/${encodeURIComponent(siteID)}/purge-target`, { target }),
   // Agent groups scope monitoring targets to a subset of agents.
@@ -301,10 +318,12 @@ export const api = {
     req<IncidentPage>('GET', `/api/v1/incidents?page=${page}&page_size=${pageSize}`),
   timeline: (id: string) => req<TimelineEntry[]>('GET', `/api/v1/incidents/${encodeURIComponent(id)}/timeline`),
   alerts: () => req<Alert[]>('GET', '/api/v1/alerts'),
-  // Alarm history (firing + resolved) for one agent+target, newest first.
-  agentAlerts: (id: string, target: string, limit = 10) => {
+  // Alarm history (firing + resolved) for one agent, newest first — scoped to
+  // a user-created monitor OR to a target string (host alerts).
+  agentAlerts: (id: string, scope: { target?: string; monitor?: string }, limit = 10) => {
     const p = new URLSearchParams({ limit: String(limit) })
-    if (target) p.set('target', target)
+    if (scope.monitor) p.set('monitor', scope.monitor)
+    else if (scope.target) p.set('target', scope.target)
     return req<Alert[]>('GET', `/api/v1/agents/${encodeURIComponent(id)}/alerts?${p.toString()}`)
   },
   // Alarm rules are configured per monitoring target.

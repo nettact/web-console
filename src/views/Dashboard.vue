@@ -38,8 +38,8 @@ async function loadMetrics() {
     // Gateway RTT/loss keep a short range for the trend charts; the snapshot
     // covers every other panel with one round trip instead of five.
     const [r, l, snap, dv] = await Promise.all([
-      api.metrics(id, 'probe.icmp.rtt_ms', 'gateway'),
-      api.metrics(id, 'probe.icmp.loss_pct', 'gateway'),
+      api.metrics(id, 'probe.icmp.rtt_ms', { target: 'gateway' }),
+      api.metrics(id, 'probe.icmp.loss_pct', { target: 'gateway' }),
       api.latest(id),
       api.listDevices(SITE),
     ])
@@ -56,21 +56,31 @@ async function loadMetrics() {
 const fmtTime = (s: string) => new Date(s).toLocaleString(toDateLocale(locale.value))
 
 // The snapshot holds one point per series, so panels just filter it by kind.
+// Rows key on the sample's monitor when present — two monitors on the same
+// target string are distinct series and must not collapse into one row.
+const rowKey = (s: Sample) => s.monitor_id || s.target
 const byKind = (kind: string) => snapshot.value.filter((s) => s.kind === kind)
-const byTarget = (kind: string) => new Map(byKind(kind).map((s) => [s.target, s]))
+const byRowKey = (kind: string) => new Map(byKind(kind).map((s) => [rowKey(s), s]))
 
 function publicTargets(): Sample[] {
   return byKind('probe.icmp.rtt_ms')
     .filter((s) => s.target !== 'gateway')
-    .sort((a, b) => a.target.localeCompare(b.target))
+    .sort((a, b) => a.target.localeCompare(b.target) || rowKey(a).localeCompare(rowKey(b)))
 }
 function dnsTargets(): Sample[] {
-  return byKind('probe.dns.resolve_ms').sort((a, b) => a.target.localeCompare(b.target))
+  return byKind('probe.dns.resolve_ms').sort(
+    (a, b) => a.target.localeCompare(b.target) || rowKey(a).localeCompare(rowKey(b)),
+  )
 }
 function httpRows() {
-  const st = byTarget('probe.http.status')
-  const lat = byTarget('probe.http.latency_ms')
-  return [...st.keys()].sort().map((url) => ({ url, status: st.get(url)!.value, lat: lat.get(url)?.value ?? 0 }))
+  const st = byRowKey('probe.http.status')
+  const lat = byRowKey('probe.http.latency_ms')
+  return [...st.keys()].sort().map((k) => ({
+    key: k,
+    url: st.get(k)!.target,
+    status: st.get(k)!.value,
+    lat: lat.get(k)?.value ?? 0,
+  }))
 }
 function latestIfaces(): Sample[] {
   return byKind('iface.up').sort((a, b) => a.target.localeCompare(b.target))
@@ -278,7 +288,7 @@ onBeforeUnmount(() => {
               <thead><tr><th>{{ t('dashboard.thTarget') }}</th><th>{{ t('dashboard.thRtt') }}</th></tr></thead>
               <tbody>
                 <tr v-if="!publicTargets().length"><td colspan="2" class="hint">{{ t('common.noData') }}</td></tr>
-                <tr v-for="s in publicTargets()" :key="s.target">
+                <tr v-for="s in publicTargets()" :key="rowKey(s)">
                   <td class="mono">{{ s.target }}</td>
                   <td>{{ s.value.toFixed(0) }} ms</td>
                 </tr>
@@ -297,7 +307,7 @@ onBeforeUnmount(() => {
               <thead><tr><th>{{ t('dashboard.thDomain') }}</th><th>{{ t('dashboard.thElapsed') }}</th></tr></thead>
               <tbody>
                 <tr v-if="!dnsTargets().length"><td colspan="2" class="hint">{{ t('dashboard.noDataDns') }}</td></tr>
-                <tr v-for="s in dnsTargets()" :key="s.target">
+                <tr v-for="s in dnsTargets()" :key="rowKey(s)">
                   <td class="mono">{{ s.target }}</td>
                   <td>{{ s.value.toFixed(0) }} ms</td>
                 </tr>
@@ -318,7 +328,7 @@ onBeforeUnmount(() => {
             <thead><tr><th>{{ t('dashboard.thUrl') }}</th><th>{{ t('dashboard.thStatusCode') }}</th><th>{{ t('dashboard.thElapsedHttp') }}</th></tr></thead>
             <tbody>
               <tr v-if="!httpRows().length"><td colspan="3" class="hint">{{ t('dashboard.noDataHttp') }}</td></tr>
-              <tr v-for="h in httpRows()" :key="h.url">
+              <tr v-for="h in httpRows()" :key="h.key">
                 <td class="mono">{{ h.url }}</td>
                 <td>
                   <span class="badge" :class="h.status >= 200 && h.status < 400 ? 'up' : 'down'">{{ h.status }}</span>

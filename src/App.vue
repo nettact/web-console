@@ -19,7 +19,8 @@ async function doLogout() {
 const nav = [
   { to: '/', label: 'nav.overview' },
   { to: '/processes', label: 'nav.processes' },
-  { to: '/history', label: 'nav.history' },
+  { to: '/target-status', label: 'nav.targetStatus' },
+  { to: '/host-metrics', label: 'nav.hostMetrics' },
   { to: '/incidents', label: 'nav.incidents' },
   { to: '/monitoring', label: 'nav.monitoring' },
   { to: '/agents', label: 'nav.agents' },
@@ -66,8 +67,13 @@ const initials = computed(() => (auth.user?.username ?? '?').slice(0, 1).toUpper
               <rect x="3" y="4" width="18" height="16" rx="2" />
               <path d="M3 9h18M8 4v16" />
             </svg>
-            <!-- 历史 -->
-            <svg v-else-if="n.to === '/history'" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+            <!-- 监控目标状态 -->
+            <svg v-else-if="n.to === '/target-status'" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+              stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M2 12h4l2.5 6 4-13 2.5 8 1.5-3h5.5" />
+            </svg>
+            <!-- 主机指标 -->
+            <svg v-else-if="n.to === '/host-metrics'" viewBox="0 0 24 24" fill="none" stroke="currentColor"
               stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
               <path d="M3 3v18h18" />
               <path d="M7 14l3.5-4 3 3L21 6" />

@@ -62,9 +62,27 @@ async function removeTarget(t: ProbeTarget) {
   }
 }
 
+// History purge is per monitor: pick a monitor from the list and clear exactly
+// its series — a sibling monitor sharing the same target string is untouched.
+// The free-text form remains for SYSTEM series only (e.g. a removed interface's
+// iface.up history), which no monitor owns.
+const purgeMonId = ref('')
 const purgeTgt = ref('')
 const purgeMsg = ref('')
-async function purge() {
+async function purgeMonitor() {
+  const t = targets.value.find((x) => x.id === purgeMonId.value)
+  if (!t?.id) return
+  if (!confirm(tr('monitoring.confirmClearHistory', { name: t.name || t.target }))) return
+  purgeMsg.value = ''
+  try {
+    const r = await api.purgeMonitor(SITE, t.id)
+    purgeMsg.value = tr('monitoring.purgedMsg', { count: r.purged_series })
+    purgeMonId.value = ''
+  } catch (e) {
+    error.value = String((e as Error).message || e)
+  }
+}
+async function purgeSystem() {
   if (!purgeTgt.value) return
   if (!confirm(tr('monitoring.confirmClearHistory', { name: purgeTgt.value }))) return
   purgeMsg.value = ''
@@ -133,9 +151,19 @@ onMounted(load)
       <div class="panel-body">
         <p class="hint">{{ tr('monitoring.clearHistoryHint') }}</p>
         <div class="row">
-          <input v-model="purgeTgt" :placeholder="tr('monitoring.purgePlaceholder')" class="purge-in" />
-          <button class="btn btn-danger" @click="purge">{{ tr('monitoring.clearTargetHistory') }}</button>
+          <select v-model="purgeMonId" class="purge-in">
+            <option value="" disabled>{{ tr('monitoring.purgePickMonitor') }}</option>
+            <option v-for="t in targets.filter((x) => x.id)" :key="t.id" :value="t.id">
+              {{ t.name || tr('monitoring.unnamed') }} · {{ targetLabel(t) }}
+            </option>
+          </select>
+          <button class="btn btn-danger" :disabled="!purgeMonId" @click="purgeMonitor">{{ tr('monitoring.clearTargetHistory') }}</button>
           <span v-if="purgeMsg" class="ok">{{ purgeMsg }}</span>
+        </div>
+        <p class="hint sys-hint">{{ tr('monitoring.purgeSystemHint') }}</p>
+        <div class="row">
+          <input v-model="purgeTgt" :placeholder="tr('monitoring.purgePlaceholder')" class="purge-in" />
+          <button class="btn btn-danger" :disabled="!purgeTgt" @click="purgeSystem">{{ tr('monitoring.clearSystemHistory') }}</button>
         </div>
       </div>
     </section>
@@ -159,6 +187,7 @@ onMounted(load)
 .dot.on { background: var(--ok, #34d399); }
 .dot.off { background: var(--border); }
 .purge-in { min-width: 280px; flex: 1; }
+.sys-hint { margin-top: 14px; }
 .panel-body { padding: 14px 18px; }
 .danger-zone { border-color: rgba(248, 113, 113, 0.28); }
 .tag-danger {
