@@ -19,10 +19,9 @@ async function load() {
   }
 }
 
-// Scope column: host anchors aren't pushed to agents (—); broadcast targets show
-// "all agents"; group-scoped targets list their group names.
+// Scope column: broadcast targets show "all agents"; group-scoped targets list
+// their group names (applies to probes' downlink and host alerts alike).
 function scopeLabel(t: ProbeTarget): string {
-  if (t.kind === 'host') return '—'
   if (t.all_agents) return tr('monitoring.scopeAll')
   const names = (t.group_ids || []).map((id) => groups.value.find((g) => g.id === id)?.name).filter(Boolean)
   return names.length ? names.join(', ') : tr('monitoring.scopeNone')

@@ -419,11 +419,12 @@ onMounted(loadAll)
         </div>
       </section>
 
-      <!-- Scope: which agents run this monitor. Hidden for host anchors, which are
-           server-side and never pushed to agents. -->
-      <section class="panel" v-if="!isHostMode">
+      <!-- Scope: which agents this monitor applies to. For probes it limits which
+           agents run the probe (downlink); for host anchors it limits which agents'
+           system-status metrics the alert evaluates against. -->
+      <section class="panel">
         <div class="panel-head"><h3>{{ tr('mform.secScope') }}</h3></div>
-        <p class="hint panel-hint">{{ tr('mform.scopeHint') }}</p>
+        <p class="hint panel-hint">{{ isHostMode ? tr('mform.scopeHintHost') : tr('mform.scopeHint') }}</p>
         <div class="panel-body">
           <label class="scope-opt">
             <input type="radio" value="all" v-model="scope" />
