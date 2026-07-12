@@ -18,6 +18,33 @@ const isNewHost = computed(() => route.path.endsWith('/new-host'))
 const all = ref<ProbeTarget[]>([])
 const form = reactive<ProbeTarget>(blank())
 if (isNewHost.value) { form.kind = 'host'; form.target = 'host' }
+// Quick-add prefill: the Live Connections page links here with kind/target[/port]
+// to seed a new monitor. This only sets initial form values — it never saves —
+// and applies to an ordinary create alone, never edit and never the host flow.
+if (!editingId.value && !isNewHost.value) applyQueryPrefill()
+
+// Read the route query for initial values, tolerating out-of-contract input.
+// Accepts only kind tcp/icmp with a non-empty target; a port is honored solely
+// for a resulting TCP monitor and only in 1-65535. Array (repeated) query values
+// are rejected. No generic HTTP/DNS/NAT prefill.
+function queryStr(v: unknown): string {
+  return typeof v === 'string' ? v : ''
+}
+function applyQueryPrefill() {
+  const kind = queryStr(route.query.kind)
+  if (kind !== 'tcp' && kind !== 'icmp') return
+  const target = queryStr(route.query.target)
+  if (!target) return
+  form.kind = kind
+  form.target = target
+  if (kind === 'tcp') {
+    const port = Number(queryStr(route.query.port))
+    if (Number.isInteger(port) && port >= 1 && port <= 65535) {
+      if (!form.params) form.params = {}
+      form.params.port = port
+    }
+  }
+}
 
 // A "系统状态" (host) target is not a probe: host.* metrics are emitted by the
 // agent itself (--report-host); this target is purely a server-side alerting
