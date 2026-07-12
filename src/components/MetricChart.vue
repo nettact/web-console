@@ -61,6 +61,7 @@ const props = defineProps<{
 
 const el = ref<HTMLDivElement>()
 let chart: echarts.ECharts | null = null
+let resizeObserver: ResizeObserver | null = null
 
 const STATE_ON = '#34d399' // 正常 / 在线 / 启用
 const STATE_OFF = '#f87171' // 故障 / 中断 / 禁用
@@ -227,7 +228,7 @@ function renderLines(ms: ChartMetric[]) {
       // Title sits top-left; the legend is top-right for a few series, or wraps
       // into centered rows below the title when there are many (see above).
       legend,
-      grid: { left: 58, right: axisUnits.length > 1 ? 58 : 22, top: gridTop, bottom: 28 },
+      grid: { left: 58, right: axisUnits.length > 1 ? 72 : 22, top: gridTop, bottom: 30 },
       xAxis: {
         type: 'time',
         axisLine: { lineStyle: { color: ct.axisLine } },
@@ -337,11 +338,19 @@ function resize() {
 onMounted(() => {
   chart = echarts.init(el.value!, undefined, { renderer: 'canvas' })
   render()
+  // Dashboard panels can change width without a window resize (for example when
+  // the host-status panel appears after the initial data request). Observe the
+  // actual chart container so ECharts never keeps its old full-width canvas and
+  // gets clipped by the new grid column.
+  resizeObserver = new ResizeObserver(() => chart?.resize())
+  resizeObserver.observe(el.value!)
   window.addEventListener('resize', resize)
 })
 
 onBeforeUnmount(() => {
   window.removeEventListener('resize', resize)
+  resizeObserver?.disconnect()
+  resizeObserver = null
   chart?.dispose()
 })
 

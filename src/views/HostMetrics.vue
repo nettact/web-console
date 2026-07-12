@@ -5,6 +5,7 @@
 // page instead. Data flow: agents → listSeries → groups → metrics, with monotonic
 // request tokens so a slow response for an old selection can't clobber the current.
 import { ref, computed, onMounted } from 'vue'
+import { useRoute } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { api, type Agent, type Alert, type Sample, type SeriesInfo } from '../api'
 import MetricChart from '../components/MetricChart.vue'
@@ -17,6 +18,7 @@ import { FALLBACK, HIDDEN_KINDS, INFO_KINDS, familyOf, isStatusKind, kindColor, 
 import { fmtBytes } from '../lib/format'
 
 const { t } = useI18n()
+const route = useRoute()
 const { metricLabel } = useMetricMeta()
 const { buildCards } = useMetricCards()
 
@@ -231,7 +233,9 @@ function selectSection(key: string) {
 async function loadAgents() {
   try {
     agents.value = await api.agents()
-    if (!agentId.value && agents.value.length) agentId.value = agents.value[0].id
+    const requestedAgent = String(route.query.agent || '')
+    if (requestedAgent && agents.value.some((agent) => agent.id === requestedAgent)) agentId.value = requestedAgent
+    else if (!agentId.value && agents.value.length) agentId.value = agents.value[0].id
   } catch (e) {
     error.value = String((e as Error).message || e)
   }
