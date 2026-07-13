@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { api, type Agent, type Device, type Quota, type Sample, type StatusEvent } from '../api'
+import { api, type Agent, type AgentInterfaces, type Device, type Quota, type Sample, type StatusEvent } from '../api'
 import MetricChart from '../components/MetricChart.vue'
 import { toDateLocale } from '../i18n'
 import { fmtBps, fmtBytes } from '../lib/format'
@@ -18,6 +18,7 @@ const rtt = ref<Sample[]>([])
 const loss = ref<Sample[]>([])
 const snapshot = ref<Sample[]>([])
 const devices = ref<Device[]>([])
+const ifaceData = ref<AgentInterfaces | null>(null)
 const error = ref('')
 const loading = ref(true)
 const refreshing = ref(false)
@@ -49,12 +50,13 @@ async function loadMetrics() {
   refreshing.value = true
   try {
     const id = selected.value
-    const [nextRtt, nextLoss, nextSnapshot, nextDevices, nextHistory] = await Promise.all([
+    const [nextRtt, nextLoss, nextSnapshot, nextDevices, nextHistory, nextIfaces] = await Promise.all([
       api.metrics(id, 'probe.icmp.rtt_ms', { target: 'gateway' }),
       api.metrics(id, 'probe.icmp.loss_pct', { target: 'gateway' }),
       api.latest(id),
       api.listDevices(SITE),
       api.agentStatusHistory(id),
+      api.agentInterfaces(id).catch(() => null),
     ])
     if (sequence !== loadSequence) return
     rtt.value = nextRtt
@@ -62,6 +64,7 @@ async function loadMetrics() {
     snapshot.value = nextSnapshot
     devices.value = nextDevices
     statusHistory.value = nextHistory
+    ifaceData.value = nextIfaces
     error.value = ''
   } catch (e) {
     if (sequence === loadSequence) error.value = String((e as Error).message || e)
@@ -75,6 +78,7 @@ async function changeAgent() {
   rtt.value = []
   loss.value = []
   statusHistory.value = []
+  ifaceData.value = null
   await loadMetrics()
 }
 
@@ -103,6 +107,84 @@ const httpRows = computed(() => {
   }))
 })
 const interfaces = computed(() => byKind('iface.up').sort((a, b) => a.target.localeCompare(b.target)))
+
+// --- Wi-Fi status card ---------------------------------------------------
+// Categorical state (connection/SSID/band/channel) comes from the authoritative
+// interface snapshot (server-freshness-gated). Numeric readings (dBm/quality/
+// rates) come from the /latest metric snapshot, but are shown ONLY when the
+// matching adapter is connected AND the collection is fresh — never gated on
+// /latest alone (its 2h window would keep pre-disconnect numerics alive).
+const wifiSupported = computed(() => !!currentAgent.value?.capabilities?.includes('network.wifi.read'))
+const wifiCollection = computed(() => ifaceData.value?.wifi ?? null)
+const wifiAdapters = computed(() => (ifaceData.value?.interfaces ?? []).filter((i) => i.is_wireless))
+
+// Current-state freshness gate. An offline Agent is never "current": its last
+// snapshot can still sit inside the server's 90s freshness window, so liveness
+// must fold in here (not just the server stale flag) — otherwise a just-offline
+// Agent would keep rendering a green connected adapter with live numerics.
+const wifiStale = computed(() => currentAgent.value?.status !== 'online' || (wifiCollection.value?.stale ?? true))
+
+const wifiCardState = computed(() => {
+  if (!wifiSupported.value) return 'unsupported'
+  const col = wifiCollection.value
+  if (!col || (!col.sampled_at && !col.state)) return 'unknown'
+  if (wifiStale.value) return 'stale'
+  if (col.state === 'unreadable') return 'unreadable'
+  if (!wifiAdapters.value.length) return 'noAdapter'
+  return 'ok'
+})
+
+function dbmGrade(dbm: number | null): { label: string; tone: string } | null {
+  if (dbm == null) return null
+  if (dbm >= -60) return { label: t('dashboard.wifiGradeGood'), tone: 'good' }
+  if (dbm >= -70) return { label: t('dashboard.wifiGradeFair'), tone: 'warn' }
+  return { label: t('dashboard.wifiGradeWeak'), tone: 'bad' }
+}
+
+interface WifiAdapterView {
+  name: string
+  state: string
+  reason: string
+  connected: boolean
+  ssid: string
+  band: string
+  channel: number | null
+  signalDbm: number | null
+  grade: { label: string; tone: string } | null
+  quality: number | null
+  rxMbps: number | null
+  txMbps: number | null
+}
+// Numeric readings come straight from the authoritative interface snapshot
+// (a.wifi), so they belong to the same round as the connection state — never a
+// stale per-series value from /latest. The connected gate (state + freshness)
+// also blanks them when disconnected/stale/offline.
+const wifiRows = computed<WifiAdapterView[]>(() => {
+  const stale = wifiStale.value
+  return wifiAdapters.value
+    .map((a) => {
+      const w = a.wifi
+      const state = w?.state ?? 'unreadable'
+      const connected = state === 'connected' && !stale
+      const dbm = connected ? w?.signal_dbm ?? null : null
+      return {
+        name: a.name,
+        state,
+        reason: w?.reason ?? '',
+        connected,
+        ssid: connected ? w?.ssid ?? '' : '',
+        band: connected ? w?.band ?? '' : '',
+        channel: connected ? w?.channel ?? null : null,
+        signalDbm: dbm,
+        grade: dbmGrade(dbm),
+        quality: connected ? w?.quality_pct ?? null : null,
+        rxMbps: connected ? w?.rx_mbps ?? null : null,
+        txMbps: connected ? w?.tx_mbps ?? null : null,
+      }
+    })
+    .sort((a, b) => a.name.localeCompare(b.name))
+})
+const wifiBandLabel = (band: string) => (band ? t('dashboard.wifiBandGhz', { n: band }) : '—')
 
 interface NATRow {
   key: string
@@ -457,6 +539,54 @@ onBeforeUnmount(() => {
           </div>
         </section>
 
+        <section class="surface overview-resource-panel wifi-surface">
+          <div class="resource-panel-head">
+            <span class="resource-panel-icon wifi"><svg viewBox="0 0 24 24"><path d="M4 9a13 13 0 0 1 16 0M7 12.5a8 8 0 0 1 10 0M10 16a3 3 0 0 1 4 0"/><circle cx="12" cy="19" r="1"/></svg></span>
+            <h3>{{ t('dashboard.wifiStatus') }}</h3>
+            <span v-if="wifiCardState === 'ok'">{{ t('dashboard.wifiCount', { n: wifiRows.length }) }}</span>
+          </div>
+          <div v-if="wifiCardState === 'unsupported'" class="mini-empty padded">{{ t('dashboard.wifiUnsupported') }}</div>
+          <div v-else-if="wifiCardState === 'unknown'" class="mini-empty padded">{{ t('common.noData') }}</div>
+          <div v-else-if="wifiCardState === 'stale'" class="mini-empty padded">{{ t('dashboard.wifiStale') }}</div>
+          <div v-else-if="wifiCardState === 'unreadable'" class="mini-empty padded">
+            {{ t('dashboard.wifiUnreadable') }}<template v-if="wifiCollection?.reason === 'permission'"> · {{ t('dashboard.wifiPermission') }}</template>
+          </div>
+          <div v-else-if="wifiCardState === 'noAdapter'" class="mini-empty padded">{{ t('dashboard.wifiNoAdapter') }}</div>
+          <div v-else class="resource-column-list">
+            <article v-for="ad in wifiRows" :key="ad.name" class="resource-list-card wifi-item">
+              <span class="resource-item-icon wifi"><svg viewBox="0 0 24 24"><path d="M4 9a13 13 0 0 1 16 0M7 12.5a8 8 0 0 1 10 0M10 16a3 3 0 0 1 4 0"/><circle cx="12" cy="19" r="1"/></svg></span>
+              <span class="resource-item-copy">
+                <strong>{{ ad.connected ? ad.ssid || t('dashboard.wifiHiddenSsid') : ad.name }}</strong>
+                <small>
+                  {{ ad.name }}
+                  <template v-if="ad.connected && ad.band"> · {{ wifiBandLabel(ad.band) }}</template>
+                  <template v-if="ad.connected && ad.channel"> · {{ t('dashboard.wifiChannelShort', { n: ad.channel }) }}</template>
+                  <template v-if="ad.reason === 'permission'"> · {{ t('dashboard.wifiPermission') }}</template>
+                </small>
+              </span>
+              <span
+                class="resource-state"
+                :class="ad.connected ? 'good' : ad.state === 'unreadable' ? 'warn' : 'bad'"
+              >{{ ad.connected ? t('dashboard.wifiConnected') : ad.state === 'unreadable' ? t('dashboard.wifiAdapterUnreadable') : t('dashboard.wifiDisconnected') }}</span>
+              <div v-if="ad.connected" class="wifi-metrics">
+                <span class="wifi-metric">
+                  <i>{{ t('dashboard.wifiSignal') }}</i>
+                  <b :class="ad.grade ? `grade-${ad.grade.tone}` : ''">{{ ad.signalDbm == null ? '—' : `${ad.signalDbm} dBm` }}</b>
+                  <em v-if="ad.grade" :class="`grade-${ad.grade.tone}`">{{ ad.grade.label }}</em>
+                </span>
+                <span class="wifi-metric">
+                  <i>{{ t('dashboard.wifiQuality') }}</i>
+                  <b>{{ ad.quality == null ? '—' : `${ad.quality.toFixed(0)}%` }}</b>
+                </span>
+                <span class="wifi-metric">
+                  <i>{{ t('dashboard.wifiLinkRate') }}</i>
+                  <b>{{ ad.rxMbps == null && ad.txMbps == null ? '—' : `${ad.rxMbps == null ? '—' : ad.rxMbps.toFixed(0)} / ${ad.txMbps == null ? '—' : ad.txMbps.toFixed(0)} Mbps` }}</b>
+                </span>
+              </div>
+            </article>
+          </div>
+        </section>
+
         <section class="surface overview-resource-panel disk-surface">
           <div class="resource-panel-head">
             <span class="resource-panel-icon disks"><svg viewBox="0 0 24 24"><path d="M5 4h14l2 5v10H3V9l2-5zM3 10h18M7 15h.01M11 15h6"/></svg></span>
@@ -597,7 +727,7 @@ onBeforeUnmount(() => {
 .load-level-item.is-high { --load-color: var(--warning); }
 .load-level-item.is-critical { --load-color: var(--danger); }
 
-.variable-grid { display: grid; gap: 18px; }.equal-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); align-items: stretch; }.equal-grid > .surface { height: 100%; }.tile-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 10px; padding: 14px; }.stack-list { display: grid; gap: 10px; padding: 14px; }.list-row { display: flex; align-items: center; min-width: 0; min-height: 55px; padding: 8px 12px; border: 1px solid var(--border); border-radius: 11px; background: var(--surface-2); }.list-icon { display: grid; place-items: center; width: 32px; height: 32px; flex: none; color: var(--primary); border-radius: 9px; background: var(--primary-soft); }.list-icon svg { width: 17px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }.list-main { display: grid; min-width: 0; flex: 1; }.list-main strong, .list-main small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }.list-main strong { font-size: 11px; }.list-main small, .list-meta { color: var(--text-muted); font-size: 9px; }.list-meta { max-width: 42%; text-align: right; }.state-label { display: inline-flex; align-items: center; gap: 5px; font-size: 9px; font-weight: 700; }.state-label i { width: 5px; height: 5px; border-radius: 50%; background: currentColor; }.state-label.good { color: var(--success); }.state-label.bad { color: var(--danger); }.timeline-dot { width: 8px; height: 8px; flex: none; border: 2px solid var(--surface-solid); border-radius: 50%; box-shadow: 0 0 0 2px var(--border-strong); }.timeline-dot.good { background: var(--success); }.timeline-dot.bad { background: var(--danger); }
+.variable-grid { display: grid; gap: 18px; }.equal-grid { grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); align-items: stretch; }.equal-grid > .surface { height: 100%; }.tile-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 10px; padding: 14px; }.stack-list { display: grid; gap: 10px; padding: 14px; }.list-row { display: flex; align-items: center; min-width: 0; min-height: 55px; padding: 8px 12px; border: 1px solid var(--border); border-radius: 11px; background: var(--surface-2); }.list-icon { display: grid; place-items: center; width: 32px; height: 32px; flex: none; color: var(--primary); border-radius: 9px; background: var(--primary-soft); }.list-icon svg { width: 17px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }.list-main { display: grid; min-width: 0; flex: 1; }.list-main strong, .list-main small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }.list-main strong { font-size: 11px; }.list-main small, .list-meta { color: var(--text-muted); font-size: 9px; }.list-meta { max-width: 42%; text-align: right; }.state-label { display: inline-flex; align-items: center; gap: 5px; font-size: 9px; font-weight: 700; }.state-label i { width: 5px; height: 5px; border-radius: 50%; background: currentColor; }.state-label.good { color: var(--success); }.state-label.bad { color: var(--danger); }.timeline-dot { width: 8px; height: 8px; flex: none; border: 2px solid var(--surface-solid); border-radius: 50%; box-shadow: 0 0 0 2px var(--border-strong); }.timeline-dot.good { background: var(--success); }.timeline-dot.bad { background: var(--danger); }
 
 .nat-service-copy { display: grid; min-width: 0; flex: 1; }.nat-service-copy strong, .nat-service-copy small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }.nat-service-copy strong { font-size: 11px; }.nat-service-copy small { color: var(--text-muted); font-size: 9px; }.reach-chip { margin-left: auto; padding: 2px 7px; color: var(--text-muted); font-size: 9px; border-radius: 999px; background: var(--surface); }.reach-chip.good { color: var(--success); background: var(--success-soft); }.reach-chip.bad { color: var(--danger); background: var(--danger-soft); }.disk-card { min-height: 92px; }
 .activity-timeline { display: grid; padding: 16px 14px 18px; }.timeline-event { position: relative; display: grid; grid-template-columns: 18px minmax(0, 1fr) auto; align-items: start; gap: 9px; min-height: 58px; padding-bottom: 12px; }.timeline-event:last-child { min-height: 34px; padding-bottom: 0; }.timeline-event:not(:last-child)::before { content: ''; position: absolute; left: 8px; top: 17px; bottom: -1px; width: 1px; background: linear-gradient(var(--border-strong), var(--border)); }.timeline-marker { position: relative; display: grid; place-items: center; width: 17px; height: 17px; z-index: 1; border: 1px solid var(--border-strong); border-radius: 50%; background: var(--surface-solid); box-shadow: 0 0 0 3px var(--surface); }.timeline-marker i { width: 7px; height: 7px; border-radius: 50%; background: var(--text-muted); }.timeline-marker.good i { background: var(--success); box-shadow: 0 0 7px color-mix(in srgb, var(--success) 65%, transparent); }.timeline-marker.bad i { background: var(--danger); box-shadow: 0 0 7px color-mix(in srgb, var(--danger) 65%, transparent); }.timeline-content { display: grid; min-width: 0; }.timeline-content strong { font-size: 11px; line-height: 1.35; }.timeline-content small { margin-top: 2px; color: var(--text-muted); font-size: 9px; }.timeline-event time { padding-top: 1px; color: var(--text-muted); font-size: 9px; font-variant-numeric: tabular-nums; white-space: nowrap; }
@@ -613,6 +743,7 @@ onBeforeUnmount(() => {
 .resource-panel-icon.interfaces { color: #38bdf8; background: rgba(56,189,248,.13); }
 .resource-panel-icon.disks { color: #5eead4; background: rgba(94,234,212,.12); }
 .resource-panel-icon.activity { color: #93c5fd; background: rgba(147,197,253,.13); }
+.resource-panel-icon.wifi { color: #34d399; background: rgba(52,211,153,.13); }
 .resource-column-list { display: grid; align-content: start; gap: 8px; padding: 12px; }
 .resource-list-card { display: grid; grid-template-columns: 38px minmax(0, 1fr) auto; align-items: center; gap: 10px; min-width: 0; min-height: 64px; padding: 10px 12px; border: 1px solid var(--border); border-radius: 11px; background: var(--surface-2); box-shadow: inset 0 1px rgba(255,255,255,.025); }
 .resource-item-icon { display: grid; place-items: center; width: 36px; height: 36px; color: var(--primary); border-radius: 9px; background: var(--primary-soft); }
@@ -624,6 +755,17 @@ onBeforeUnmount(() => {
 .resource-state { font-size: 11px; font-weight: 750; white-space: nowrap; }
 .resource-state.good { color: var(--success); }
 .resource-state.bad { color: var(--danger); }
+.resource-state.warn { color: var(--warning); }
+.resource-item-icon.wifi { color: #34d399; background: rgba(52,211,153,.12); }
+.wifi-item { grid-template-rows: auto auto; row-gap: 10px; }
+.wifi-metrics { grid-column: 1 / -1; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; padding-top: 8px; border-top: 1px solid var(--border); }
+.wifi-metric { display: grid; gap: 2px; min-width: 0; }
+.wifi-metric i { color: var(--text-muted); font-size: 9px; font-style: normal; text-transform: uppercase; letter-spacing: .04em; }
+.wifi-metric b { font-size: 13px; font-variant-numeric: tabular-nums; }
+.wifi-metric em { font-size: 9px; font-style: normal; }
+.wifi-metric .grade-good { color: var(--success); }
+.wifi-metric .grade-warn { color: var(--warning); }
+.wifi-metric .grade-bad { color: var(--danger); }
 .disk-item { grid-template-rows: auto auto; }
 .disk-percent { font-size: 18px; font-variant-numeric: tabular-nums; }
 .disk-item.is-good .disk-percent { color: var(--success); }

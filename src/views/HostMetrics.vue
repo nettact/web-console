@@ -42,24 +42,26 @@ interface HostGroup {
   metrics: SeriesInfo[]
   collection?: Collection
 }
-type Collection = 'cpu' | 'disk' | 'iface'
+type Collection = 'cpu' | 'disk' | 'iface' | 'wifi'
 
-// Group host series: CPU (total + cores), disk, and the network interfaces each
-// collapse into one collection; the remaining host metrics (memory/network/
-// load/uptime) share the overview group; the agent uptime counter is its own
-// runtime group.
+// Group host series: CPU (total + cores), disk, the network interfaces, and the
+// Wi-Fi adapters each collapse into one collection; the remaining host metrics
+// (memory/network/load/uptime) share the overview group; the agent uptime
+// counter is its own runtime group.
 const SECTION_ORDER: Record<string, number> = {
   'host::cpu': 0,
   'host::disk': 1,
   'iface::all': 2,
-  'host::overview': 3,
-  'agent::runtime': 4,
+  'wifi::all': 3,
+  'host::overview': 4,
+  'agent::runtime': 5,
 }
 function classify(s: SeriesInfo): { key: string; label: string; collection?: Collection } {
   if (s.kind === 'host.cpu.pct' || s.kind === 'host.cpu.core.pct')
     return { key: 'host::cpu', label: t('hostMetrics.sysCpu'), collection: 'cpu' }
   if (s.kind.startsWith('host.disk.')) return { key: 'host::disk', label: t('hostMetrics.sysDisk'), collection: 'disk' }
   if (familyOf(s.kind) === 'iface') return { key: 'iface::all', label: t('hostMetrics.sysIface'), collection: 'iface' }
+  if (familyOf(s.kind) === 'wifi') return { key: 'wifi::all', label: t('hostMetrics.sysWifi'), collection: 'wifi' }
   if (familyOf(s.kind) === 'host') return { key: 'host::overview', label: t('hostMetrics.sysOverview') }
   return { key: 'agent::runtime', label: t('hostMetrics.agentRuntime') }
 }
@@ -143,6 +145,37 @@ const collectionCharts = computed<CollChart[]>(() => {
       status: true,
       series: [{ key: ckey('iface.up', name), label: metricLabel('iface.up'), kind: 'iface.up', target: name, unit: 'bool', color: kindColor('iface.up') }],
     }))
+  }
+  if (g.collection === 'wifi') {
+    // One section for all wireless adapters, each keyed by interface name: a
+    // connection state-band (wifi.up), then signal / quality / link-rate trends.
+    const adapters = [...new Set(g.metrics.map((m) => m.target))].sort()
+    const charts: CollChart[] = []
+    for (const name of adapters) {
+      const has = (kind: string) => g.metrics.some((m) => m.kind === kind && m.target === name)
+      const one = (kind: string, unit: string): CollSeries => ({
+        key: ckey(kind, name),
+        label: metricLabel(kind),
+        kind,
+        target: name,
+        unit,
+        color: kindColor(kind),
+      })
+      if (has('wifi.up')) {
+        charts.push({ id: `wifi-up-${name}`, title: `${name} · ${metricLabel('wifi.up')}`, status: true, series: [one('wifi.up', 'bool')] })
+      }
+      if (has('wifi.signal_dbm')) {
+        charts.push({ id: `wifi-sig-${name}`, title: `${name} · ${metricLabel('wifi.signal_dbm')}`, series: [one('wifi.signal_dbm', 'dbm')] })
+      }
+      if (has('wifi.quality_pct')) {
+        charts.push({ id: `wifi-qual-${name}`, title: `${name} · ${metricLabel('wifi.quality_pct')}`, series: [one('wifi.quality_pct', 'pct')] })
+      }
+      const rates: CollSeries[] = []
+      if (has('wifi.link_rx_mbps')) rates.push(one('wifi.link_rx_mbps', 'mbps'))
+      if (has('wifi.link_tx_mbps')) rates.push(one('wifi.link_tx_mbps', 'mbps'))
+      if (rates.length) charts.push({ id: `wifi-rate-${name}`, title: `${name} · ${t('hostMetrics.wifiLinkRate')}`, series: rates })
+    }
+    return charts
   }
   const mounts = [...new Set(g.metrics.filter((m) => m.kind === 'host.disk.used').map((m) => m.target))].sort()
   return mounts.map((mp) => ({
@@ -249,7 +282,9 @@ async function loadSeries() {
     // interfaces (iface.*), and the agent uptime counter. Probe results (the
     // user-created monitors) belong to the Target Status page.
     series.value = ser.filter(
-      (s) => !HIDDEN_KINDS.has(s.kind) && (familyOf(s.kind) === 'host' || familyOf(s.kind) === 'iface' || s.kind === 'agent.uptime_s'),
+      (s) =>
+        !HIDDEN_KINDS.has(s.kind) &&
+        (familyOf(s.kind) === 'host' || familyOf(s.kind) === 'iface' || familyOf(s.kind) === 'wifi' || s.kind === 'agent.uptime_s'),
     )
     const gs = groups.value
     targetKey.value = gs.length ? gs[0].key : ''

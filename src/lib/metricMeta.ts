@@ -57,6 +57,11 @@ const METRIC_ORDER = [
   'host.load.5m',
   'host.load.15m',
   'host.uptime_s',
+  'wifi.up',
+  'wifi.signal_dbm',
+  'wifi.quality_pct',
+  'wifi.link_rx_mbps',
+  'wifi.link_tx_mbps',
 ]
 export const orderOf = (kind: string) => {
   const i = METRIC_ORDER.indexOf(kind)
@@ -79,6 +84,11 @@ const KIND_COLORS: Record<string, string> = {
   'probe.http.latency_ms': '#f472b6',
   'probe.http.ok': '#34d399',
   'iface.up': '#34d399',
+  'wifi.up': '#34d399',
+  'wifi.signal_dbm': '#38bdf8',
+  'wifi.quality_pct': '#a78bfa',
+  'wifi.link_rx_mbps': '#5eead4',
+  'wifi.link_tx_mbps': '#f472b6',
   'agent.uptime_s': '#38bdf8',
   'host.cpu.pct': '#38bdf8',
   'host.disk.used': '#818cf8',
@@ -121,6 +131,8 @@ export function statusSource(family: string): StatusSource | null {
       return { kind: 'probe.tcp.ok', toUp: asBool }
     case 'probe.nat':
       return { kind: 'probe.nat.ok', toUp: asBool }
+    case 'wifi':
+      return { kind: 'wifi.up', toUp: asBool }
     default:
       return null
   }

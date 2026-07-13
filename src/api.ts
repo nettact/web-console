@@ -216,6 +216,42 @@ export interface SeriesInfo {
   monitor_id?: string
 }
 
+// Collection-level Wi-Fi verdict for an agent (from the latest InterfaceSnapshot).
+export interface WiFiCollection {
+  state: string // "ok" | "unreadable" | "" (never reported)
+  reason?: string // "permission" | "driver" when unreadable
+  sampled_at: string | null
+  stale: boolean
+}
+// One wireless adapter's current status on an interface row. The numeric fields
+// are the current authoritative round's readings (null when the driver omitted
+// them this round, or the adapter is not connected) — never an older round's value.
+export interface WiFiInfo {
+  state: string // "connected" | "disconnected" | "unreadable"
+  reason?: string
+  ssid?: string
+  band?: string // "2.4" | "5" | "6"
+  channel?: number
+  signal_dbm: number | null
+  quality_pct: number | null
+  rx_mbps: number | null
+  tx_mbps: number | null
+}
+export interface AgentInterface {
+  name: string
+  addrs: string[]
+  gateway?: string
+  dns: string[]
+  up: boolean
+  is_wireless: boolean
+  updated_at: string | null
+  wifi?: WiFiInfo
+}
+export interface AgentInterfaces {
+  wifi: WiFiCollection
+  interfaces: AgentInterface[]
+}
+
 export class AuthError extends Error {}
 
 async function req<T>(method: string, url: string, body?: unknown): Promise<T> {
@@ -287,6 +323,10 @@ export const api = {
   },
   // All series recorded for an agent — populates the history browser selector.
   listSeries: (id: string) => req<SeriesInfo[]>('GET', `/api/v1/agents/${encodeURIComponent(id)}/series`),
+  // Current interface set + collection-level Wi-Fi verdict (with server-computed
+  // freshness). Agent-scoped, session-protected.
+  agentInterfaces: (id: string) =>
+    req<AgentInterfaces>('GET', `/api/v1/agents/${encodeURIComponent(id)}/interfaces`),
   agentStatusHistory: (id: string) =>
     req<StatusEvent[]>('GET', `/api/v1/agents/${encodeURIComponent(id)}/status-history`),
   listTokens: () => req<EnrollmentToken[]>('GET', '/api/v1/enrollment-tokens'),
