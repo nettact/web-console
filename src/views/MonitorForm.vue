@@ -52,12 +52,13 @@ function applyQueryPrefill() {
 // for CPU/memory/load, or a mount point for disk. So the host flow hides the
 // type dropdown and swaps the free-text target for a guided subject selector.
 const isHostMode = computed(() => form.kind === 'host')
-// Whole-machine (target "host") vs a specific disk partition (target = mount
-// point). Selecting "whole" pins target to "host"; "disk" clears it so the user
-// types the mount point, which must match what the agent reports (e.g. "C:").
-const hostSubject = computed<'whole' | 'disk'>({
-  get: () => (form.target === 'host' ? 'whole' : 'disk'),
-  set: (v) => { form.target = v === 'whole' ? 'host' : '' },
+// Whole-machine (target "host"), a specific disk partition (target = mount
+// point), or Wi-Fi (target "*", the anchor for every wireless adapter). Selecting
+// "whole" pins target to "host"; "wifi" pins it to "*"; "disk" clears it so the
+// user types the mount point, which must match what the agent reports (e.g. "C:").
+const hostSubject = computed<'whole' | 'disk' | 'wifi'>({
+  get: () => (form.target === 'host' ? 'whole' : form.target === '*' ? 'wifi' : 'disk'),
+  set: (v) => { form.target = v === 'whole' ? 'host' : v === 'wifi' ? '*' : '' },
 })
 const headersText = ref('')
 const error = ref('')
@@ -261,10 +262,11 @@ const CONDITION_PRESETS: Record<string, Preset[]> = {
   ],
 }
 // Host presets depend on the chosen subject: whole-machine metrics live on the
-// "host" series (CPU/memory), disk usage on the per-mount series. Splitting them
-// this way guarantees a rule's metric always matches the anchor's target string,
-// so the condition can actually fire.
-const HOST_PRESETS: Record<'whole' | 'disk', Preset[]> = {
+// "host" series (CPU/memory), disk usage on the per-mount series, and Wi-Fi on the
+// per-adapter wifi.* series (anchored at target "*"). Splitting them this way
+// guarantees a rule's metric always matches the anchor's target string, so the
+// condition can actually fire.
+const HOST_PRESETS: Record<'whole' | 'disk' | 'wifi', Preset[]> = {
   whole: [
     { key: 'cpu', label: 'mform.condCpu', metric: 'host.cpu.pct', comparator: 'gt', unit: '%', def: 90 },
     { key: 'mem', label: 'mform.condMem', metric: 'host.mem.pct', comparator: 'gt', unit: '%', def: 90 },
@@ -276,6 +278,14 @@ const HOST_PRESETS: Record<'whole' | 'disk', Preset[]> = {
   ],
   disk: [
     { key: 'disk', label: 'mform.condDisk', metric: 'host.disk.pct', comparator: 'gt', unit: '%', def: 90 },
+  ],
+  // Wi-Fi presets use strict less-than on the wifi.* metrics: disconnected is an
+  // on/off failure (fixed 1); low signal/quality compare an editable threshold
+  // (dBm is negative — a "lower" reading means a weaker signal).
+  wifi: [
+    { key: 'disconnected', label: 'mform.condWifiDown', metric: 'wifi.up', comparator: 'lt', fixed: 1 },
+    { key: 'signal', label: 'mform.condWifiSignal', metric: 'wifi.signal_dbm', comparator: 'lt', unit: 'dBm', def: -70 },
+    { key: 'quality', label: 'mform.condWifiQuality', metric: 'wifi.quality_pct', comparator: 'lt', unit: '%', def: 60 },
   ],
 }
 function presetsForKind(kind: string): Preset[] {
@@ -324,7 +334,9 @@ function layerForKind(kind: string): string {
   if (kind === 'http') return 'service'
   if (kind === 'tcp') return 'service'
   if (kind === 'nat') return 'wan'
-  if (kind === 'host') return 'local'
+  // Whole-machine and disk alerts are local faults; Wi-Fi is a wireless-layer
+  // fault so the incident correlator groups and labels it accordingly.
+  if (kind === 'host') return hostSubject.value === 'wifi' ? 'wireless' : 'local'
   return 'internet'
 }
 async function loadRules() {
@@ -437,6 +449,7 @@ onMounted(loadAll)
               <select v-model="hostSubject" :disabled="rules.length > 0">
                 <option value="whole">{{ tr('mform.hostSubjectWhole') }}</option>
                 <option value="disk">{{ tr('mform.hostSubjectDisk') }}</option>
+                <option value="wifi">{{ tr('mform.hostSubjectWifi') }}</option>
               </select>
             </label>
             <label class="field" v-if="hostSubject === 'disk'">
@@ -445,6 +458,7 @@ onMounted(loadAll)
             </label>
             <p class="hint tiny wide" v-if="rules.length">{{ tr('mform.hostSubjectLocked') }}</p>
             <p class="hint tiny wide" v-else-if="hostSubject === 'disk'">{{ tr('mform.hostMountHint') }}</p>
+            <p class="hint tiny wide" v-else-if="hostSubject === 'wifi'">{{ tr('mform.hostWifiHint') }}</p>
           </template>
           <label class="field wide" v-else>
             <span>{{ form.kind === 'http' ? tr('mform.url') : (form.kind === 'nat' ? tr('mform.stunServer') : (form.kind === 'tcp' || form.kind === 'dns' ? tr('mform.hostname') : tr('mform.target'))) }}</span>

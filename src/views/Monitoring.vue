@@ -40,9 +40,11 @@ function typeLabel(t: ProbeTarget): string {
 }
 
 // Host anchors carry a metric-series string as their target ("host" for the
-// whole machine, a mount point for disk); show the whole-machine one as a label.
+// whole machine, "*" for all wireless adapters, a mount point for disk); show the
+// whole-machine and Wi-Fi anchors as readable labels rather than raw strings.
 function targetLabel(t: ProbeTarget): string {
   if (t.kind === 'host' && t.target === 'host') return tr('monitoring.hostWhole')
+  if (t.kind === 'host' && t.target === '*') return tr('monitoring.hostWifi')
   return t.target
 }
 
