@@ -66,7 +66,7 @@ export interface Sample {
   value: number
   unit: string
   // The user-created monitor that produced this sample; absent for system
-  // series (host.*, iface.up, agent.*, the built-in gateway probe).
+  // series (host.*, iface.up, agent.*).
   monitor_id?: string
 }
 export interface ProbeParams {
@@ -99,6 +99,8 @@ export interface ProbeParams {
   // nat (STUN behavior discovery)
   nat_transport?: string
   stun_server2?: string
+  // gateway
+  interface?: string
 }
 export interface ProbeTarget {
   id?: string

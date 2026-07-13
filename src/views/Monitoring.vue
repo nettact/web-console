@@ -34,6 +34,7 @@ function typeLabel(t: ProbeTarget): string {
   if (t.kind === 'tcp') return tr('mform.typeTcp')
   if (t.kind === 'dns') return tr('mform.typeDns')
   if (t.kind === 'nat') return tr('mform.typeNat')
+  if (t.kind === 'gateway') return tr('mform.typeGateway')
   if (t.kind === 'host') return tr('mform.typeHost')
   if (t.kind === 'http') return tr('mform.typeHttp')
   return t.kind.toUpperCase()
@@ -45,6 +46,8 @@ function typeLabel(t: ProbeTarget): string {
 function targetLabel(t: ProbeTarget): string {
   if (t.kind === 'host' && t.target === 'host') return tr('monitoring.hostWhole')
   if (t.kind === 'host' && t.target === '*') return tr('monitoring.hostWifi')
+  // Gateway targets carry no user IP; show the chosen NIC, or "default gateway".
+  if (t.kind === 'gateway') return t.params?.interface || tr('monitoring.gatewayDefault')
   return t.target
 }
 

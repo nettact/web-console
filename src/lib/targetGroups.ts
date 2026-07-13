@@ -1,8 +1,7 @@
 // Groups an agent's target-status series (probe.*) by MONITOR — one entry per
 // user-created monitor (keyed by its monitor_id), plus one per (family, target)
-// for monitor-less probe series such as the built-in gateway ping. Shared by
-// the Target Status page shell and its grid so both agree on the group list and
-// its keys.
+// for monitor-less system series (e.g. iface.up). Shared by the Target Status
+// page shell and its grid so both agree on the group list and its keys.
 
 import type { Agent, SeriesInfo } from '../api'
 import { familyOf } from './metricMeta'

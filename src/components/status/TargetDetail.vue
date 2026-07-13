@@ -18,7 +18,7 @@ const props = defineProps<{
   agentId: string
   familyLabel: string
   target: string
-  monitorId?: string // set for user-created monitors; monitor-less probes (gateway) have none
+  monitorId?: string // set for user-created monitors; monitor-less system series have none
   name?: string // the monitor's display name
   metrics: SeriesInfo[]
   rangeSec: number

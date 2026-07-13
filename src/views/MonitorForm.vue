@@ -52,6 +52,11 @@ function applyQueryPrefill() {
 // for CPU/memory/load, or a mount point for disk. So the host flow hides the
 // type dropdown and swaps the free-text target for a guided subject selector.
 const isHostMode = computed(() => form.kind === 'host')
+// A gateway target probes the agent's own gateway (resolved from the chosen NIC,
+// or the default NIC when none is given), so it has no user-entered target — the
+// NIC selection lives in params.interface. Like host mode, it hides the free-text
+// target field and shows a guided input instead.
+const isGatewayMode = computed(() => form.kind === 'gateway')
 // Whole-machine (target "host"), a specific disk partition (target = mount
 // point), or Wi-Fi (target "*", the anchor for every wireless adapter). Selecting
 // "whole" pins target to "host"; "wifi" pins it to "*"; "disk" clears it so the
@@ -180,13 +185,16 @@ function cleanParams(p: ProbeParams | undefined): ProbeParams {
 
 async function save() {
   if (!loaded.value) return // never reconcile against a list that failed to load
-  if (!form.target.trim()) { error.value = tr('mform.targetRequired'); return } // don't push a blank probe
+  // Gateway targets carry no user-entered target (the server normalizes it to
+  // "gateway"); every other kind needs one.
+  if (!isGatewayMode.value && !form.target.trim()) { error.value = tr('mform.targetRequired'); return }
   busy.value = true
   saved.value = false
   error.value = ''
   try {
     if (form.kind === 'http') form.params!.headers = textToHeaders(headersText.value)
-    const current: ProbeTarget = { ...form, target: form.target.trim(), params: cleanParams(form.params) }
+    const target = isGatewayMode.value ? 'gateway' : form.target.trim()
+    const current: ProbeTarget = { ...form, target, params: cleanParams(form.params) }
     // Rebuild the full set (setTargets is a full reconcile), upserting this one.
     const others = all.value.filter((x) => x.id && x.id !== form.id)
       .map((x) => ({ ...x, params: cleanParams(x.params) }))
@@ -334,6 +342,9 @@ function layerForKind(kind: string): string {
   if (kind === 'http') return 'service'
   if (kind === 'tcp') return 'service'
   if (kind === 'nat') return 'wan'
+  // Gateway metrics are emitted on the LAN layer, so their alerts must correlate
+  // as LAN faults (not the default internet layer).
+  if (kind === 'gateway') return 'lan'
   // Whole-machine and disk alerts are local faults; Wi-Fi is a wireless-layer
   // fault so the incident correlator groups and labels it accordingly.
   if (kind === 'host') return hostSubject.value === 'wifi' ? 'wireless' : 'local'
@@ -433,6 +444,7 @@ onMounted(loadAll)
               <option value="tcp">{{ tr('mform.typeTcp') }}</option>
               <option value="dns">{{ tr('mform.typeDns') }}</option>
               <option value="nat">{{ tr('mform.typeNat') }}</option>
+              <option value="gateway">{{ tr('mform.typeGateway') }}</option>
             </select>
           </label>
           <label class="field">
@@ -459,6 +471,14 @@ onMounted(loadAll)
             <p class="hint tiny wide" v-if="rules.length">{{ tr('mform.hostSubjectLocked') }}</p>
             <p class="hint tiny wide" v-else-if="hostSubject === 'disk'">{{ tr('mform.hostMountHint') }}</p>
             <p class="hint tiny wide" v-else-if="hostSubject === 'wifi'">{{ tr('mform.hostWifiHint') }}</p>
+          </template>
+          <!-- gateway: no free-text target — pick an optional NIC, else default -->
+          <template v-else-if="isGatewayMode">
+            <label class="field wide">
+              <span>{{ tr('mform.interface') }}</span>
+              <input v-model="form.params!.interface" :placeholder="tr('mform.interfacePlaceholder')" />
+            </label>
+            <p class="hint tiny wide">{{ tr('mform.interfaceHint') }}</p>
           </template>
           <label class="field wide" v-else>
             <span>{{ form.kind === 'http' ? tr('mform.url') : (form.kind === 'nat' ? tr('mform.stunServer') : (form.kind === 'tcp' || form.kind === 'dns' ? tr('mform.hostname') : tr('mform.target'))) }}</span>
@@ -521,10 +541,10 @@ onMounted(loadAll)
       </section>
 
       <!-- Advanced / per-type -->
-      <section class="panel" v-if="form.kind === 'icmp' || form.kind === 'dns' || form.kind === 'tcp'">
+      <section class="panel" v-if="form.kind === 'icmp' || form.kind === 'gateway' || form.kind === 'dns' || form.kind === 'tcp'">
         <div class="panel-head"><h3>{{ tr('mform.secAdvanced') }}</h3></div>
         <div class="form-grid">
-          <template v-if="form.kind === 'icmp'">
+          <template v-if="form.kind === 'icmp' || form.kind === 'gateway'">
             <label class="field"><span>{{ tr('mform.packetCount') }}</span><input type="number" v-model.number="form.params!.packet_count" placeholder="3" /></label>
             <label class="field"><span>{{ tr('mform.packetSize') }}</span><input type="number" v-model.number="form.params!.packet_size" placeholder="56" /></label>
             <label class="field"><span>{{ tr('mform.perPingTimeout') }}</span><input type="number" v-model.number="form.params!.timeout_ms" placeholder="2000" /></label>

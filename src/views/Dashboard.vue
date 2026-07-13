@@ -2,7 +2,6 @@
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { api, type Agent, type AgentInterfaces, type Device, type Quota, type Sample, type StatusEvent } from '../api'
-import MetricChart from '../components/MetricChart.vue'
 import { toDateLocale } from '../i18n'
 import { fmtBps, fmtBytes } from '../lib/format'
 import { natCodeLabel, natTone } from '../lib/metricMeta'
@@ -14,8 +13,6 @@ const agents = ref<Agent[]>([])
 const selected = ref('')
 const quota = ref<Quota | null>(null)
 const statusHistory = ref<StatusEvent[]>([])
-const rtt = ref<Sample[]>([])
-const loss = ref<Sample[]>([])
 const snapshot = ref<Sample[]>([])
 const devices = ref<Device[]>([])
 const ifaceData = ref<AgentInterfaces | null>(null)
@@ -50,17 +47,13 @@ async function loadMetrics() {
   refreshing.value = true
   try {
     const id = selected.value
-    const [nextRtt, nextLoss, nextSnapshot, nextDevices, nextHistory, nextIfaces] = await Promise.all([
-      api.metrics(id, 'probe.icmp.rtt_ms', { target: 'gateway' }),
-      api.metrics(id, 'probe.icmp.loss_pct', { target: 'gateway' }),
+    const [nextSnapshot, nextDevices, nextHistory, nextIfaces] = await Promise.all([
       api.latest(id),
       api.listDevices(SITE),
       api.agentStatusHistory(id),
       api.agentInterfaces(id).catch(() => null),
     ])
     if (sequence !== loadSequence) return
-    rtt.value = nextRtt
-    loss.value = nextLoss
     snapshot.value = nextSnapshot
     devices.value = nextDevices
     statusHistory.value = nextHistory
@@ -75,8 +68,6 @@ async function loadMetrics() {
 
 async function changeAgent() {
   snapshot.value = []
-  rtt.value = []
-  loss.value = []
   statusHistory.value = []
   ifaceData.value = null
   await loadMetrics()
@@ -290,28 +281,27 @@ function loadLevel(value: number | null): string {
   return pct < 25 ? t('dashboard.loadLow') : pct < 60 ? t('dashboard.loadNormal') : pct < 85 ? t('dashboard.loadHigh') : t('dashboard.loadCritical')
 }
 
-function latestVal(samples: Sample[]): number | null {
-  let latest: Sample | null = null
-  for (const sample of samples) {
-    if (!latest || new Date(sample.ts).getTime() > new Date(latest.ts).getTime()) latest = sample
-  }
-  return latest?.value ?? null
-}
-const gatewayRtt = computed(() => latestVal(rtt.value))
-const gatewayLoss = computed(() => latestVal(loss.value))
+// Overall network health is derived from the internet-layer public pings (the
+// gateway is now an ordinary monitor shown in the Monitoring / Target Status
+// views, not a bespoke dashboard tile). Take the worst loss/RTT across all
+// public ICMP targets as the at-a-glance signal.
+const worstPublicLoss = computed(() => {
+  const vals = byKind('probe.icmp.loss_pct').filter((s) => s.target !== 'gateway').map((s) => s.value)
+  return vals.length ? Math.max(...vals) : null
+})
+const worstPublicRtt = computed(() => {
+  const vals = byKind('probe.icmp.rtt_ms').filter((s) => s.target !== 'gateway').map((s) => s.value)
+  return vals.length ? Math.max(...vals) : null
+})
 const networkHealth = computed(() => {
   if (currentAgent.value?.status !== 'online') return { tone: 'bad', label: t('dashboard.healthOffline') }
-  if (gatewayRtt.value == null && gatewayLoss.value == null) return { tone: 'unknown', label: t('dashboard.healthUnknown') }
-  if ((gatewayLoss.value ?? 0) >= 2 || (gatewayRtt.value ?? 0) >= 150) {
+  if (worstPublicRtt.value == null && worstPublicLoss.value == null) return { tone: 'unknown', label: t('dashboard.healthUnknown') }
+  if ((worstPublicLoss.value ?? 0) >= 2 || (worstPublicRtt.value ?? 0) >= 150) {
     return { tone: 'warn', label: t('dashboard.healthAttention') }
   }
   return { tone: 'good', label: t('dashboard.healthGood') }
 })
 
-function metricTone(value: number | null, warn: number, bad: number): string {
-  if (value == null) return 'is-unknown'
-  return value >= bad ? 'is-bad' : value >= warn ? 'is-warn' : 'is-good'
-}
 const fmt = (value: number | null, digits = 0) => (value == null ? '—' : value.toFixed(digits))
 const fmtTime = (value: string | null | undefined) =>
   value ? new Date(value).toLocaleString(toDateLocale(locale.value), { hour12: false }) : '—'
@@ -398,14 +388,6 @@ onBeforeUnmount(() => {
       </section>
 
       <section class="metric-grid">
-        <article class="metric-card" :class="metricTone(gatewayRtt, 50, 150)">
-          <div class="metric-icon latency"><svg viewBox="0 0 24 24"><path d="M4 12h3l2-5 4 10 2-5h5" /></svg></div>
-          <div class="metric-copy"><span>{{ t('dashboard.gatewayRtt') }}</span><strong>{{ fmt(gatewayRtt) }}<small>ms</small></strong><p>{{ t('dashboard.gatewayRttFoot') }}</p></div>
-        </article>
-        <article class="metric-card" :class="metricTone(gatewayLoss, 0.1, 2)">
-          <div class="metric-icon loss"><svg viewBox="0 0 24 24"><path d="M5 19 19 5M7 7h.01M17 17h.01" /><circle cx="7" cy="7" r="2" /><circle cx="17" cy="17" r="2" /></svg></div>
-          <div class="metric-copy"><span>{{ t('dashboard.gatewayLoss') }}</span><strong>{{ fmt(gatewayLoss, 1) }}<small>%</small></strong><p>{{ t('dashboard.gatewayLossFoot') }}</p></div>
-        </article>
         <article class="metric-card nat-kpi" :class="primaryNAT ? `is-${primaryNAT.tone}` : 'is-unknown'">
           <div class="metric-icon nat"><svg viewBox="0 0 24 24"><path d="M12 3v4M5.6 5.6l2.8 2.8M3 12h4M5.6 18.4l2.8-2.8M12 17v4M18.4 18.4l-2.8-2.8M17 12h4M18.4 5.6l-2.8 2.8" /><circle cx="12" cy="12" r="5" /></svg></div>
           <div class="metric-copy"><span>{{ t('dashboard.natType') }}</span><strong class="nat-type-value">{{ primaryNAT?.type ?? t('dashboard.notDetected') }}</strong><p>{{ primaryNAT?.target ?? t('dashboard.natTypeFoot') }}</p></div>
@@ -416,24 +398,7 @@ onBeforeUnmount(() => {
         </article>
       </section>
 
-      <section class="overview-monitor-row dashboard-section" :class="{ 'without-host': !hasHost }">
-      <section class="surface trend-surface">
-        <div class="surface-head">
-          <div><span class="section-kicker">{{ t('dashboard.performance') }}</span><h3>{{ t('dashboard.gatewayTrend') }}</h3></div>
-          <span class="range-chip">{{ t('dashboard.recentWindow') }}</span>
-        </div>
-        <div class="combined-trend">
-          <MetricChart
-            :title="t('dashboard.chartGatewayCombined')"
-            :metrics="[
-              { key: 'rtt', label: t('dashboard.gatewayRtt'), kind: 'probe.icmp.rtt_ms', unit: 'ms', color: '#38bdf8', samples: rtt },
-              { key: 'loss', label: t('dashboard.gatewayLoss'), kind: 'probe.icmp.loss_pct', unit: 'pct', color: '#f59e0b', samples: loss },
-            ]"
-          />
-        </div>
-      </section>
-
-      <section v-if="hasHost" class="surface system-monitor-surface">
+      <section v-if="hasHost" class="surface system-monitor-surface dashboard-section">
         <div class="surface-head compact">
           <div><span class="section-kicker">HOST</span><h3>{{ t('dashboard.systemStatus') }}</h3></div>
           <RouterLink class="icon-link" :to="{ path: '/host-metrics', query: { agent: selected } }">→</RouterLink>
@@ -495,7 +460,6 @@ onBeforeUnmount(() => {
             </article>
           </div>
         </div>
-      </section>
       </section>
 
       <section class="surface services-surface dashboard-section">
@@ -705,7 +669,7 @@ onBeforeUnmount(() => {
 .health-good .health-summary strong { color: var(--success); }.health-warn .health-summary strong { color: var(--warning); }.health-bad .health-summary strong { color: var(--danger); }
 .fleet-summary { display: flex; gap: 26px; padding-left: 26px; border-left: 1px solid var(--border); z-index: 1; }.fleet-summary div { display: grid; }.fleet-summary strong { font-size: 24px; line-height: 1.1; }.fleet-summary span { color: var(--text-muted); font-size: 10px; white-space: nowrap; }
 
-.metric-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px; margin-bottom: 18px; }
+.metric-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; margin-bottom: 18px; }
 .metric-card { position: relative; display: flex; align-items: center; gap: 14px; min-height: 126px; padding: 20px; overflow: hidden; border: 1px solid var(--border); border-radius: 18px; background: var(--surface); box-shadow: var(--shadow-soft); }
 .metric-card::after { content: ''; position: absolute; right: -28px; bottom: -42px; width: 110px; height: 110px; border-radius: 50%; background: currentColor; opacity: .045; }
 .metric-card.is-good { color: var(--success); }.metric-card.is-warn { color: var(--warning); }.metric-card.is-bad { color: var(--danger); }.metric-card.is-unknown, .metric-card.is-info { color: var(--primary); }
@@ -716,16 +680,13 @@ onBeforeUnmount(() => {
 .dashboard-section { margin-bottom: 18px; }
 .surface { border: 1px solid var(--border); border-radius: 18px; background: var(--surface); box-shadow: var(--shadow-soft); backdrop-filter: blur(14px); overflow: hidden; }
 .surface-head { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 18px 20px 14px; }.surface-head.compact { padding-bottom: 14px; border-bottom: 1px solid var(--border); }.surface-head h3 { margin-top: 3px; font-size: 16px; }.range-chip, .count-chip { padding: 4px 9px; color: var(--text-muted); font-size: 10px; border: 1px solid var(--border); border-radius: 999px; background: var(--surface-2); }.text-link, .icon-link { color: var(--primary); font-size: 12px; }.icon-link { display: grid; place-items: center; width: 28px; height: 28px; border-radius: 8px; background: var(--primary-soft); }
-.overview-monitor-row { display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(360px, .9fr); align-items: stretch; gap: 18px; }.overview-monitor-row .system-monitor-surface { grid-column: 1; grid-row: 1; }.overview-monitor-row .trend-surface { display: flex; flex-direction: column; grid-column: 2; grid-row: 1; min-width: 0; }.overview-monitor-row.without-host .trend-surface { grid-column: 1 / -1; }.combined-trend { flex: none; height: 340px; min-height: 0; }.combined-trend :deep(.chart) { height: 340px; min-height: 0; }
 .services-surface { padding-bottom: 4px; }.service-columns { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); border-top: 1px solid var(--border); }.service-group { min-width: 0; padding: 16px 18px; }.service-group + .service-group { border-left: 1px solid var(--border); }.service-title { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; }.service-title strong { overflow: hidden; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }.service-title b { margin-left: auto; color: var(--text-muted); font-size: 10px; }.service-symbol { display: grid; place-items: center; width: 29px; height: 29px; flex: none; border-radius: 9px; }.service-symbol svg { width: 17px; height: 17px; overflow: visible; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }.service-symbol.icmp { color: var(--primary); background: var(--primary-soft); }.service-symbol.dns { color: #818cf8; background: rgba(129,140,248,.13); }.service-symbol.http { color: #ec4899; background: rgba(236,72,153,.12); }.service-symbol.nat { color: var(--success); background: var(--success-soft); }
 .service-row { display: flex; align-items: center; gap: 7px; min-height: 31px; border-top: 1px solid color-mix(in srgb, var(--border) 60%, transparent); }.service-row:first-of-type { border-top: 0; }.target-name { flex: 1; overflow: hidden; color: var(--text-dim); text-overflow: ellipsis; white-space: nowrap; }.service-row .value { color: var(--text); font-size: 11px; font-variant-numeric: tabular-nums; white-space: nowrap; }.http-status { padding: 1px 5px; font-size: 9px; font-weight: 700; border-radius: 5px; }.http-status.good { color: var(--success); background: var(--success-soft); }.http-status.bad { color: var(--danger); background: var(--danger-soft); }.mini-empty { padding: 16px 0; color: var(--text-muted); font-size: 11px; }.mini-empty.padded { padding: 28px 20px; text-align: center; }
 
 .system-monitor-surface { padding-bottom: 16px; }.system-monitor-grid { display: grid; grid-template-columns: minmax(280px, .95fr) minmax(420px, 1.25fr); gap: 14px; padding: 16px; }.monitor-primary-column, .monitor-secondary-column { display: grid; gap: 14px; min-width: 0; }.monitor-primary-column { grid-template-rows: 1fr 1fr; }.monitor-secondary-column { grid-template-rows: auto 1fr auto; }.monitor-card { min-width: 0; padding: 18px 20px; border: 1px solid var(--border); border-radius: 14px; background: linear-gradient(145deg, var(--surface-2), color-mix(in srgb, var(--surface-2) 72%, var(--primary-soft))); box-shadow: inset 0 1px rgba(255,255,255,.025); }.monitor-card-title { display: flex; align-items: center; gap: 10px; }.monitor-card-title > strong { font-size: 14px; }.monitor-icon { display: grid; place-items: center; width: 30px; height: 30px; flex: none; border-radius: 9px; }.monitor-icon svg { width: 20px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }.monitor-icon.cpu { color: var(--success); background: var(--success-soft); }.monitor-icon.memory, .monitor-icon.load, .monitor-icon.io, .monitor-icon.uptime { color: var(--primary); background: var(--primary-soft); }.monitor-big-value { display: block; margin-top: 14px; font-size: clamp(34px, 4vw, 48px); font-weight: 700; line-height: 1; letter-spacing: -.04em; font-variant-numeric: tabular-nums; }.cpu-value { color: var(--success); }.memory-value { color: var(--primary); }.monitor-card p { margin: 12px 0 0; color: var(--text-muted); font-size: 12px; }.cpu-monitor-body { display: flex; align-items: center; justify-content: space-between; gap: 20px; }.usage-ring { --usage-angle: 0deg; position: relative; display: block; width: 70px; height: 70px; flex: none; border-radius: 50%; background: conic-gradient(var(--success) var(--usage-angle), color-mix(in srgb, var(--success) 13%, var(--surface-2)) 0); }.usage-ring::after { content: ''; position: absolute; inset: 9px; border-radius: 50%; background: var(--surface-solid); }.usage-ring i { position: absolute; inset: 16px; z-index: 1; border-radius: 50%; background: var(--surface-2); }.memory-progress { height: 8px; margin-top: 18px; overflow: hidden; border-radius: 999px; background: color-mix(in srgb, var(--primary) 12%, var(--surface)); }.memory-progress i { display: block; height: 100%; border-radius: inherit; background: linear-gradient(90deg, var(--primary-strong), var(--primary)); box-shadow: 0 0 12px var(--primary-glow); }.load-monitor-card { padding-bottom: 14px; }.load-dials { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin-top: 10px; }.load-dial-item { display: grid; justify-items: center; min-width: 0; }.load-dial-item > span { margin-top: -2px; color: var(--text-muted); font-size: 11px; white-space: nowrap; }.load-dial-item > span strong { color: var(--text); }.load-dial { --needle-angle: -125deg; position: relative; width: 74px; height: 48px; overflow: hidden; }.load-dial::before { content: ''; position: absolute; left: 5px; top: 5px; width: 64px; height: 64px; border-radius: 50%; background: conic-gradient(from 225deg, var(--success) 0 17%, var(--primary) 17% 36%, var(--warning) 36% 50%, var(--danger) 50% 56%, transparent 56% 100%); -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 9px), #000 0); mask: radial-gradient(farthest-side, transparent calc(100% - 9px), #000 0); opacity: .9; }.load-dial i { position: absolute; left: 36px; bottom: 4px; width: 2px; height: 27px; z-index: 1; border-radius: 2px; background: var(--text); transform: rotate(var(--needle-angle)); transform-origin: 50% 100%; }.load-dial b { position: absolute; left: 32px; bottom: 0; width: 10px; height: 10px; z-index: 2; border: 3px solid var(--surface-solid); border-radius: 50%; background: var(--text); }.io-monitor-card { display: grid; align-content: center; }.io-values { display: grid; gap: 10px; margin-top: 14px; }.io-values > div { display: grid; grid-template-columns: 24px 70px 1fr; align-items: center; gap: 6px; }.io-values span { color: var(--text-muted); }.io-values strong { font-size: 16px; font-variant-numeric: tabular-nums; }.io-arrow { font-size: 22px; line-height: 1; }.io-arrow.up { color: var(--success); }.io-arrow.down { color: var(--primary); }.uptime-monitor-card { display: flex; align-items: center; gap: 14px; padding-top: 14px; padding-bottom: 14px; }.uptime-monitor-card > div { display: grid; }.uptime-monitor-card span { color: var(--text-muted); font-size: 11px; }.uptime-monitor-card strong { margin-top: 2px; font-size: 20px; font-variant-numeric: tabular-nums; }
 .resource-card { display: grid; align-content: center; min-width: 0; min-height: 92px; padding: 15px 16px; border: 1px solid var(--border); border-radius: 13px; background: var(--surface-2); }.resource-card > div:first-child { display: flex; justify-content: space-between; gap: 12px; font-size: 11px; }.resource-card span { color: var(--text-muted); }.resource-card em { margin-left: 4px; color: var(--text-dim); font-style: normal; }.resource-card strong { font-variant-numeric: tabular-nums; }.resource-card > small { display: block; margin-top: 5px; color: var(--text-muted); font-size: 9px; text-align: right; }.resource-track { height: 5px; margin-top: 9px; overflow: hidden; border-radius: 99px; background: var(--surface); }.resource-track i { display: block; height: 100%; border-radius: inherit; background: var(--primary); }.resource-track i.is-good { background: var(--success); }.resource-track i.is-warn { background: var(--warning); }.resource-track i.is-bad { background: var(--danger); }
 
-/* Keep the system monitor compact enough that the dual-axis gateway chart has
-   a genuinely useful plot width when both panels share one row. */
-.overview-monitor-row { grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr); gap: 14px; }
+/* Keep the system monitor compact so its inner cards have a useful width. */
 .system-monitor-grid { grid-template-columns: minmax(210px, .9fr) minmax(320px, 1.1fr); gap: 10px; padding: 12px; }
 .monitor-primary-column,
 .monitor-secondary-column { gap: 10px; }
@@ -1017,7 +978,6 @@ onBeforeUnmount(() => {
   .resource-panel-head h3 { font-size: 16px; }
 }
 @media (max-width: 1120px) { .metric-grid { grid-template-columns: repeat(2, 1fr); }.service-columns { grid-template-columns: repeat(2, minmax(0, 1fr)); }.service-group:nth-child(odd) { border-left: 0; }.service-group:nth-child(n + 3) { border-top: 1px solid var(--border); }.agent-hero { grid-template-columns: 1fr auto; }.fleet-summary { grid-column: 1 / -1; padding: 16px 0 0; border-top: 1px solid var(--border); border-left: 0; } }
-@media (max-width: 1280px) { .overview-monitor-row { grid-template-columns: 1fr; }.overview-monitor-row .system-monitor-surface { grid-column: 1; grid-row: 1; }.overview-monitor-row .trend-surface { grid-column: 1; grid-row: 2; }.combined-trend, .combined-trend :deep(.chart) { height: 320px; min-height: 0; } }
 @media (max-width: 900px) { .system-monitor-grid { grid-template-columns: 1fr; }.monitor-primary-column { grid-template-columns: 1fr 1fr; grid-template-rows: auto; }.monitor-secondary-column { grid-template-columns: 1fr 1fr; grid-template-rows: auto; }.load-monitor-card { grid-column: 1 / -1; } }
 @media (max-width: 760px) { .dashboard-page { padding: 22px 16px 42px; }.dashboard-head { align-items: stretch; flex-direction: column; }.head-actions, .agent-picker { width: 100%; }.agent-picker { flex: 1; }.agent-picker select { width: 100%; min-width: 0; }.agent-hero { grid-template-columns: 1fr; padding: 22px; }.health-summary { padding-top: 16px; border-top: 1px solid var(--border); }.fleet-summary { grid-column: auto; }.metric-grid, .service-columns, .monitor-primary-column, .monitor-secondary-column { grid-template-columns: 1fr; }.load-monitor-card { grid-column: auto; }.service-group + .service-group { border-top: 1px solid var(--border); border-left: 0; }.metric-card { min-height: 108px; }.service-group { padding: 14px 16px; }.system-monitor-grid { padding: 12px; }.load-dials { gap: 8px; }.io-values > div { grid-template-columns: 24px 60px 1fr; } }
 @media (max-width: 420px) { .metric-grid { grid-template-columns: 1fr; }.fleet-summary { flex-direction: column; gap: 12px; }.agent-identity { align-items: flex-start; }.agent-line { align-items: flex-start; flex-direction: column; gap: 4px; } }
