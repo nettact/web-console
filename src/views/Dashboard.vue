@@ -106,14 +106,12 @@ const httpRows = computed(() => {
     latency: latency.get(key)?.value ?? null,
   }))
 })
-const interfaces = computed(() => byKind('iface.up').sort((a, b) => a.target.localeCompare(b.target)))
+const interfaceSamples = computed(() => byKind('iface.up'))
 
-// --- Wi-Fi status card ---------------------------------------------------
-// Categorical state (connection/SSID/band/channel) comes from the authoritative
-// interface snapshot (server-freshness-gated). Numeric readings (dBm/quality/
-// rates) come from the /latest metric snapshot, but are shown ONLY when the
-// matching adapter is connected AND the collection is fresh — never gated on
-// /latest alone (its 2h window would keep pre-disconnect numerics alive).
+// --- Network adapter list ------------------------------------------------
+// Wi-Fi state and readings are folded into the matching network-adapter row.
+// They come from the authoritative interface snapshot so connection state and
+// numeric readings always belong to the same collection round.
 const wifiSupported = computed(() => !!currentAgent.value?.capabilities?.includes('network.wifi.read'))
 const wifiCollection = computed(() => ifaceData.value?.wifi ?? null)
 const wifiAdapters = computed(() => (ifaceData.value?.interfaces ?? []).filter((i) => i.is_wireless))
@@ -124,16 +122,6 @@ const wifiAdapters = computed(() => (ifaceData.value?.interfaces ?? []).filter((
 // Agent would keep rendering a green connected adapter with live numerics.
 const wifiStale = computed(() => currentAgent.value?.status !== 'online' || (wifiCollection.value?.stale ?? true))
 
-const wifiCardState = computed(() => {
-  if (!wifiSupported.value) return 'unsupported'
-  const col = wifiCollection.value
-  if (!col || (!col.sampled_at && !col.state)) return 'unknown'
-  if (wifiStale.value) return 'stale'
-  if (col.state === 'unreadable') return 'unreadable'
-  if (!wifiAdapters.value.length) return 'noAdapter'
-  return 'ok'
-})
-
 function dbmGrade(dbm: number | null): { label: string; tone: string } | null {
   if (dbm == null) return null
   if (dbm >= -60) return { label: t('dashboard.wifiGradeGood'), tone: 'good' }
@@ -143,7 +131,7 @@ function dbmGrade(dbm: number | null): { label: string; tone: string } | null {
 
 interface WifiAdapterView {
   name: string
-  state: string
+  state: 'connected' | 'disconnected' | 'unreadable' | 'stale'
   reason: string
   connected: boolean
   ssid: string
@@ -160,17 +148,20 @@ interface WifiAdapterView {
 // stale per-series value from /latest. The connected gate (state + freshness)
 // also blanks them when disconnected/stale/offline.
 const wifiRows = computed<WifiAdapterView[]>(() => {
+  if (!wifiSupported.value) return []
   const stale = wifiStale.value
   return wifiAdapters.value
     .map((a) => {
       const w = a.wifi
-      const state = w?.state ?? 'unreadable'
+      const reportedState: WifiAdapterView['state'] =
+        w?.state === 'connected' || w?.state === 'disconnected' ? w.state : 'unreadable'
+      const state: WifiAdapterView['state'] = stale ? 'stale' : reportedState
       const connected = state === 'connected' && !stale
       const dbm = connected ? w?.signal_dbm ?? null : null
       return {
         name: a.name,
         state,
-        reason: w?.reason ?? '',
+        reason: w?.reason ?? wifiCollection.value?.reason ?? '',
         connected,
         ssid: connected ? w?.ssid ?? '' : '',
         band: connected ? w?.band ?? '' : '',
@@ -185,6 +176,50 @@ const wifiRows = computed<WifiAdapterView[]>(() => {
     .sort((a, b) => a.name.localeCompare(b.name))
 })
 const wifiBandLabel = (band: string) => (band ? t('dashboard.wifiBandGhz', { n: band }) : '—')
+const wifiStateLabel = (adapter: WifiAdapterView) => {
+  if (adapter.state === 'connected') return t('dashboard.wifiConnected')
+  if (adapter.state === 'stale') return t('dashboard.wifiStale')
+  if (adapter.state === 'unreadable') return t('dashboard.wifiAdapterUnreadable')
+  return t('dashboard.wifiDisconnected')
+}
+const wifiStateTone = (adapter: WifiAdapterView) => {
+  if (adapter.state === 'connected') return 'good'
+  if (adapter.state === 'unreadable' || adapter.state === 'stale') return 'warn'
+  return 'bad'
+}
+
+interface NetworkAdapterView {
+  name: string
+  up: boolean
+  isWireless: boolean
+  wifi: WifiAdapterView | null
+}
+
+const interfaceRows = computed<NetworkAdapterView[]>(() => {
+  const samples = new Map(interfaceSamples.value.map((sample) => [sample.target, sample]))
+  const snapshots = new Map((ifaceData.value?.interfaces ?? []).map((adapter) => [adapter.name, adapter]))
+  const wifiByName = new Map(wifiRows.value.map((adapter) => [adapter.name, adapter]))
+  const names = new Set([...samples.keys(), ...snapshots.keys()])
+
+  return [...names]
+    .map((name) => {
+      const sample = samples.get(name)
+      const adapter = snapshots.get(name)
+      return {
+        name,
+        up: adapter?.up ?? sample?.value === 1,
+        isWireless: adapter?.is_wireless ?? false,
+        wifi: wifiByName.get(name) ?? null,
+      }
+    })
+    .sort((a, b) => a.name.localeCompare(b.name))
+})
+
+const deviceColumns = computed(() => {
+  const rows = devices.value.map((device, index) => ({ device, number: index + 1 }))
+  const split = Math.ceil(rows.length / 2)
+  return [rows.slice(0, split), rows.slice(split)]
+})
 
 interface NATRow {
   key: string
@@ -237,10 +272,6 @@ function fmtUptime(seconds: number | null): string {
   const hours = Math.floor((seconds % 86400) / 3600)
   const minutes = Math.floor((seconds % 3600) / 60)
   return days ? `${days}d ${hours}h ${minutes}m` : hours ? `${hours}h ${minutes}m` : `${minutes}m`
-}
-function barClass(value: number | null): string {
-  if (value == null) return 'is-unknown'
-  return value < 60 ? 'is-good' : value < 85 ? 'is-warn' : 'is-bad'
 }
 function ringStyle(value: number | null): Record<string, string> {
   const pct = Math.max(0, Math.min(100, value ?? 0))
@@ -507,83 +538,75 @@ onBeforeUnmount(() => {
         </div>
       </section>
 
-      <section class="variable-grid equal-grid dashboard-section">
+      <section class="resource-overview-grid dashboard-section">
         <section class="surface overview-resource-panel devices-surface">
           <div class="resource-panel-head">
-            <span class="resource-panel-icon devices"><svg viewBox="0 0 24 24"><path d="M4 10a11 11 0 0 1 16 0M7 13a7 7 0 0 1 10 0M10 16a3 3 0 0 1 4 0"/><circle cx="12" cy="19" r="1"/></svg></span>
+            <span class="resource-panel-icon devices"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="13" rx="2"/><path d="M8 21h8M12 17v4"/></svg></span>
             <h3>{{ t('dashboard.lanDevices') }}</h3>
             <span>{{ t('dashboard.deviceCount', { n: devices.length }) }}</span>
           </div>
-          <div v-if="!devices.length" class="mini-empty padded">{{ t('dashboard.noDeviceYet') }}</div>
-          <div v-else class="resource-column-list">
-            <article v-for="device in devices" :key="device.mac" class="resource-list-card device-item">
-              <span class="resource-item-icon device"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="13" rx="2"/><path d="M8 21h8M12 17v4"/></svg></span>
-              <span class="resource-item-copy"><strong>{{ device.hostname || device.ip }}</strong><small class="mono">{{ device.hostname ? `${device.ip} · ${device.mac}` : device.mac }}</small></span>
-            </article>
+          <div v-if="!devices.length" class="mini-empty resource-panel-empty">{{ t('dashboard.noDeviceYet') }}</div>
+          <div v-else class="resource-panel-scroll device-scroll">
+            <div class="device-columns">
+              <div v-for="(column, columnIndex) in deviceColumns" :key="columnIndex" class="compact-column">
+                <article v-for="row in column" :key="`${row.device.mac}-${row.number}`" class="device-row">
+                  <span class="row-number">{{ row.number }}</span>
+                  <span class="compact-item-icon device"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="13" rx="2"/><path d="M8 21h8M12 17v4"/></svg></span>
+                  <span class="compact-item-copy">
+                    <strong>{{ row.device.hostname || row.device.ip }}</strong>
+                    <small class="mono">{{ row.device.hostname ? `${row.device.ip} · ${row.device.mac}` : row.device.mac }}</small>
+                  </span>
+                </article>
+              </div>
+            </div>
           </div>
         </section>
 
         <section class="surface overview-resource-panel interface-surface">
           <div class="resource-panel-head">
             <span class="resource-panel-icon interfaces"><svg viewBox="0 0 24 24"><rect x="5" y="7" width="14" height="10" rx="2"/><path d="M9 11h6M12 7V3M12 17v4M8 3h8"/></svg></span>
-            <h3>{{ t('dashboard.ifaceStatus') }}</h3>
-            <span>{{ t('dashboard.interfaceCount', { n: interfaces.length }) }}</span>
+            <h3>{{ t('dashboard.adapterList') }}</h3>
+            <span>{{ t('dashboard.adapterCount', { n: interfaceRows.length }) }}</span>
           </div>
-          <div v-if="!interfaces.length" class="mini-empty padded">{{ t('common.noData') }}</div>
-          <div v-else class="resource-column-list">
-            <article v-for="item in interfaces" :key="item.target" class="resource-list-card interface-item">
-              <span class="resource-item-icon interface"><svg viewBox="0 0 24 24"><path d="M5 8h14v8H5zM9 12h6M12 8V4M12 16v4"/></svg></span>
-              <span class="resource-item-copy"><strong>{{ item.target }}</strong><small>{{ t('dashboard.networkInterface') }}</small></span>
-              <span class="resource-state" :class="item.value === 1 ? 'good' : 'bad'">{{ item.value === 1 ? '↑ UP' : '↓ DOWN' }}</span>
-            </article>
-          </div>
-        </section>
-
-        <section class="surface overview-resource-panel wifi-surface">
-          <div class="resource-panel-head">
-            <span class="resource-panel-icon wifi"><svg viewBox="0 0 24 24"><path d="M4 9a13 13 0 0 1 16 0M7 12.5a8 8 0 0 1 10 0M10 16a3 3 0 0 1 4 0"/><circle cx="12" cy="19" r="1"/></svg></span>
-            <h3>{{ t('dashboard.wifiStatus') }}</h3>
-            <span v-if="wifiCardState === 'ok'">{{ t('dashboard.wifiCount', { n: wifiRows.length }) }}</span>
-          </div>
-          <div v-if="wifiCardState === 'unsupported'" class="mini-empty padded">{{ t('dashboard.wifiUnsupported') }}</div>
-          <div v-else-if="wifiCardState === 'unknown'" class="mini-empty padded">{{ t('common.noData') }}</div>
-          <div v-else-if="wifiCardState === 'stale'" class="mini-empty padded">{{ t('dashboard.wifiStale') }}</div>
-          <div v-else-if="wifiCardState === 'unreadable'" class="mini-empty padded">
-            {{ t('dashboard.wifiUnreadable') }}<template v-if="wifiCollection?.reason === 'permission'"> · {{ t('dashboard.wifiPermission') }}</template>
-          </div>
-          <div v-else-if="wifiCardState === 'noAdapter'" class="mini-empty padded">{{ t('dashboard.wifiNoAdapter') }}</div>
-          <div v-else class="resource-column-list">
-            <article v-for="ad in wifiRows" :key="ad.name" class="resource-list-card wifi-item">
-              <span class="resource-item-icon wifi"><svg viewBox="0 0 24 24"><path d="M4 9a13 13 0 0 1 16 0M7 12.5a8 8 0 0 1 10 0M10 16a3 3 0 0 1 4 0"/><circle cx="12" cy="19" r="1"/></svg></span>
-              <span class="resource-item-copy">
-                <strong>{{ ad.connected ? ad.ssid || t('dashboard.wifiHiddenSsid') : ad.name }}</strong>
-                <small>
-                  {{ ad.name }}
-                  <template v-if="ad.connected && ad.band"> · {{ wifiBandLabel(ad.band) }}</template>
-                  <template v-if="ad.connected && ad.channel"> · {{ t('dashboard.wifiChannelShort', { n: ad.channel }) }}</template>
-                  <template v-if="ad.reason === 'permission'"> · {{ t('dashboard.wifiPermission') }}</template>
-                </small>
-              </span>
-              <span
-                class="resource-state"
-                :class="ad.connected ? 'good' : ad.state === 'unreadable' ? 'warn' : 'bad'"
-              >{{ ad.connected ? t('dashboard.wifiConnected') : ad.state === 'unreadable' ? t('dashboard.wifiAdapterUnreadable') : t('dashboard.wifiDisconnected') }}</span>
-              <div v-if="ad.connected" class="wifi-metrics">
-                <span class="wifi-metric">
-                  <i>{{ t('dashboard.wifiSignal') }}</i>
-                  <b :class="ad.grade ? `grade-${ad.grade.tone}` : ''">{{ ad.signalDbm == null ? '—' : `${ad.signalDbm} dBm` }}</b>
-                  <em v-if="ad.grade" :class="`grade-${ad.grade.tone}`">{{ ad.grade.label }}</em>
+          <div v-if="!interfaceRows.length" class="mini-empty resource-panel-empty">{{ t('common.noData') }}</div>
+          <div v-else class="resource-panel-scroll adapter-scroll">
+            <div class="adapter-list">
+              <article v-for="item in interfaceRows" :key="item.name" class="adapter-row" :class="{ 'has-wifi': item.wifi?.connected }">
+                <span v-if="item.isWireless" class="compact-item-icon wifi"><svg viewBox="0 0 24 24"><path d="M4 9a13 13 0 0 1 16 0M7 12.5a8 8 0 0 1 10 0M10 16a3 3 0 0 1 4 0"/><circle cx="12" cy="19" r="1"/></svg></span>
+                <span v-else class="compact-item-icon interface"><svg viewBox="0 0 24 24"><path d="M5 8h14v8H5zM9 12h6M12 8V4M12 16v4"/></svg></span>
+                <span class="adapter-copy">
+                  <span class="adapter-name-line">
+                    <strong>{{ item.name }}</strong>
+                    <small v-if="!item.wifi">{{ t('dashboard.networkAdapter') }}</small>
+                  </span>
+                  <small v-if="item.wifi" class="wifi-summary">
+                    <span :class="wifiStateTone(item.wifi)">{{ wifiStateLabel(item.wifi) }}</span>
+                    <template v-if="item.wifi.connected">
+                      · {{ item.wifi.ssid || t('dashboard.wifiHiddenSsid') }}
+                      <template v-if="item.wifi.band"> · {{ wifiBandLabel(item.wifi.band) }}</template>
+                      <template v-if="item.wifi.channel"> · {{ t('dashboard.wifiChannelShort', { n: item.wifi.channel }) }}</template>
+                    </template>
+                    <template v-if="item.wifi.reason === 'permission'"> · {{ t('dashboard.wifiPermission') }}</template>
+                  </small>
                 </span>
-                <span class="wifi-metric">
-                  <i>{{ t('dashboard.wifiQuality') }}</i>
-                  <b>{{ ad.quality == null ? '—' : `${ad.quality.toFixed(0)}%` }}</b>
-                </span>
-                <span class="wifi-metric">
-                  <i>{{ t('dashboard.wifiLinkRate') }}</i>
-                  <b>{{ ad.rxMbps == null && ad.txMbps == null ? '—' : `${ad.rxMbps == null ? '—' : ad.rxMbps.toFixed(0)} / ${ad.txMbps == null ? '—' : ad.txMbps.toFixed(0)} Mbps` }}</b>
-                </span>
-              </div>
-            </article>
+                <div v-if="item.wifi?.connected" class="wifi-metrics">
+                  <span class="wifi-metric">
+                    <i>{{ t('dashboard.wifiSignal') }}</i>
+                    <b :class="item.wifi.grade ? `grade-${item.wifi.grade.tone}` : ''">{{ item.wifi.signalDbm == null ? '—' : `${item.wifi.signalDbm} dBm` }}</b>
+                    <em v-if="item.wifi.grade" :class="`grade-${item.wifi.grade.tone}`">{{ item.wifi.grade.label }}</em>
+                  </span>
+                  <span class="wifi-metric">
+                    <i>{{ t('dashboard.wifiQuality') }}</i>
+                    <b>{{ item.wifi.quality == null ? '—' : `${item.wifi.quality.toFixed(0)}%` }}</b>
+                  </span>
+                  <span class="wifi-metric">
+                    <i>{{ t('dashboard.wifiLinkRate') }}</i>
+                    <b>{{ item.wifi.rxMbps == null && item.wifi.txMbps == null ? '—' : `${item.wifi.rxMbps == null ? '—' : item.wifi.rxMbps.toFixed(0)} / ${item.wifi.txMbps == null ? '—' : item.wifi.txMbps.toFixed(0)} Mbps` }}</b>
+                  </span>
+                </div>
+                <span class="state-pill" :class="item.up ? 'good' : 'bad'">{{ item.up ? 'UP' : 'DOWN' }}</span>
+              </article>
+            </div>
           </div>
         </section>
 
@@ -593,15 +616,20 @@ onBeforeUnmount(() => {
             <h3>{{ t('dashboard.diskStatus') }}</h3>
             <span>{{ t('dashboard.diskCount', { n: diskMounts.length }) }}</span>
           </div>
-          <div v-if="!diskMounts.length" class="mini-empty padded">{{ t('common.noData') }}</div>
-          <div v-else class="resource-column-list">
-            <article v-for="mount in diskMounts" :key="mount" class="resource-list-card disk-item" :class="barClass(hostVal('host.disk.pct', mount))">
-              <span class="resource-item-icon disk"><svg viewBox="0 0 24 24"><path d="M4 6h16v12H4zM4 14h16M8 17h.01M12 17h4"/></svg></span>
-              <span class="resource-item-copy"><strong class="mono">{{ mount }}</strong><small>{{ t('dashboard.storage') }}</small></span>
-              <strong class="disk-percent">{{ fmt(hostVal('host.disk.pct', mount), 1) }}%</strong>
-              <span class="disk-progress"><i :style="{ width: `${hostVal('host.disk.pct', mount) ?? 0}%` }"></i></span>
-              <small class="disk-capacity">{{ fmtBytes(hostVal('host.disk.used', mount)) }} / {{ fmtBytes(hostVal('host.disk.total', mount)) }}</small>
-            </article>
+          <div v-if="!diskMounts.length" class="mini-empty resource-panel-empty">{{ t('common.noData') }}</div>
+          <div v-else class="resource-panel-scroll disk-scroll">
+            <div class="disk-list">
+              <article v-for="(mount, index) in diskMounts" :key="mount" class="disk-overview-item" :class="`disk-tone-${index % 3}`">
+                <span class="disk-usage-ring" :style="ringStyle(hostVal('host.disk.pct', mount))">
+                  <strong>{{ fmt(hostVal('host.disk.pct', mount), 1) }}%</strong>
+                </span>
+                <span class="disk-overview-copy">
+                  <span class="disk-name-line"><strong class="mono">{{ mount }}</strong><small>{{ t('dashboard.storage') }}</small></span>
+                  <span class="disk-progress"><i :style="{ width: `${hostVal('host.disk.pct', mount) ?? 0}%` }"></i></span>
+                  <small class="disk-capacity">{{ fmtBytes(hostVal('host.disk.used', mount)) }} / {{ fmtBytes(hostVal('host.disk.total', mount)) }}</small>
+                </span>
+              </article>
+            </div>
           </div>
         </section>
 
@@ -611,15 +639,23 @@ onBeforeUnmount(() => {
             <h3>{{ t('dashboard.recentActivity') }}</h3>
             <span>{{ t('dashboard.activityCount', { n: statusHistory.length }) }}</span>
           </div>
-          <div v-if="!statusHistory.length" class="mini-empty padded">{{ t('dashboard.noStatusChange') }}</div>
-          <div v-else class="activity-timeline">
-            <div v-for="(event, index) in statusHistory" :key="`${event.changed_at}-${index}`" class="timeline-event">
-              <span class="timeline-marker" :class="event.status === 'online' ? 'good' : 'bad'"><i>{{ event.status === 'online' ? '↑' : '↓' }}</i></span>
-              <span class="timeline-content">
-                <strong>{{ event.status === 'online' ? t('dashboard.statusOnline') : t('dashboard.statusOffline') }}</strong>
-                <small>{{ t('dashboard.agentStateChanged') }}</small>
-              </span>
-              <time :datetime="event.changed_at">{{ fmtTime(event.changed_at) }}</time>
+          <div v-if="!statusHistory.length" class="mini-empty resource-panel-empty">{{ t('dashboard.noStatusChange') }}</div>
+          <div v-else class="resource-panel-scroll activity-timeline">
+            <div class="timeline-track">
+              <article
+                v-for="(event, index) in statusHistory"
+                :key="`${event.changed_at}-${index}`"
+                class="timeline-event"
+                :class="event.status === 'online' ? 'is-online' : 'is-offline'"
+              >
+                <span class="timeline-content">
+                  <span class="row-number">{{ index + 1 }}</span>
+                  <strong>{{ event.status === 'online' ? t('dashboard.statusOnline') : t('dashboard.statusOffline') }}</strong>
+                  <small>{{ t('dashboard.agentStateChanged') }}</small>
+                  <time :datetime="event.changed_at">{{ fmtTime(event.changed_at) }}</time>
+                </span>
+                <span class="timeline-marker" :class="event.status === 'online' ? 'good' : 'bad'"><i>{{ event.status === 'online' ? '↑' : '↓' }}</i></span>
+              </article>
             </div>
           </div>
         </section>
@@ -629,7 +665,7 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
-.dashboard-page { max-width: 1440px; padding-top: 32px; }
+.dashboard-page { max-width: 1680px; padding-top: 32px; }
 .dashboard-head { display: flex; align-items: flex-end; justify-content: space-between; gap: 24px; margin-bottom: 24px; }
 .dashboard-head h2 { font-size: clamp(26px, 3vw, 34px); letter-spacing: -0.035em; }
 .dashboard-head p { margin: 6px 0 0; color: var(--text-muted); }
@@ -727,68 +763,262 @@ onBeforeUnmount(() => {
 .load-level-item.is-high { --load-color: var(--warning); }
 .load-level-item.is-critical { --load-color: var(--danger); }
 
-.variable-grid { display: grid; gap: 18px; }.equal-grid { grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); align-items: stretch; }.equal-grid > .surface { height: 100%; }.tile-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 10px; padding: 14px; }.stack-list { display: grid; gap: 10px; padding: 14px; }.list-row { display: flex; align-items: center; min-width: 0; min-height: 55px; padding: 8px 12px; border: 1px solid var(--border); border-radius: 11px; background: var(--surface-2); }.list-icon { display: grid; place-items: center; width: 32px; height: 32px; flex: none; color: var(--primary); border-radius: 9px; background: var(--primary-soft); }.list-icon svg { width: 17px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }.list-main { display: grid; min-width: 0; flex: 1; }.list-main strong, .list-main small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }.list-main strong { font-size: 11px; }.list-main small, .list-meta { color: var(--text-muted); font-size: 9px; }.list-meta { max-width: 42%; text-align: right; }.state-label { display: inline-flex; align-items: center; gap: 5px; font-size: 9px; font-weight: 700; }.state-label i { width: 5px; height: 5px; border-radius: 50%; background: currentColor; }.state-label.good { color: var(--success); }.state-label.bad { color: var(--danger); }.timeline-dot { width: 8px; height: 8px; flex: none; border: 2px solid var(--surface-solid); border-radius: 50%; box-shadow: 0 0 0 2px var(--border-strong); }.timeline-dot.good { background: var(--success); }.timeline-dot.bad { background: var(--danger); }
+.nat-service-copy { display: grid; min-width: 0; flex: 1; }
+.nat-service-copy strong, .nat-service-copy small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.nat-service-copy strong { font-size: 11px; }
+.nat-service-copy small { color: var(--text-muted); font-size: 9px; }
+.reach-chip { margin-left: auto; padding: 2px 7px; color: var(--text-muted); font-size: 9px; border-radius: 999px; background: var(--surface); }
+.reach-chip.good { color: var(--success); background: var(--success-soft); }
+.reach-chip.bad { color: var(--danger); background: var(--danger-soft); }
 
-.nat-service-copy { display: grid; min-width: 0; flex: 1; }.nat-service-copy strong, .nat-service-copy small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }.nat-service-copy strong { font-size: 11px; }.nat-service-copy small { color: var(--text-muted); font-size: 9px; }.reach-chip { margin-left: auto; padding: 2px 7px; color: var(--text-muted); font-size: 9px; border-radius: 999px; background: var(--surface); }.reach-chip.good { color: var(--success); background: var(--success-soft); }.reach-chip.bad { color: var(--danger); background: var(--danger-soft); }.disk-card { min-height: 92px; }
-.activity-timeline { display: grid; padding: 16px 14px 18px; }.timeline-event { position: relative; display: grid; grid-template-columns: 18px minmax(0, 1fr) auto; align-items: start; gap: 9px; min-height: 58px; padding-bottom: 12px; }.timeline-event:last-child { min-height: 34px; padding-bottom: 0; }.timeline-event:not(:last-child)::before { content: ''; position: absolute; left: 8px; top: 17px; bottom: -1px; width: 1px; background: linear-gradient(var(--border-strong), var(--border)); }.timeline-marker { position: relative; display: grid; place-items: center; width: 17px; height: 17px; z-index: 1; border: 1px solid var(--border-strong); border-radius: 50%; background: var(--surface-solid); box-shadow: 0 0 0 3px var(--surface); }.timeline-marker i { width: 7px; height: 7px; border-radius: 50%; background: var(--text-muted); }.timeline-marker.good i { background: var(--success); box-shadow: 0 0 7px color-mix(in srgb, var(--success) 65%, transparent); }.timeline-marker.bad i { background: var(--danger); box-shadow: 0 0 7px color-mix(in srgb, var(--danger) 65%, transparent); }.timeline-content { display: grid; min-width: 0; }.timeline-content strong { font-size: 11px; line-height: 1.35; }.timeline-content small { margin-top: 2px; color: var(--text-muted); font-size: 9px; }.timeline-event time { padding-top: 1px; color: var(--text-muted); font-size: 9px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+/* Reference-style resource board: paired cards share a fixed row height, while
+   every body scrolls independently once it reaches that row's height cap. */
+.resource-overview-grid {
+  display: grid;
+  grid-template-columns: repeat(20, minmax(0, 1fr));
+  grid-template-rows: clamp(420px, 31vw, 500px) clamp(330px, 23vw, 364px);
+  gap: 24px;
+}
+.devices-surface { grid-column: 1 / 11; grid-row: 1; }
+.interface-surface { grid-column: 11 / 21; grid-row: 1; }
+.disk-surface { grid-column: 1 / 9; grid-row: 2; }
+.activity-surface { grid-column: 9 / 21; grid-row: 2; }
 
-/* Bottom resource columns: dense vertical cards inspired by a monitoring rack. */
-.overview-resource-panel { background: linear-gradient(160deg, var(--surface), color-mix(in srgb, var(--surface) 88%, var(--primary-soft))); }
-.resource-panel-head { display: grid; grid-template-columns: 34px minmax(0, 1fr) auto; align-items: center; gap: 10px; min-height: 70px; padding: 14px 16px; border-bottom: 1px solid var(--border); }
-.resource-panel-head h3 { font-size: 15px; }
-.resource-panel-head > span:last-child { color: var(--text-muted); font-size: 11px; white-space: nowrap; }
-.resource-panel-icon { display: grid; place-items: center; width: 32px; height: 32px; color: var(--primary); border-radius: 10px; background: var(--primary-soft); }
-.resource-panel-icon svg { width: 22px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
-.resource-panel-icon.devices { color: #60a5fa; background: rgba(96,165,250,.13); }
-.resource-panel-icon.interfaces { color: #38bdf8; background: rgba(56,189,248,.13); }
-.resource-panel-icon.disks { color: #5eead4; background: rgba(94,234,212,.12); }
-.resource-panel-icon.activity { color: #93c5fd; background: rgba(147,197,253,.13); }
-.resource-panel-icon.wifi { color: #34d399; background: rgba(52,211,153,.13); }
-.resource-column-list { display: grid; align-content: start; gap: 8px; padding: 12px; }
-.resource-list-card { display: grid; grid-template-columns: 38px minmax(0, 1fr) auto; align-items: center; gap: 10px; min-width: 0; min-height: 64px; padding: 10px 12px; border: 1px solid var(--border); border-radius: 11px; background: var(--surface-2); box-shadow: inset 0 1px rgba(255,255,255,.025); }
-.resource-item-icon { display: grid; place-items: center; width: 36px; height: 36px; color: var(--primary); border-radius: 9px; background: var(--primary-soft); }
-.resource-item-icon svg { width: 20px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
-.resource-item-copy { display: grid; min-width: 0; }
-.resource-item-copy strong, .resource-item-copy small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.resource-item-copy strong { font-size: 12px; }
-.resource-item-copy small { margin-top: 2px; color: var(--text-muted); font-size: 9px; }
-.resource-state { font-size: 11px; font-weight: 750; white-space: nowrap; }
-.resource-state.good { color: var(--success); }
-.resource-state.bad { color: var(--danger); }
-.resource-state.warn { color: var(--warning); }
-.resource-item-icon.wifi { color: #34d399; background: rgba(52,211,153,.12); }
-.wifi-item { grid-template-rows: auto auto; row-gap: 10px; }
-.wifi-metrics { grid-column: 1 / -1; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; padding-top: 8px; border-top: 1px solid var(--border); }
-.wifi-metric { display: grid; gap: 2px; min-width: 0; }
-.wifi-metric i { color: var(--text-muted); font-size: 9px; font-style: normal; text-transform: uppercase; letter-spacing: .04em; }
-.wifi-metric b { font-size: 13px; font-variant-numeric: tabular-nums; }
+.overview-resource-panel {
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+  overflow: hidden;
+  flex-direction: column;
+  border-color: color-mix(in srgb, var(--border-strong) 76%, transparent);
+  background: linear-gradient(145deg, color-mix(in srgb, var(--surface-solid) 96%, white), color-mix(in srgb, var(--surface) 92%, var(--primary-soft)));
+  box-shadow: 0 16px 34px -24px rgba(15, 23, 42, .42), 0 3px 10px -7px rgba(15, 23, 42, .25);
+}
+.resource-panel-head {
+  display: grid;
+  grid-template-columns: 42px max-content minmax(0, 1fr);
+  align-items: center;
+  gap: 12px;
+  min-height: 76px;
+  padding: 16px 18px;
+  flex: none;
+  border-bottom: 1px solid var(--border);
+}
+.resource-panel-head h3 { font-size: 18px; letter-spacing: -.02em; }
+.resource-panel-head > span:last-child { justify-self: start; color: var(--text-muted); font-size: 12px; white-space: nowrap; }
+.resource-panel-icon {
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  color: #fff;
+  border-radius: 13px;
+  box-shadow: 0 8px 18px -10px currentColor;
+}
+.resource-panel-icon svg { width: 23px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.resource-panel-icon.devices { background: linear-gradient(145deg, #3b82f6, #1d4ed8); }
+.resource-panel-icon.interfaces { background: linear-gradient(145deg, #8b5cf6, #6d28d9); }
+.resource-panel-icon.disks { background: linear-gradient(145deg, #34d399, #059669); }
+.resource-panel-icon.activity { background: linear-gradient(145deg, #f59e0b, #ea580c); }
+.devices-surface .resource-panel-head > span:last-child { color: #2563eb; }
+.interface-surface .resource-panel-head > span:last-child { color: #7c3aed; }
+.disk-surface .resource-panel-head > span:last-child { color: #059669; }
+.activity-surface .resource-panel-head > span:last-child { color: #ea580c; }
+
+.resource-panel-scroll {
+  min-height: 0;
+  overflow: auto;
+  flex: 1;
+  overscroll-behavior: contain;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+.resource-panel-scroll::-webkit-scrollbar { display: none; width: 0; height: 0; }
+.resource-panel-empty { display: grid; min-height: 0; place-items: center; flex: 1; }
+
+.device-scroll { padding: 14px 18px 18px; }
+.device-columns { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.compact-column { display: grid; align-content: start; gap: 6px; min-width: 0; }
+.device-row {
+  display: grid;
+  grid-template-columns: 22px 28px minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  min-height: 50px;
+  padding: 7px 10px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--surface-2) 86%, transparent);
+}
+.row-number { color: var(--text-muted); font-size: 11px; font-style: italic; font-variant-numeric: tabular-nums; text-align: center; }
+.device-row .row-number { color: #2563eb; font-size: 13px; font-style: normal; font-weight: 750; }
+.compact-item-icon {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  color: var(--primary);
+  border-radius: 8px;
+  background: var(--primary-soft);
+}
+.compact-item-icon svg { width: 17px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+.compact-item-icon.device { color: #2563eb; background: rgba(59, 130, 246, .12); }
+.compact-item-icon.interface { color: #2563eb; background: rgba(59, 130, 246, .12); }
+.compact-item-icon.wifi { color: #7c3aed; background: rgba(124, 58, 237, .12); }
+.compact-item-copy { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.compact-item-copy strong, .compact-item-copy small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.compact-item-copy strong { min-width: 0; font-size: 12px; }
+.compact-item-copy small { margin-left: auto; color: var(--text-muted); font-size: 9px; }
+
+.adapter-scroll { padding: 10px 16px 16px; }
+.adapter-list { display: grid; align-content: start; gap: 4px; }
+.adapter-row {
+  display: grid;
+  grid-template-columns: 30px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  min-height: 43px;
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--surface-2) 80%, transparent);
+}
+.adapter-row.has-wifi {
+  grid-template-columns: 30px minmax(180px, .9fr) minmax(250px, 1.15fr) auto;
+  min-height: 78px;
+  border-color: color-mix(in srgb, #8b5cf6 35%, var(--border));
+  background: linear-gradient(100deg, rgba(139, 92, 246, .09), rgba(139, 92, 246, .025));
+}
+.adapter-copy { display: grid; min-width: 0; }
+.adapter-name-line { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.adapter-name-line strong, .adapter-name-line small, .wifi-summary { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.adapter-name-line strong { min-width: 0; font-size: 12px; }
+.adapter-name-line small, .wifi-summary { color: var(--text-muted); font-size: 9px; }
+.wifi-summary { margin-top: 3px; }
+.wifi-summary span { font-weight: 750; }
+.wifi-summary span.good { color: var(--success); }
+.wifi-summary span.warn { color: var(--warning); }
+.wifi-summary span.bad { color: var(--danger); }
+.wifi-metrics {
+  display: grid;
+  grid-template-columns: .9fr .75fr 1.45fr;
+  align-items: stretch;
+  min-width: 0;
+  border-left: 1px solid var(--border);
+}
+.wifi-metric { display: grid; align-content: center; gap: 1px; min-width: 0; padding: 0 12px; }
+.wifi-metric + .wifi-metric { border-left: 1px solid var(--border); }
+.wifi-metric i { color: var(--text-muted); font-size: 9px; font-style: normal; }
+.wifi-metric b { overflow: hidden; font-size: 12px; font-variant-numeric: tabular-nums; text-overflow: ellipsis; white-space: nowrap; }
 .wifi-metric em { font-size: 9px; font-style: normal; }
 .wifi-metric .grade-good { color: var(--success); }
 .wifi-metric .grade-warn { color: var(--warning); }
 .wifi-metric .grade-bad { color: var(--danger); }
-.disk-item { grid-template-rows: auto auto; }
-.disk-percent { font-size: 18px; font-variant-numeric: tabular-nums; }
-.disk-item.is-good .disk-percent { color: var(--success); }
-.disk-item.is-warn .disk-percent { color: var(--warning); }
-.disk-item.is-bad .disk-percent { color: var(--danger); }
-.disk-progress { grid-column: 2 / -1; height: 6px; overflow: hidden; border-radius: 999px; background: var(--surface); }
-.disk-progress i { display: block; height: 100%; border-radius: inherit; background: var(--success); }
-.disk-item.is-warn .disk-progress i { background: var(--warning); }
-.disk-item.is-bad .disk-progress i { background: var(--danger); }
-.disk-capacity { grid-column: 2 / -1; margin-top: -5px; color: var(--text-muted); font-size: 9px; text-align: right; }
-.overview-resource-panel .activity-timeline { padding: 14px 14px 18px; }
-.overview-resource-panel .timeline-event { grid-template-columns: 28px minmax(0, 1fr) auto; gap: 10px; min-height: 68px; }
-.overview-resource-panel .timeline-event:not(:last-child)::before { left: 13px; top: 27px; bottom: -1px; background: linear-gradient(color-mix(in srgb, var(--success) 45%, var(--border)), var(--border)); }
-.overview-resource-panel .timeline-marker { width: 27px; height: 27px; border: 0; box-shadow: none; }
-.overview-resource-panel .timeline-marker i { display: grid; place-items: center; width: 27px; height: 27px; color: #fff; font-size: 15px; font-style: normal; font-weight: 750; }
-.overview-resource-panel .timeline-marker.good i { background: color-mix(in srgb, var(--success) 75%, #164e3b); box-shadow: 0 0 12px color-mix(in srgb, var(--success) 32%, transparent); }
-.overview-resource-panel .timeline-marker.bad i { background: color-mix(in srgb, var(--danger) 75%, #641f2b); box-shadow: 0 0 12px color-mix(in srgb, var(--danger) 32%, transparent); }
-.overview-resource-panel .timeline-content strong { font-size: 12px; }
-.overview-resource-panel .timeline-event time { padding-top: 5px; }
+.state-pill { min-width: 54px; padding: 5px 10px; font-size: 10px; font-weight: 800; border-radius: 8px; text-align: center; }
+.state-pill.good { color: #047857; background: rgba(16, 185, 129, .12); }
+.state-pill.bad { color: #dc2626; background: rgba(239, 68, 68, .12); }
 
+.disk-scroll { padding: 14px 20px 18px; }
+.disk-list { display: grid; align-content: start; gap: 12px; }
+.disk-overview-item {
+  --disk-accent: #3b82f6;
+  display: grid;
+  grid-template-columns: 76px minmax(0, 1fr);
+  align-items: center;
+  gap: 18px;
+  min-height: 78px;
+  padding: 7px 16px;
+  border: 1px solid color-mix(in srgb, var(--disk-accent) 24%, var(--border));
+  border-radius: 11px;
+  background: linear-gradient(100deg, color-mix(in srgb, var(--disk-accent) 5%, var(--surface-2)), var(--surface-2));
+}
+.disk-overview-item.disk-tone-1 { --disk-accent: #10b981; }
+.disk-overview-item.disk-tone-2 { --disk-accent: #f59e0b; }
+.disk-usage-ring {
+  position: relative;
+  display: grid;
+  width: 64px;
+  height: 64px;
+  place-items: center;
+  border-radius: 50%;
+  background: conic-gradient(var(--disk-accent) 0 var(--usage-angle), color-mix(in srgb, var(--disk-accent) 13%, var(--surface)) var(--usage-angle) 360deg);
+}
+.disk-usage-ring::after { content: ''; position: absolute; inset: 6px; border-radius: 50%; background: var(--surface-solid); }
+.disk-usage-ring strong { position: relative; z-index: 1; color: var(--disk-accent); font-size: 13px; font-variant-numeric: tabular-nums; }
+.disk-overview-copy { display: grid; min-width: 0; }
+.disk-name-line { display: flex; align-items: baseline; gap: 14px; }
+.disk-name-line strong { font-size: 14px; }
+.disk-name-line small { color: var(--text-muted); font-size: 10px; }
+.disk-progress { height: 6px; margin-top: 8px; overflow: hidden; border-radius: 999px; background: color-mix(in srgb, var(--disk-accent) 12%, var(--surface)); }
+.disk-progress i { display: block; height: 100%; border-radius: inherit; background: var(--disk-accent); }
+.disk-capacity { margin-top: 5px; color: var(--text-muted); font-size: 10px; }
+
+.activity-timeline { padding: 12px 16px 18px; }
+.timeline-track { position: relative; display: grid; align-content: start; gap: 8px; min-width: 0; }
+.timeline-track::before {
+  content: '';
+  position: absolute;
+  top: 16px;
+  bottom: 16px;
+  left: 50%;
+  width: 2px;
+  border-radius: 999px;
+  background: linear-gradient(var(--border), color-mix(in srgb, var(--primary) 35%, var(--border)), var(--border));
+  transform: translateX(-50%);
+}
+.timeline-event {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 42px minmax(0, 1fr);
+  align-items: center;
+  min-width: 0;
+  min-height: 54px;
+}
+.timeline-event.is-online .timeline-content { grid-column: 1; border-color: color-mix(in srgb, var(--success) 28%, var(--border)); background: color-mix(in srgb, var(--success) 5%, var(--surface-2)); }
+.timeline-event.is-offline .timeline-content { grid-column: 3; border-color: color-mix(in srgb, var(--danger) 28%, var(--border)); background: color-mix(in srgb, var(--danger) 5%, var(--surface-2)); }
+.timeline-marker { display: grid; grid-column: 2; grid-row: 1; place-items: center; width: 30px; height: 30px; justify-self: center; z-index: 1; border: 3px solid var(--surface-solid); border-radius: 50%; }
+.timeline-marker i { display: grid; width: 24px; height: 24px; place-items: center; color: #fff; font-size: 13px; font-style: normal; font-weight: 800; border-radius: 50%; }
+.timeline-marker.good i { background: linear-gradient(145deg, #34d399, #059669); box-shadow: 0 4px 10px -6px rgba(5, 150, 105, .9); }
+.timeline-marker.bad i { background: linear-gradient(145deg, #f87171, #dc2626); box-shadow: 0 4px 10px -6px rgba(220, 38, 38, .9); }
+.timeline-content { display: grid; grid-template-columns: 24px auto minmax(0, 1fr) auto; grid-row: 1; align-items: center; gap: 8px; min-width: 0; padding: 8px 10px; border: 1px solid var(--border); border-radius: 10px; }
+.timeline-content strong, .timeline-content small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.timeline-content strong { font-size: 11px; }
+.timeline-content small { color: var(--text-muted); font-size: 9px; }
+.timeline-content time { color: var(--text-muted); font-size: 9px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+
+@media (max-width: 1180px) {
+  .resource-overview-grid { grid-template-rows: 420px 340px; gap: 18px; }
+  .adapter-row.has-wifi { grid-template-columns: 30px minmax(150px, .8fr) minmax(210px, 1fr) auto; }
+  .wifi-metric { padding: 0 8px; }
+  .compact-item-copy { display: grid; gap: 2px; }
+  .compact-item-copy small { margin-left: 0; }
+}
+@media (max-width: 980px) {
+  .resource-overview-grid {
+    grid-template-columns: 1fr;
+    grid-template-rows: none;
+  }
+  .devices-surface, .interface-surface, .disk-surface, .activity-surface { grid-column: 1; grid-row: auto; }
+  .devices-surface, .interface-surface { height: min(500px, 70vh); }
+  .disk-surface, .activity-surface { height: min(364px, 60vh); }
+}
+@media (max-width: 680px) {
+  .device-columns { grid-template-columns: 1fr; gap: 8px; }
+  .timeline-event { grid-template-columns: minmax(0, 1fr) 34px minmax(0, 1fr); }
+  .timeline-content { grid-template-columns: 18px minmax(0, 1fr); gap: 4px; padding: 7px; }
+  .timeline-content small { display: none; }
+  .timeline-content time { grid-column: 1 / -1; font-size: 8px; }
+  .adapter-row.has-wifi { grid-template-columns: 30px minmax(0, 1fr) auto; }
+  .adapter-row.has-wifi .wifi-metrics { grid-column: 2 / -1; padding-top: 8px; border-top: 1px solid var(--border); border-left: 0; }
+  .resource-panel-head { grid-template-columns: 38px max-content minmax(0, 1fr); min-height: 68px; padding: 12px 14px; }
+  .resource-panel-icon { width: 36px; height: 36px; }
+  .resource-panel-head h3 { font-size: 16px; }
+}
 @media (max-width: 1120px) { .metric-grid { grid-template-columns: repeat(2, 1fr); }.service-columns { grid-template-columns: repeat(2, minmax(0, 1fr)); }.service-group:nth-child(odd) { border-left: 0; }.service-group:nth-child(n + 3) { border-top: 1px solid var(--border); }.agent-hero { grid-template-columns: 1fr auto; }.fleet-summary { grid-column: 1 / -1; padding: 16px 0 0; border-top: 1px solid var(--border); border-left: 0; } }
 @media (max-width: 1280px) { .overview-monitor-row { grid-template-columns: 1fr; }.overview-monitor-row .system-monitor-surface { grid-column: 1; grid-row: 1; }.overview-monitor-row .trend-surface { grid-column: 1; grid-row: 2; }.combined-trend, .combined-trend :deep(.chart) { height: 320px; min-height: 0; } }
 @media (max-width: 900px) { .system-monitor-grid { grid-template-columns: 1fr; }.monitor-primary-column { grid-template-columns: 1fr 1fr; grid-template-rows: auto; }.monitor-secondary-column { grid-template-columns: 1fr 1fr; grid-template-rows: auto; }.load-monitor-card { grid-column: 1 / -1; } }
-@media (max-width: 760px) { .dashboard-page { padding: 22px 16px 42px; }.dashboard-head { align-items: stretch; flex-direction: column; }.head-actions, .agent-picker { width: 100%; }.agent-picker { flex: 1; }.agent-picker select { width: 100%; min-width: 0; }.agent-hero { grid-template-columns: 1fr; padding: 22px; }.health-summary { padding-top: 16px; border-top: 1px solid var(--border); }.fleet-summary { grid-column: auto; }.metric-grid, .service-columns, .equal-grid, .monitor-primary-column, .monitor-secondary-column { grid-template-columns: 1fr; }.load-monitor-card { grid-column: auto; }.service-group + .service-group { border-top: 1px solid var(--border); border-left: 0; }.metric-card { min-height: 108px; }.service-group { padding: 14px 16px; }.tile-grid, .stack-list, .system-monitor-grid { padding: 12px; }.load-dials { gap: 8px; }.io-values > div { grid-template-columns: 24px 60px 1fr; } }
+@media (max-width: 760px) { .dashboard-page { padding: 22px 16px 42px; }.dashboard-head { align-items: stretch; flex-direction: column; }.head-actions, .agent-picker { width: 100%; }.agent-picker { flex: 1; }.agent-picker select { width: 100%; min-width: 0; }.agent-hero { grid-template-columns: 1fr; padding: 22px; }.health-summary { padding-top: 16px; border-top: 1px solid var(--border); }.fleet-summary { grid-column: auto; }.metric-grid, .service-columns, .monitor-primary-column, .monitor-secondary-column { grid-template-columns: 1fr; }.load-monitor-card { grid-column: auto; }.service-group + .service-group { border-top: 1px solid var(--border); border-left: 0; }.metric-card { min-height: 108px; }.service-group { padding: 14px 16px; }.system-monitor-grid { padding: 12px; }.load-dials { gap: 8px; }.io-values > div { grid-template-columns: 24px 60px 1fr; } }
 @media (max-width: 420px) { .metric-grid { grid-template-columns: 1fr; }.fleet-summary { flex-direction: column; gap: 12px; }.agent-identity { align-items: flex-start; }.agent-line { align-items: flex-start; flex-direction: column; gap: 4px; } }
 </style>
