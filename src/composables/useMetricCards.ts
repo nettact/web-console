@@ -6,7 +6,7 @@
 
 import type { Sample } from '../api'
 import type { Tone } from '../lib/metricMeta'
-import { NAT_CODE_KINDS, natCodeLabel, natTone, fmtNum } from '../lib/metricMeta'
+import { NAT_CODE_KINDS, TCP_ERROR_KIND, natCodeLabel, natTone, tcpErrorTone, fmtNum } from '../lib/metricMeta'
 import { availability, boolCurrent, countRestarts, toPoints, uptimeOnline } from '../lib/timeline'
 import { fmtByUnit, isByteUnit } from '../lib/format'
 import { useMetricMeta } from './useMetricMeta'
@@ -32,7 +32,7 @@ export interface Card {
 
 export function useMetricCards() {
   const { t } = useI18n()
-  const { unitLabel, natInfo, fmtDur, fmtTime } = useMetricMeta()
+  const { unitLabel, natInfo, tcpErrorLabel, tcpErrorInfo, fmtDur, fmtTime } = useMetricMeta()
 
   function buildCard(m: CardInput): Card {
     const pts = toPoints(m.samples)
@@ -79,6 +79,22 @@ export function useMetricCards() {
       }
     }
 
+    if (m.kind === TCP_ERROR_KIND) {
+      // The latest connect classification as a labeled card: 0 (none) is healthy,
+      // any other class explains the failure. No stale fallback — 0 is a valid
+      // determinate "no error", unlike a lost NAT probe.
+      const last = pts[pts.length - 1]
+      return {
+        label: m.label,
+        color: m.color,
+        tone: tcpErrorTone(last.v),
+        value: tcpErrorLabel(last.v),
+        small: true,
+        info: tcpErrorInfo(),
+        foot: t('metrics.nat.foot', { time: fmtTime(new Date(last.t).toISOString()) }),
+      }
+    }
+
     if (m.unit === 'bool') {
       const cur = boolCurrent(pts, now)
       let downs = 0
@@ -106,6 +122,9 @@ export function useMetricCards() {
       color: m.color,
       value: vfmt(vals[vals.length - 1]),
       unit: scaled ? undefined : unitLabel(m.unit),
+      // The received-sample count is the window/sample-size behind the RTT
+      // distribution, so it carries a tooltip explaining what a cycle measures.
+      info: m.kind === 'probe.icmp.samples' ? t('metrics.samplesInfo') : undefined,
       foot: t('metrics.cardStatsFoot', {
         min: vfmt(Math.min(...vals)),
         max: vfmt(Math.max(...vals)),

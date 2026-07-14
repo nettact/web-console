@@ -36,6 +36,12 @@ export function useMetricMeta() {
     return t('metrics.nat.infoMapping')
   }
 
+  // tcpErrorLabel maps a probe.tcp.error_class code (telemetry.TCPErr*) to its
+  // localized reason; tcpErrorInfo is the hover tooltip explaining the categories.
+  const TCP_ERR_KEY: Record<number, string> = { 0: 'none', 1: 'timeout', 2: 'refused', 3: 'unreachable', 4: 'dns', 5: 'tls', 9: 'other' }
+  const tcpErrorLabel = (code: number) => t(`metrics.tcpError.${TCP_ERR_KEY[Math.round(code)] ?? 'other'}`)
+  const tcpErrorInfo = () => t('metrics.tcpError.info')
+
   const SEV_TONE: Record<string, Tone> = { critical: 'bad', warning: 'bad', info: 'unknown' }
   const sevTone = (s: string): Tone => SEV_TONE[s] || 'unknown'
   const sevLabel = (s: string) => {
@@ -53,5 +59,5 @@ export function useMetricMeta() {
   }
   const fmtTime = (s: string) => new Date(s).toLocaleString(toDateLocale(locale.value), { hour12: false })
 
-  return { familyLabel, metricLabel, unitLabel, natInfo, sevTone, sevLabel, fmtDur, fmtTime }
+  return { familyLabel, metricLabel, unitLabel, natInfo, tcpErrorLabel, tcpErrorInfo, sevTone, sevLabel, fmtDur, fmtTime }
 }

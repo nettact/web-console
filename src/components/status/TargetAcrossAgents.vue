@@ -16,8 +16,9 @@ import { useMetricMeta } from '../../composables/useMetricMeta'
 import { useMetricCards, type Card } from '../../composables/useMetricCards'
 import {
   FALLBACK,
+  CODE_KINDS,
   INFO_KINDS,
-  NAT_CODE_KINDS,
+  RAW_MAX_SEC,
   isStatusKind,
   kindColor,
   orderOf,
@@ -65,7 +66,10 @@ const kindUnit = computed(() => {
 const allKinds = computed(() => [...kindUnit.value.keys()].sort((a, b) => orderOf(a) - orderOf(b)))
 const numericKinds = computed(() => allKinds.value.filter((k) => kindUnit.value.get(k) !== 'bool' && !INFO_KINDS.has(k)))
 const statusKinds = computed(() => allKinds.value.filter((k) => isStatusKind(k, kindUnit.value.get(k) || '')))
-const natKinds = computed(() => allKinds.value.filter((k) => NAT_CODE_KINDS.has(k)))
+// Card-only kinds shown as per-agent stat cards (categorical NAT + TCP error
+// codes, and the ICMP sample count) — everything in INFO_KINDS that a probe
+// actually records. They have no trend chart, so without this they'd be absent.
+const cardKinds = computed(() => allKinds.value.filter((k) => INFO_KINDS.has(k)))
 
 const selectedNumeric = ref<string[]>([])
 
@@ -74,10 +78,10 @@ const source = computed(() => statusSource(props.family))
 // The headline numeric shown as "latest" in the summary (RTT / resolve / latency).
 const primaryNumeric = computed(() => numericKinds.value[0] ?? '')
 
-// Every kind we need to fetch per agent: selected charts + status bands + NAT
-// cards + the summary's status source + the headline numeric.
+// Every kind we need to fetch per agent: selected charts + status bands + card
+// kinds + the summary's status source + the headline numeric.
 const fetchKinds = computed(() => {
-  const set = new Set<string>([...selectedNumeric.value, ...statusKinds.value, ...natKinds.value])
+  const set = new Set<string>([...selectedNumeric.value, ...statusKinds.value, ...cardKinds.value])
   if (source.value) set.add(source.value.kind)
   if (primaryNumeric.value) set.add(primaryNumeric.value)
   return [...set]
@@ -130,8 +134,9 @@ function statusRows(kind: string) {
   })
 }
 
-// Per-agent NAT categorical card for a NAT code kind.
-function natCards(kind: string): { agent: string; card: Card }[] {
+// Per-agent stat card for a card-only kind (NAT/TCP-error code card, or the
+// numeric ICMP sample count) — buildCard picks the right rendering per kind.
+function agentCards(kind: string): { agent: string; card: Card }[] {
   return props.probers
     .filter((p) => p.series.some((s) => s.kind === kind))
     .map((p) => ({
@@ -203,7 +208,8 @@ async function loadData() {
             monitor: props.monitorId,
             target: props.monitorId ? undefined : props.target || undefined,
             limit: 5000,
-            sinceSeconds: props.rangeSec,
+            // Categorical code series must be read raw (never bucket-averaged).
+            sinceSeconds: CODE_KINDS.has(k) ? Math.min(props.rangeSec, RAW_MAX_SEC) : props.rangeSec,
           })
           .then((s) => [skey(p.agent.id, k), s] as [string, Sample[]])
           .catch(() => [skey(p.agent.id, k), []] as [string, Sample[]]),
@@ -311,12 +317,12 @@ onMounted(reload)
       </div>
     </div>
 
-    <!-- per-agent NAT categorical cards -->
-    <template v-for="k in natKinds" :key="k">
+    <!-- per-agent categorical / sample-count cards -->
+    <template v-for="k in cardKinds" :key="k">
       <div class="nat-block">
         <h4>{{ metricLabel(k) }}</h4>
         <div class="nat-cards">
-          <div class="nat-agent" v-for="nc in natCards(k)" :key="nc.agent">
+          <div class="nat-agent" v-for="nc in agentCards(k)" :key="nc.agent">
             <span class="na mono">{{ nc.agent }}</span>
             <MetricStatCards :cards="[nc.card]" />
           </div>

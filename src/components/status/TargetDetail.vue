@@ -12,7 +12,7 @@ import MetricStatCards from '../MetricStatCards.vue'
 import AlertsTable from '../AlertsTable.vue'
 import { useMetricMeta } from '../../composables/useMetricMeta'
 import { useMetricCards } from '../../composables/useMetricCards'
-import { INFO_KINDS, isStatusKind, kindColor } from '../../lib/metricMeta'
+import { INFO_KINDS, CODE_KINDS, RAW_MAX_SEC, isStatusKind, kindColor } from '../../lib/metricMeta'
 
 const props = defineProps<{
   agentId: string
@@ -97,7 +97,9 @@ async function loadData() {
           monitor: props.monitorId,
           target: props.monitorId ? undefined : props.target || undefined,
           limit: 5000,
-          sinceSeconds: props.rangeSec,
+          // Categorical code series must be read raw (never bucket-averaged), so
+          // cap their window to the server's raw tier; other kinds use the range.
+          sinceSeconds: CODE_KINDS.has(k) ? Math.min(props.rangeSec, RAW_MAX_SEC) : props.rangeSec,
         }),
       ),
     )

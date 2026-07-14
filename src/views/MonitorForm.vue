@@ -256,6 +256,8 @@ const CONDITION_PRESETS: Record<string, Preset[]> = {
     { key: 'down', label: 'mform.condDown', metric: 'probe.icmp.loss_pct', comparator: 'gte', fixed: 100 },
     { key: 'loss', label: 'mform.condLoss', metric: 'probe.icmp.loss_pct', comparator: 'gt', unit: '%', def: 50 },
     { key: 'rtt', label: 'mform.condLatency', metric: 'probe.icmp.rtt_ms', comparator: 'gt', unit: 'ms', def: 200 },
+    { key: 'rttmax', label: 'mform.condLatencyMax', metric: 'probe.icmp.rtt_max_ms', comparator: 'gt', unit: 'ms', def: 400 },
+    { key: 'jitter', label: 'mform.condJitter', metric: 'probe.icmp.jitter_ms', comparator: 'gt', unit: 'ms', def: 30 },
   ],
   dns: [
     { key: 'fail', label: 'mform.condResolveFail', metric: 'probe.dns.ok', comparator: 'lt', fixed: 1 },
@@ -268,6 +270,7 @@ const CONDITION_PRESETS: Record<string, Preset[]> = {
   tcp: [
     { key: 'down', label: 'mform.condConnectFail', metric: 'probe.tcp.ok', comparator: 'lt', fixed: 1 },
     { key: 'slow', label: 'mform.condConnectSlow', metric: 'probe.tcp.connect_ms', comparator: 'gt', unit: 'ms', def: 1000 },
+    { key: 'dnsslow', label: 'mform.condDnsSlow', metric: 'probe.tcp.dns_ms', comparator: 'gt', unit: 'ms', def: 500 },
   ],
   // Framed by outcome, not NAT jargon: the NAT type already summarizes mapping +
   // filtering, so we only surface what a user actually feels — symmetric NAT breaks
@@ -304,9 +307,29 @@ const HOST_PRESETS: Record<'whole' | 'disk' | 'wifi', Preset[]> = {
     { key: 'quality', label: 'mform.condWifiQuality', metric: 'wifi.quality_pct', comparator: 'lt', unit: '%', def: 60 },
   ],
 }
+// A literal IPv4/IPv6 address as a target (bracketed IPv6 allowed) — used to hide
+// DNS-phase presets that can never produce samples for such a target.
+function isLiteralIP(target: string): boolean {
+  const s = target.trim()
+  if (!s) return false
+  const v6 = s.startsWith('[') && s.endsWith(']') ? s.slice(1, -1) : s
+  if (v6.includes(':')) return /^[0-9a-fA-F:]+$/.test(v6)
+  return /^\d{1,3}(\.\d{1,3}){3}$/.test(s)
+}
 function presetsForKind(kind: string): Preset[] {
   if (kind === 'host') return HOST_PRESETS[hostSubject.value]
-  return CONDITION_PRESETS[kind] || CONDITION_PRESETS.icmp
+  let list = CONDITION_PRESETS[kind] || CONDITION_PRESETS.icmp
+  // Hide presets whose metric the current config can never emit, so a rule that
+  // could never fire cannot be saved.
+  if (kind === 'icmp' || kind === 'gateway') {
+    // Jitter needs >=2 received echoes; an explicit single-packet cycle never emits it.
+    if (form.params?.packet_count === 1) list = list.filter((p) => p.metric !== 'probe.icmp.jitter_ms')
+  }
+  // A literal-IP TCP target has no DNS phase, so probe.tcp.dns_ms is never emitted.
+  if (kind === 'tcp' && isLiteralIP(form.target)) {
+    list = list.filter((p) => p.metric !== 'probe.tcp.dns_ms')
+  }
+  return list
 }
 // Reverse-map a stored rule to its preset (by metric; fixed presets also match on
 // comparator). Falls back to the first preset so an unrecognized rule still shows.

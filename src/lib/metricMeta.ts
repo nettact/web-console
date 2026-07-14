@@ -18,12 +18,22 @@ export const RANGES = [
 // agent.wal_pending is an internal buffer depth, not a user-facing target — hide it.
 export const HIDDEN_KINDS = new Set(['agent.wal_pending'])
 
+// The server serves raw (unaggregated) samples only for ranges up to 2h; beyond
+// that /metrics returns bucket averages. Categorical CODE_KINDS must never be
+// averaged (avg of code 0 and 2 is a meaningless 1), so their cards fetch within
+// this window to read the true latest value. Mirrors server-core pickTier.
+export const RAW_MAX_SEC = 2 * 3600
+
 // NAT behavior/type results are categorical codes, not trend values: they render
-// as labeled stat cards (a raw-integer line carries no meaning). Together with the
-// static capacity totals (mem.total) they are "info" kinds — shown as a card or
-// caption, never plotted as a flat, unchanging line.
+// as labeled stat cards (a raw-integer line carries no meaning). The TCP
+// error-class is the same shape (a diagnostic code, not a trend), so both are
+// "code kinds". Together with the static capacity totals (mem.total) and the
+// per-cycle ICMP sample count they are "info" kinds — shown as a card or caption,
+// never plotted as a flat, meaningless line.
 export const NAT_CODE_KINDS = new Set(['probe.nat.mapping', 'probe.nat.filtering', 'probe.nat.type'])
-export const INFO_KINDS = new Set(['host.mem.total', ...NAT_CODE_KINDS])
+export const TCP_ERROR_KIND = 'probe.tcp.error_class'
+export const CODE_KINDS = new Set([...NAT_CODE_KINDS, TCP_ERROR_KIND])
+export const INFO_KINDS = new Set(['host.mem.total', 'probe.icmp.samples', ...CODE_KINDS])
 
 // natCodeLabel maps a NAT result code to its category label. These are the RFC
 // 4787 / RFC 3489 terms, shown verbatim in English (they are standardized terms;
@@ -43,10 +53,30 @@ export function natTone(kind: string, code: number): Tone {
   return n >= 3 ? 'bad' : n === 1 ? 'good' : 'unknown'
 }
 
+// tcpErrorTone maps a probe.tcp.error_class code to a card tone: 0 (none) is the
+// healthy state, any other class is a failure. The human label is localized in
+// useMetricMeta.tcpErrorLabel (the codes are telemetry.TCPErr*).
+export function tcpErrorTone(code: number): Tone {
+  return Math.round(code) === 0 ? 'good' : 'bad'
+}
+
 // Display order for a group's metrics (picker, cards, chart legend). Kinds not
 // listed keep their original listSeries order (stable sort). The load averages
 // are the reason this exists — listSeries returns them lexically (15m, 1m, 5m).
 const METRIC_ORDER = [
+  // Probe stability metrics: RTT distribution, then jitter/loss/samples, so the
+  // detail cards and legend read best-case → worst-case → stability → volume.
+  'probe.icmp.rtt_ms',
+  'probe.icmp.rtt_min_ms',
+  'probe.icmp.rtt_max_ms',
+  'probe.icmp.jitter_ms',
+  'probe.icmp.loss_pct',
+  'probe.icmp.samples',
+  'probe.tcp.ok',
+  'probe.tcp.connect_ms',
+  'probe.tcp.dns_ms',
+  'probe.tcp.tls_ms',
+  'probe.tcp.error_class',
   'host.mem.pct',
   'host.mem.used',
   'host.mem.free',
@@ -76,13 +106,21 @@ export const familyOf = (kind: string) =>
 
 const KIND_COLORS: Record<string, string> = {
   'probe.icmp.rtt_ms': '#38bdf8',
+  'probe.icmp.rtt_min_ms': '#7dd3fc',
+  'probe.icmp.rtt_max_ms': '#0284c7',
   'probe.icmp.loss_pct': '#fbbf24',
   'probe.icmp.jitter_ms': '#a78bfa',
+  'probe.icmp.samples': '#94a3b8',
   'probe.dns.resolve_ms': '#818cf8',
   'probe.dns.ok': '#34d399',
   'probe.http.status': '#5eead4',
   'probe.http.latency_ms': '#f472b6',
   'probe.http.ok': '#34d399',
+  'probe.tcp.ok': '#34d399',
+  'probe.tcp.connect_ms': '#38bdf8',
+  'probe.tcp.dns_ms': '#818cf8',
+  'probe.tcp.tls_ms': '#f472b6',
+  'probe.tcp.error_class': '#f87171',
   'iface.up': '#34d399',
   'wifi.up': '#34d399',
   'wifi.signal_dbm': '#38bdf8',
