@@ -188,11 +188,17 @@ export default {
       wireless: '无线',
     },
     kind: {
-      'alert.raised': '告警触发',
-      'alert.resolved': '告警恢复',
-      'incident.opened': '事故开始',
-      'incident.updated': '事故更新',
-      'incident.resolved': '事故恢复',
+      alert: {
+        raised: '告警触发',
+        resolved: '告警恢复',
+        terminated: '监控终止',
+      },
+      incident: {
+        opened: '事故开始',
+        updated: '事故更新',
+        resolved: '事故恢复',
+        terminated: '事故终止',
+      },
     },
   },
 

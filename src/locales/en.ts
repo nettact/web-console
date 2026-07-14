@@ -185,11 +185,17 @@ export default {
       wireless: 'Wireless',
     },
     kind: {
-      'alert.raised': 'Alert raised',
-      'alert.resolved': 'Alert resolved',
-      'incident.opened': 'Incident opened',
-      'incident.updated': 'Incident updated',
-      'incident.resolved': 'Incident resolved',
+      alert: {
+        raised: 'Alert raised',
+        resolved: 'Alert resolved',
+        terminated: 'Monitoring terminated',
+      },
+      incident: {
+        opened: 'Incident opened',
+        updated: 'Incident updated',
+        resolved: 'Incident resolved',
+        terminated: 'Incident terminated',
+      },
     },
   },
 
