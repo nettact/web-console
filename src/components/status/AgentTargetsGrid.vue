@@ -5,16 +5,39 @@
 // drills into the full TargetDetail.
 import { ref, computed, watch, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { api, type Sample } from '../../api'
+import { api, type Sample, type MonitorStatusRow } from '../../api'
 import StatusBand from '../StatusBand.vue'
+import MonitorStateBadge, { type MonitorState } from './MonitorStateBadge.vue'
 import { natCodeLabel, natTone, statusSource, type StatusSource } from '../../lib/metricMeta'
 import { groupLabel, type TargetGroup } from '../../lib/targetGroups'
 import { availability, boolCurrent, toPoints } from '../../lib/timeline'
 
-const props = defineProps<{ agentId: string; groups: TargetGroup[]; rangeSec: number }>()
+const props = defineProps<{
+  agentId: string
+  groups: TargetGroup[]
+  rangeSec: number
+  // Per-monitor operational block state for THIS agent (permission/target/unsupported),
+  // keyed by monitor_id. A blocked monitor emits no metric, so this is the only
+  // signal of its state; it overrides the metric-derived pill when present.
+  blocked?: Record<string, MonitorStatusRow>
+  // Whether this agent is currently offline — rendered as an extra chip beside the
+  // per-target state (offline never erases a permission/target block).
+  offline?: boolean
+  // A monitor group to visually highlight and scroll to (issue deep-link landing).
+  highlightKey?: string
+}>()
 const emit = defineEmits<{ select: [TargetGroup] }>()
 
 const { t } = useI18n()
+
+// The non-active operational state for a group's monitor, if any — drives the
+// MonitorStateBadge that replaces the metric pill for blocked monitors.
+function blockState(g: TargetGroup): MonitorState | null {
+  if (!g.monitorId) return null
+  const row = props.blocked?.[g.monitorId]
+  if (!row || row.status === 'active') return null
+  return row.status as MonitorState
+}
 
 const samplesByKey = ref<Record<string, Sample[]>>({})
 // NAT groups also carry the categorical NAT type (probe.nat.type), shown in the
@@ -125,10 +148,14 @@ onMounted(loadStatuses)
 <template>
   <p v-if="!groups.length" class="hint pad">{{ t('targetStatus.noTargets') }}</p>
   <div v-else class="grid">
-    <button v-for="c in cards" :key="c.group.key" class="tcard" :class="`is-${c.tone}`" @click="emit('select', c.group)">
+    <button v-for="c in cards" :key="c.group.key" class="tcard" :class="[`is-${c.tone}`, { highlight: highlightKey && c.group.key === highlightKey }]" @click="emit('select', c.group)">
       <div class="head">
         <span class="fam">{{ c.group.familyLabel }}</span>
-        <span class="pill" :class="`is-${c.tone}`">{{ c.status }}</span>
+        <MonitorStateBadge v-if="blockState(c.group)" :state="blockState(c.group)!" :offline="offline" />
+        <span v-else class="badges">
+          <span class="pill" :class="`is-${c.tone}`">{{ c.status }}</span>
+          <span v-if="offline" class="pill is-unknown offline">{{ t('monitorState.agent_offline') }}</span>
+        </span>
       </div>
       <div class="target mono">{{ groupLabel(c.group) || t('metrics.localTarget') }}</div>
       <div v-if="c.group.name && c.group.target" class="sub-target mono">{{ c.group.target }}</div>
@@ -184,6 +211,19 @@ onMounted(loadStatuses)
 }
 .tcard:active {
   transform: scale(0.995);
+}
+.tcard.highlight {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 2px var(--primary-soft, rgba(56, 189, 248, 0.35));
+}
+.badges {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.pill.offline {
+  border-style: dashed;
 }
 .head {
   display: flex;

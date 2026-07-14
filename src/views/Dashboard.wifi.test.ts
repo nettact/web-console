@@ -26,7 +26,11 @@ const baseAgent: Agent = {
   platform: 'darwin',
   agent_version: 'test',
   status: 'online',
-  capabilities: ['network.wifi.read'],
+  supported: ['network.wifi.status.read'],
+  granted: ['network.wifi.status.read'],
+  effective: ['network.wifi.status.read'],
+  policy_source: 'default',
+  policy_hash: 'test',
   last_seen_at: '2026-07-13T01:00:00Z',
   created_at: '2026-07-13T00:00:00Z',
 }
@@ -150,7 +154,7 @@ describe('Dashboard network adapter list', () => {
         updated_at: '2026-07-13T01:00:00Z',
       }],
     }
-    const card = await render(wired, { ...baseAgent, capabilities: [] })
+    const card = await render(wired, { ...baseAgent, effective: [] })
     expect(card.text()).toContain('eth0')
     expect(card.text()).toContain('Network adapter')
     expect(card.text()).not.toContain('Wi-Fi status not supported')

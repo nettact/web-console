@@ -6,11 +6,12 @@
 // history with an agent column.
 import { ref, computed, watch, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { api, type Agent, type Alert, type Sample } from '../../api'
+import { api, type Agent, type Alert, type Sample, type MonitorStatusRow } from '../../api'
 import MetricChart from '../MetricChart.vue'
 import StatusBand from '../StatusBand.vue'
 import MetricStatCards from '../MetricStatCards.vue'
 import AlertsTable from '../AlertsTable.vue'
+import MonitorStateBadge, { type MonitorState } from './MonitorStateBadge.vue'
 import { useMetricMeta } from '../../composables/useMetricMeta'
 import { useMetricCards, type Card } from '../../composables/useMetricCards'
 import {
@@ -33,6 +34,11 @@ const props = defineProps<{
   monitorId?: string // set for user-created monitors; monitor-less system series have none
   name?: string // the monitor's display name
   probers: Prober[]
+  // Non-active operational status per agent id (permission/target/unsupported) and
+  // the ids of offline agents, so the summary composes a blocked or offline agent
+  // distinctly from an actually-failing one.
+  opStatus?: Record<string, MonitorStatusRow>
+  offlineIds?: string[]
   rangeSec: number
 }>()
 
@@ -142,12 +148,15 @@ interface SummaryRow {
   avail: string | null
   outages: number
   latest: string
+  block: MonitorState | null // non-active operational block (overrides the metric pill)
+  offline: boolean
 }
 const summary = computed<SummaryRow[]>(() => {
   const now = Date.now()
   const src = source.value
   const pn = primaryNumeric.value
   const pnUnit = pn ? kindUnit.value.get(pn) || '' : ''
+  const offline = new Set(props.offlineIds ?? [])
   return props.probers.map((p) => {
     let tone: 'good' | 'bad' | 'unknown' = 'unknown'
     let status = t('targetStatus.statusUnknown')
@@ -171,7 +180,9 @@ const summary = computed<SummaryRow[]>(() => {
         latest = isByteUnit(pnUnit) ? fmtByUnit(pnUnit, v) : `${Number.isInteger(v) ? v : v.toFixed(1)}${unitLabel(pnUnit) ? ' ' + unitLabel(pnUnit) : ''}`
       }
     }
-    return { id: p.agent.id, agent: agentName(p.agent), tone, status, avail, outages, latest }
+    const blockRow = props.opStatus?.[p.agent.id]
+    const block = blockRow && blockRow.status !== 'active' ? (blockRow.status as MonitorState) : null
+    return { id: p.agent.id, agent: agentName(p.agent), tone, status, avail, outages, latest, block, offline: offline.has(p.agent.id) }
   })
 })
 
@@ -252,7 +263,13 @@ onMounted(reload)
         <tbody>
           <tr v-for="r in summary" :key="r.id">
             <td class="mono">{{ r.agent }}</td>
-            <td><span class="pill" :class="`is-${r.tone}`">{{ r.status }}</span></td>
+            <td>
+              <MonitorStateBadge v-if="r.block" :state="r.block" :offline="r.offline" />
+              <span v-else class="op-cell">
+                <span class="pill" :class="`is-${r.tone}`">{{ r.status }}</span>
+                <span v-if="r.offline" class="pill is-unknown offline">{{ t('monitorState.agent_offline') }}</span>
+              </span>
+            </td>
             <td class="num mono">{{ r.avail === null ? '—' : r.avail + '%' }}</td>
             <td class="num mono">{{ r.avail === null ? '—' : r.outages }}</td>
             <td class="num mono">{{ r.latest }}</td>
@@ -366,6 +383,15 @@ onMounted(reload)
 .pill.is-unknown {
   color: var(--text-dim);
   border-color: var(--border-strong);
+}
+.pill.offline {
+  border-style: dashed;
+}
+.op-cell {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
 }
 .metric-picker {
   display: flex;

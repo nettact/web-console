@@ -2,7 +2,7 @@
 import { ref, reactive, computed, onMounted, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
-import { api, type ProbeTarget, type ProbeParams, type Rule, type Channel, type AgentGroup } from '../api'
+import { api, type ProbeTarget, type ProbeParams, type Rule, type Channel, type AgentGroup, type SaveWarning } from '../api'
 import ComboInput from '../components/ComboInput.vue'
 
 const { t: tr } = useI18n()
@@ -47,10 +47,11 @@ function applyQueryPrefill() {
 }
 
 // A "系统状态" (host) target is not a probe: host.* metrics are emitted by the
-// agent itself (--report-host); this target is purely a server-side alerting
-// anchor whose `target` string must equal the metric series' target — "host"
-// for CPU/memory/load, or a mount point for disk. So the host flow hides the
-// type dropdown and swaps the free-text target for a guided subject selector.
+// agent itself (when granted the matching host.* permissions); this target is
+// purely a server-side alerting anchor whose `target` string must equal the
+// metric series' target — "host" for CPU/memory/load, or a mount point for disk.
+// So the host flow hides the type dropdown and swaps the free-text target for a
+// guided subject selector.
 const isHostMode = computed(() => form.kind === 'host')
 // A gateway target probes the agent's own gateway (resolved from the chosen NIC,
 // or the default NIC when none is given), so it has no user-entered target — the
@@ -69,6 +70,9 @@ const headersText = ref('')
 const error = ref('')
 const saved = ref(false)
 const busy = ref(false)
+// Save warnings for THIS monitor: in-scope agents that cannot run it under their
+// current permission policy (per-agent, from the set-targets response).
+const saveWarning = ref<SaveWarning | null>(null)
 const notFound = ref(false)
 // Guards a destructive save: setTargets is a full reconcile, so saving before the
 // existing target list has loaded would delete every other monitor.
@@ -191,6 +195,7 @@ async function save() {
   busy.value = true
   saved.value = false
   error.value = ''
+  saveWarning.value = null
   try {
     if (form.kind === 'http') form.params!.headers = textToHeaders(headersText.value)
     const target = isGatewayMode.value ? 'gateway' : form.target.trim()
@@ -203,7 +208,7 @@ async function save() {
     // monitor's kind/target/name.
     const beforeIds = new Set(others.map((x) => x.id))
     const payload = [...others, current]
-    await api.setTargets(SITE, payload)
+    const res = await api.setTargets(SITE, payload)
     // Reload so a freshly-created monitor gets its server-assigned id (needed to
     // configure alarm rules); locate it by id (edit) or the one new id (create).
     all.value = await api.listTargets(SITE)
@@ -220,6 +225,9 @@ async function save() {
       await persistRules()
       await loadRules()
     }
+    // Surface the save-time warning for THIS monitor (which in-scope agents cannot
+    // run it and why), so a mixed-capability save is visible immediately.
+    saveWarning.value = res.warnings.find((wgn) => wgn.monitor_id === form.id) ?? null
     // Only now, after the target AND its rules have persisted, mark saved — so a
     // failed rule save surfaces the error without a misleading "saved" indicator.
     saved.value = true
@@ -680,12 +688,41 @@ onMounted(loadAll)
         <button class="btn btn-primary" :disabled="busy || !loaded" @click="save">{{ busy ? tr('mform.saving') : tr('mform.save') }}</button>
         <span v-if="saved" class="ok">{{ tr('mform.saved') }}</span>
       </div>
+
+      <div v-if="saveWarning" class="card save-warn">
+        <h4>{{ tr('mform.saveWarnTitle') }}</h4>
+        <p class="hint">{{ tr('mform.saveWarnIntro', { blocked: saveWarning.affected_agents, capable: saveWarning.capable_agents }) }}</p>
+        <ul class="warn-list">
+          <li v-for="a in saveWarning.blocked_agents" :key="a.agent_id">
+            <span class="warn-agent">{{ a.agent_name || a.agent_id }}</span>
+            <span class="warn-state">{{ tr(`monitorState.${a.status}`) }}</span>
+            <span v-if="a.missing_permissions.length" class="warn-perms mono">{{ a.missing_permissions.join(', ') }}</span>
+          </li>
+        </ul>
+        <p v-if="saveWarning.capable_agent_list.length" class="warn-capable">
+          <span class="warn-capable-label">{{ tr('mform.saveWarnCapableLabel') }}</span>
+          <span class="warn-capable-names">{{ saveWarning.capable_agent_list.map((a) => a.agent_name || a.agent_id).join(', ') }}</span>
+        </p>
+      </div>
     </template>
   </main>
 </template>
 
-<style scoped>
-.page { max-width: 860px; }
+<style scoped>.page { max-width: 860px; }
+.save-warn {
+  margin-top: 14px;
+  padding: 14px 16px;
+  border-left: 3px solid var(--warn, #fbbf24);
+}
+.save-warn h4 { margin: 0 0 4px; font-size: 14px; }
+.warn-list { margin: 8px 0 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 6px; }
+.warn-list li { display: flex; gap: 10px; align-items: baseline; flex-wrap: wrap; font-size: 13px; }
+.warn-agent { font-weight: 600; color: var(--text); }
+.warn-state { color: #fca5a5; font-size: 12px; }
+.warn-perms { color: var(--text-dim); font-size: 12px; }
+.warn-capable { margin: 10px 0 0; font-size: 12.5px; display: flex; gap: 8px; flex-wrap: wrap; align-items: baseline; }
+.warn-capable-label { font-weight: 600; color: var(--text); }
+.warn-capable-names { color: var(--text-dim); }
 .host-intro {
   margin: 0 0 16px;
   padding: 11px 14px;

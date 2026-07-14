@@ -103,7 +103,7 @@ const interfaceSamples = computed(() => byKind('iface.up'))
 // Wi-Fi state and readings are folded into the matching network-adapter row.
 // They come from the authoritative interface snapshot so connection state and
 // numeric readings always belong to the same collection round.
-const wifiSupported = computed(() => !!currentAgent.value?.capabilities?.includes('network.wifi.read'))
+const wifiSupported = computed(() => !!currentAgent.value?.effective?.includes('network.wifi.status.read'))
 const wifiCollection = computed(() => ifaceData.value?.wifi ?? null)
 const wifiAdapters = computed(() => (ifaceData.value?.interfaces ?? []).filter((i) => i.is_wireless))
 

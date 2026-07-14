@@ -3,8 +3,13 @@ import { ref, onMounted, onBeforeUnmount } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { api, type Agent, type EnrollmentToken, type AgentGroup } from '../api'
 import { toDateLocale } from '../i18n'
+import { notifications } from '../notifications'
+import { usePermissionMeta } from '../composables/usePermissionMeta'
+import EnrollExamples from '../components/EnrollExamples.vue'
+import PermissionChips from '../components/status/PermissionChips.vue'
 
 const { t, locale } = useI18n()
+const { sourceLabel } = usePermissionMeta()
 
 const SITE = 'site_default'
 const agents = ref<Agent[]>([])
@@ -15,6 +20,19 @@ const note = ref('')
 const newToken = ref('')
 const error = ref('')
 const busy = ref(false)
+// Which agent's permission detail row is expanded (one at a time).
+const expanded = ref('')
+const serverUrl = window.location.origin
+
+// Active-issue count per agent comes from the live notification store (SSE-fed),
+// so the badge stays current without extra polling.
+function activeIssueCount(agentId: string): number {
+  return notifications.issues.filter((i) => i.agent_id === agentId && i.state === 'active').length
+}
+const policyHashShort = (a: Agent) => (a.policy_hash ? a.policy_hash.slice(0, 8) : '—')
+function toggleDetail(id: string) {
+  expanded.value = expanded.value === id ? '' : id
+}
 
 async function load() {
   try {
@@ -185,27 +203,51 @@ onBeforeUnmount(() => {
               <th>{{ t('agents.thPlatform') }}</th>
               <th>{{ t('agents.thVersion') }}</th>
               <th class="center">{{ t('agents.thStatus') }}</th>
+              <th>{{ t('agents.thPermissions') }}</th>
               <th>{{ t('agents.thLastSeen') }}</th>
               <th></th>
             </tr>
           </thead>
           <tbody>
-            <tr v-if="!agents.length"><td colspan="7" class="hint">{{ t('agents.noAgents') }}</td></tr>
-            <tr v-for="a in agents" :key="a.id">
-              <td><input v-model="a.display_name" class="name-in" :placeholder="t('agents.namePlaceholder')" @blur="rename(a)" /></td>
-              <td class="mono">{{ a.hostname || '—' }}</td>
-              <td>{{ a.platform || '—' }}</td>
-              <td class="mono">{{ a.agent_version || '—' }}</td>
-              <td class="center">
-                <span class="badge" :class="a.status === 'online' ? 'up' : 'neutral'">
-                  {{ a.status === 'online' ? t('agents.statusOnline') : t('agents.statusOffline') }}
-                </span>
-              </td>
-              <td class="hint">{{ a.last_seen_at ? fmtDateTime(a.last_seen_at) : t('agents.neverSeen') }}</td>
-              <td class="actions">
-                <button class="link-btn danger" :disabled="busy" @click="removeAgent(a)">{{ t('common.delete') }}</button>
-              </td>
-            </tr>
+            <tr v-if="!agents.length"><td colspan="8" class="hint">{{ t('agents.noAgents') }}</td></tr>
+            <template v-for="a in agents" :key="a.id">
+              <tr>
+                <td><input v-model="a.display_name" class="name-in" :placeholder="t('agents.namePlaceholder')" @blur="rename(a)" /></td>
+                <td class="mono">{{ a.hostname || '—' }}</td>
+                <td>{{ a.platform || '—' }}</td>
+                <td class="mono">{{ a.agent_version || '—' }}</td>
+                <td class="center">
+                  <span class="badge" :class="a.status === 'online' ? 'up' : 'neutral'">
+                    {{ a.status === 'online' ? t('agents.statusOnline') : t('agents.statusOffline') }}
+                  </span>
+                </td>
+                <td>
+                  <div class="perm-cell">
+                    <span class="src-badge">{{ sourceLabel(a.policy_source) }}</span>
+                    <span class="hash mono" :title="a.policy_hash">{{ policyHashShort(a) }}</span>
+                    <span v-if="activeIssueCount(a.id)" class="issue-badge">{{ t('agents.activeIssues', { n: activeIssueCount(a.id) }) }}</span>
+                    <button class="link-btn" @click="toggleDetail(a.id)">
+                      {{ expanded === a.id ? t('agents.detailHide') : t('agents.detailShow') }}
+                    </button>
+                  </div>
+                </td>
+                <td class="hint">{{ a.last_seen_at ? fmtDateTime(a.last_seen_at) : t('agents.neverSeen') }}</td>
+                <td class="actions">
+                  <button class="link-btn danger" :disabled="busy" @click="removeAgent(a)">{{ t('common.delete') }}</button>
+                </td>
+              </tr>
+              <tr v-if="expanded === a.id" class="detail-row">
+                <td colspan="8">
+                  <div class="perm-detail">
+                    <PermissionChips :label="t('agents.permSupported')" :ids="a.supported" tone="neutral" />
+                    <PermissionChips :label="t('agents.permGranted')" :ids="a.granted" tone="granted" />
+                    <PermissionChips :label="t('agents.permEffective')" :ids="a.effective" tone="effective" />
+                    <p class="src-explain" v-if="a.policy_source === 'desktop_full_access'">{{ t('permissionSource.desktopFullAccessExplain') }}</p>
+                    <p class="hash-full hint">{{ t('agents.policyHash') }}: <span class="mono">{{ a.policy_hash || '—' }}</span></p>
+                  </div>
+                </td>
+              </tr>
+            </template>
           </tbody>
         </table>
       </div>
@@ -242,10 +284,9 @@ onBeforeUnmount(() => {
     </section>
 
     <section class="panel">
-      <div class="panel-head"><h3>{{ t('agents.enrollTokens') }}</h3></div>
+      <div class="panel-head"><h3>{{ t('agents.enrollTitle') }}</h3></div>
       <div class="panel-body">
         <p class="hint">{{ t('agents.addAgentHint') }}</p>
-        <p class="hint">{{ t('agents.enrollHintPrefix') }}<code>nettact-agent --server &lt;URL&gt; --enroll-token &lt;token&gt;</code></p>
         <div class="row">
           <input v-model="note" :placeholder="t('agents.notePlaceholder')" />
           <button class="btn btn-primary" @click="create">{{ t('agents.genToken') }}</button>
@@ -255,6 +296,7 @@ onBeforeUnmount(() => {
           <code>{{ newToken }}</code>
           <button class="link-btn" @click="copyToken">{{ t('agents.copy') }}</button>
         </div>
+        <EnrollExamples class="enroll-examples" :server-url="serverUrl" :token="newToken" />
       </div>
       <div class="table-wrap">
         <table class="data-table">
@@ -386,5 +428,66 @@ code {
   word-break: break-all;
   color: var(--primary);
   border-color: transparent;
+}
+.enroll-examples {
+  margin-top: 16px;
+}
+.perm-cell {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.src-badge {
+  font-size: 11px;
+  padding: 1px 8px;
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--border-strong);
+  background: var(--surface-2);
+  color: var(--text-dim);
+}
+.hash {
+  font-size: 11.5px;
+  color: var(--text-muted);
+}
+.issue-badge {
+  font-size: 11px;
+  padding: 1px 8px;
+  border-radius: var(--radius-pill);
+  color: #fca5a5;
+  border: 1px solid rgba(248, 113, 113, 0.4);
+  background: rgba(248, 113, 113, 0.1);
+}
+.detail-row td {
+  background: var(--surface-2);
+}
+.perm-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 6px 2px;
+}
+.src-explain {
+  margin: 0;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+.hash-full {
+  margin: 0;
+  font-size: 11.5px;
+}
+.link-btn {
+  border: none;
+  background: transparent;
+  color: var(--primary);
+  font: inherit;
+  padding: 0;
+  cursor: pointer;
+}
+.link-btn:hover {
+  text-decoration: underline;
+}
+.link-btn.danger {
+  color: var(--danger);
 }
 </style>

@@ -26,37 +26,140 @@ export interface Agent {
   platform: string
   agent_version: string
   status: string
-  capabilities?: string[]
+  // Local permission policy. `supported` is everything the agent build can do on
+  // its platform; `granted` is what the operator's policy allows; `effective` is
+  // the usable intersection. `policy_source` says where the grant came from and
+  // `policy_hash` fingerprints it for issue correlation.
+  supported: string[]
+  granted: string[]
+  effective: string[]
+  policy_source: string // default | environment | desktop_full_access
+  policy_hash: string
   last_seen_at: string | null
   created_at: string
 }
+
+// One requested snapshot scope and how it resolved. `denied` = permission not
+// granted, `unsupported` = platform/build can't collect it, `failed` = collection
+// errored, `collected` = data present.
+export interface SnapshotScopeResult {
+  scope: string
+  status: 'collected' | 'denied' | 'unsupported' | 'failed'
+  reason?: string
+}
+// Remediation guidance attached to a denial or a permission issue.
+export interface Remediation {
+  reason: string
+  permissions_env?: string
+  matched_selector?: string
+}
 // Live host snapshot (ephemeral process / connection lists — never stored).
+// Optional fields are absent when the corresponding scope was not granted.
 export interface ProcessInfo {
   pid: number
   name: string
-  user?: string
   status?: string
-  cpu_pct: number
-  rss_bytes: number
-  virt_bytes: number
-  disk_read_bytes: number
-  disk_write_bytes: number
-  run_time_seconds: number
+  user?: string
+  cpu_pct?: number
+  rss_bytes?: number
+  virt_bytes?: number
+  run_time_seconds?: number
+  disk_read_bytes?: number
+  disk_write_bytes?: number
 }
 export interface ConnectionInfo {
   proto: string
-  local_addr: string
-  remote_addr?: string
   state?: string
+  local_addr?: string
+  remote_addr?: string
   pid?: number
   process_name?: string
 }
 export interface HostSnapshot {
   ts: string
   request_id: string
-  process_total: number
+  scopes: SnapshotScopeResult[]
+  process_total?: number
   processes?: ProcessInfo[]
   connections?: ConnectionInfo[]
+}
+// POST /agents/{id}/snapshot response. Either an inline denial (request_id null,
+// no requested scope was effective) or an accepted request with a precheck.
+export interface SnapshotRequestResult {
+  request_id: string | null
+  scopes?: SnapshotScopeResult[] // inline-denial breakdown
+  precheck?: SnapshotScopeResult[] // accepted request per-scope precheck
+  remediation?: Remediation
+}
+
+// A monitoring/permission issue surfaced in the notification center. Full state is
+// pushed over SSE; the badge count is server-authoritative (`unread_count`).
+export interface Issue {
+  id: string
+  site_id: string
+  agent_id: string
+  agent_name: string
+  category: string
+  ref_id: string
+  monitor_name: string
+  reason: string
+  missing_permissions: string[]
+  matched_selector: string
+  policy_hash: string
+  state: 'active' | 'resolved'
+  read: boolean
+  count: number
+  first_seen_at: string
+  last_seen_at: string
+  resolved_at: string | null
+  remediation?: Remediation
+}
+export interface IssuesResponse {
+  items: Issue[]
+  unread_count: number
+}
+
+// Per-agent status of one monitor: whether it is actually collecting, or blocked
+// by permission / target selector / lack of platform support.
+export interface MonitorStatusRow {
+  agent_id: string
+  agent_name?: string
+  monitor_id: string
+  monitor_name?: string
+  kind?: string
+  target?: string
+  status: 'active' | 'permission_blocked' | 'target_blocked' | 'unsupported'
+  missing_permissions: string[]
+  matched_selector?: string
+  reason?: string
+  policy_hash?: string
+  config_version: number
+  updated_at: string
+}
+
+// A warning returned by a set-targets save: a saved monitor that some agents in
+// scope cannot run (missing permission or unsupported). blocked_agents and
+// capable_agent_list identify each agent independently so the UI can name capable
+// vs blocked agents (acceptance criterion 8), not just show aggregate counts.
+export interface SaveWarningAgent {
+  agent_id: string
+  agent_name: string
+  status: 'active' | 'permission_blocked' | 'unsupported'
+  missing_permissions: string[]
+}
+export interface SaveWarning {
+  monitor_id: string
+  monitor_name: string
+  status: 'permission_blocked' | 'unsupported'
+  affected_agents: number
+  capable_agents: number
+  missing_permissions: string[]
+  blocked_agents: SaveWarningAgent[]
+  capable_agent_list: SaveWarningAgent[]
+}
+export interface SaveTargetsResult {
+  ok: true
+  warnings: SaveWarning[]
 }
 export interface Sample {
   ts: string
@@ -291,14 +394,12 @@ export const api = {
   updateAgent: (id: string, displayName: string) =>
     req<Agent>('PUT', `/api/v1/agents/${encodeURIComponent(id)}`, { display_name: displayName }),
   deleteAgent: (id: string) => req<unknown>('DELETE', `/api/v1/agents/${encodeURIComponent(id)}`),
-  // Live host snapshot: ask the agent (POST), then poll for the result (GET).
-  requestSnapshot: (id: string, wantProcesses = true, wantConnections = true) =>
-    req<{ request_id: string }>('POST', `/api/v1/agents/${encodeURIComponent(id)}/snapshot`, {
-      want_processes: wantProcesses,
-      want_connections: wantConnections,
-    }),
+  // Live host snapshot: ask the agent for the given scopes (POST), then poll for
+  // the result (GET). The POST may return an inline denial (request_id null).
+  requestSnapshot: (id: string, scopes: string[]) =>
+    req<SnapshotRequestResult>('POST', `/api/v1/agents/${encodeURIComponent(id)}/snapshot`, { scopes }),
   getSnapshot: (id: string) =>
-    req<{ snapshot: HostSnapshot | null; pending: boolean }>(
+    req<{ snapshot: HostSnapshot | null; pending: boolean; remediation?: Remediation }>(
       'GET',
       `/api/v1/agents/${encodeURIComponent(id)}/snapshot`,
     ),
@@ -331,12 +432,28 @@ export const api = {
     req<AgentInterfaces>('GET', `/api/v1/agents/${encodeURIComponent(id)}/interfaces`),
   agentStatusHistory: (id: string) =>
     req<StatusEvent[]>('GET', `/api/v1/agents/${encodeURIComponent(id)}/status-history`),
+  // Monitoring/permission issues (notification center). Full-state list + the
+  // server-authoritative unread count; SSE pushes updates live.
+  listIssues: () => req<IssuesResponse>('GET', '/api/v1/issues'),
+  // Mark the given issues read; omit ids (or pass []) to mark all active read.
+  markIssuesRead: (ids?: string[]) =>
+    req<unknown>('POST', '/api/v1/issues/mark-read', ids && ids.length ? { ids } : {}),
+  issueUnreadCount: () => req<{ unread_count: number }>('GET', '/api/v1/issues/unread-count'),
+  agentIssues: (id: string) => req<Issue[]>('GET', `/api/v1/agents/${encodeURIComponent(id)}/issues`),
+  // Per-agent monitor state (collecting vs blocked), keyed the two ways it's read:
+  // all monitors on one agent, or one target across the agents that run it.
+  agentMonitorStatus: (id: string) =>
+    req<MonitorStatusRow[]>('GET', `/api/v1/agents/${encodeURIComponent(id)}/monitor-status`),
+  targetAgentStatus: (targetID: string) =>
+    req<MonitorStatusRow[]>('GET', `/api/v1/targets/${encodeURIComponent(targetID)}/agent-status`),
   listTokens: () => req<EnrollmentToken[]>('GET', '/api/v1/enrollment-tokens'),
   createToken: (note: string) =>
     req<{ token: string; expires_in_minutes: number }>('POST', '/api/v1/enrollment-tokens', { note }),
   listTargets: (siteID: string) => req<ProbeTarget[]>('GET', `/api/v1/sites/${encodeURIComponent(siteID)}/targets`),
+  // Saving targets is a full reconcile; the server replies with per-monitor
+  // warnings for monitors some in-scope agents can't run (permission/unsupported).
   setTargets: (siteID: string, targets: ProbeTarget[]) =>
-    req<unknown>('PUT', `/api/v1/sites/${encodeURIComponent(siteID)}/targets`, { targets }),
+    req<SaveTargetsResult>('PUT', `/api/v1/sites/${encodeURIComponent(siteID)}/targets`, { targets }),
   // History purges: per user-created monitor (across all agents), or by target
   // string for SYSTEM series only (e.g. a removed interface) — the string form
   // never touches monitor data.

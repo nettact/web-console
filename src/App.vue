@@ -1,10 +1,13 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, watch } from 'vue'
 import { useRouter, useRoute, RouterLink, RouterView } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { auth, logout } from './auth'
+import { initNotifications, stopNotifications } from './notifications'
 import LangSwitch from './components/LangSwitch.vue'
 import ThemeSwitch from './components/ThemeSwitch.vue'
+import NotificationBell from './components/NotificationBell.vue'
+import Toasts from './components/Toasts.vue'
 
 const router = useRouter()
 const route = useRoute()
@@ -14,6 +17,16 @@ async function doLogout() {
   await logout()
   router.push('/login')
 }
+
+// Open the issue stream once the user is authenticated; tear it down on logout.
+watch(
+  () => auth.user,
+  (u) => {
+    if (u) initNotifications()
+    else stopNotifications()
+  },
+  { immediate: true },
+)
 
 // `label` is an i18n key resolved at render time so nav + breadcrumb re-translate live.
 const nav = [
@@ -126,6 +139,7 @@ const initials = computed(() => (auth.user?.username ?? '?').slice(0, 1).toUpper
         <span class="spacer"></span>
         <ThemeSwitch />
         <LangSwitch />
+        <NotificationBell />
         <div class="user-chip">
           <span class="avatar">{{ initials }}</span>
           <span class="uname">{{ auth.user.username }}</span>
@@ -146,6 +160,8 @@ const initials = computed(() => (auth.user?.username ?? '?').slice(0, 1).toUpper
   </div>
 
   <RouterView v-else />
+
+  <Toasts />
 </template>
 
 <style scoped>

@@ -1,17 +1,32 @@
 <script setup lang="ts">
 import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue'
-import { useRoute } from 'vue-router'
+import { useRoute, RouterLink } from 'vue-router'
 import { useI18n } from 'vue-i18n'
-import { api, type Agent, type ProcessInfo, type ConnectionInfo, type HostSnapshot } from '../api'
+import {
+  api,
+  type Agent,
+  type ProcessInfo,
+  type ConnectionInfo,
+  type HostSnapshot,
+  type SnapshotScopeResult,
+  type Remediation,
+} from '../api'
 import { fmtBytes } from '../lib/format'
 import { quickAddQuery } from '../lib/netaddr'
+import {
+  hasProcessScopes,
+  hasConnectionScopes,
+} from '../lib/permissions'
+import { usePermissionMeta } from '../composables/usePermissionMeta'
 
 const { t } = useI18n()
+const { permLabel } = usePermissionMeta()
 
 // This page shows a live, on-demand snapshot of an agent's processes and network
 // connections. Nothing is stored server-side: opening the page asks the agent to
-// return its current lists once, and the result is held only in memory. The agent
-// serves it only if started with --report-processes / --report-connections.
+// return its current lists once, and the result is held only in memory. Which
+// columns appear depends on which permission SCOPES the agent actually collected;
+// scopes it could not collect surface in a denial panel.
 const route = useRoute()
 const agents = ref<Agent[]>([])
 const selected = ref<string>('')
@@ -19,14 +34,12 @@ const agent = ref<Agent | null>(null)
 const snapshot = ref<HostSnapshot | null>(null)
 const loading = ref(false)
 const error = ref('')
+// Scopes the agent could not collect this round (denied / unsupported / failed),
+// plus any remediation guidance returned with an inline denial.
+const denialScopes = ref<SnapshotScopeResult[]>([])
+const remediation = ref<Remediation | null>(null)
 const sortKey = ref<'cpu' | 'ram' | 'name'>('cpu')
 const tab = ref<'processes' | 'connections'>('processes')
-// The 网络连接 tab can be filtered either by exact process name (aggregating every
-// connection across all PIDs that share the name) or by an exact PID. `connBasis`
-// selects which, defaulting to name; `connFilter` is a discriminated union whose
-// `basis` always equals `connBasis` when set (a non-null filter matches the
-// selected basis). `name` is retained on the PID variant so a fresh snapshot can
-// revalidate the PID+name pair and avoid matching a recycled PID.
 type ConnBasis = 'name' | 'pid'
 type ConnFilter =
   | { basis: 'name'; name: string }
@@ -35,13 +48,61 @@ const connBasis = ref<ConnBasis>('name')
 const connFilter = ref<ConnFilter | null>(null)
 let poll: number | undefined
 
-const canProcs = computed(() => agent.value?.capabilities?.includes('host.process.read') ?? false)
-const canConns = computed(() => agent.value?.capabilities?.includes('host.connection.read') ?? false)
+// Every process/connection snapshot scope. The page always requests the full
+// desired set — not just the agent's effective scopes — so the response carries
+// explicit denied/unsupported results (and the NETTACT_AGENT_PERMISSIONS
+// remediation line) for every scope the agent cannot collect. This covers the
+// common least-privilege case where an agent grants some but not all scopes: the
+// missing scopes must surface in the denial panel, never be silently omitted.
+const ALL_SNAPSHOT_SCOPES = [
+  'host.process.basic.read',
+  'host.process.owner.read',
+  'host.process.resource.read',
+  'host.process.io.read',
+  'host.connection.summary.read',
+  'host.connection.local.read',
+  'host.connection.remote.read',
+  'host.connection.owner.read',
+]
+
+const effective = computed(() => agent.value?.effective ?? [])
+const canProcs = computed(() => hasProcessScopes(effective.value))
+const canConns = computed(() => hasConnectionScopes(effective.value))
 const permitted = computed(() => canProcs.value || canConns.value)
 
-// Keep the active tab valid for the selected agent's capabilities: if the current
-// tab isn't available but the other is, switch to it (e.g. an agent that only
-// reports connections should land on the 网络连接 tab).
+// Which permission scopes actually came back with data this round; drives the
+// dynamic columns (a granted-but-uncollected scope shows in the denial panel).
+const collectedSet = computed(() => {
+  const s = new Set<string>()
+  for (const sc of snapshot.value?.scopes ?? []) if (sc.status === 'collected') s.add(sc.scope)
+  return s
+})
+const colBasic = computed(() => collectedSet.value.has('host.process.basic.read'))
+const colOwner = computed(() => collectedSet.value.has('host.process.owner.read'))
+const colResource = computed(() => collectedSet.value.has('host.process.resource.read'))
+const colIo = computed(() => collectedSet.value.has('host.process.io.read'))
+const colSummary = computed(() => collectedSet.value.has('host.connection.summary.read'))
+const colLocal = computed(() => collectedSet.value.has('host.connection.local.read'))
+const colRemote = computed(() => collectedSet.value.has('host.connection.remote.read'))
+const colConnOwner = computed(() => collectedSet.value.has('host.connection.owner.read'))
+
+const procCols = computed(
+  () =>
+    (colBasic.value ? 3 : 0) +
+    (colOwner.value ? 1 : 0) +
+    (colResource.value ? 4 : 0) +
+    (colIo.value ? 1 : 0) +
+    (colConnOwner.value ? 1 : 0),
+)
+const connCols = computed(
+  () =>
+    (colSummary.value ? 2 : 0) +
+    (colLocal.value ? 1 : 0) +
+    (colRemote.value ? 2 : 0) +
+    (colConnOwner.value ? 2 : 0),
+)
+
+// Keep the active tab valid for the selected agent's effective scopes.
 watch(
   [canProcs, canConns],
   () => {
@@ -72,22 +133,30 @@ async function refreshAgent() {
 }
 
 // The snapshot POST is rejected immediately with `{"error":"agent offline"}`
-// (HTTP 409) when the agent has no live connection — surface that as a clear
-// localized message instead of the raw server string.
+// (HTTP 409) when the agent has no live connection — surface a localized message.
 function snapshotErrMsg(e: unknown): string {
   const msg = String((e as Error).message || e)
   return msg === 'agent offline' ? t('processes.agentOffline') : msg
 }
 
-// Ask the agent for a fresh snapshot, then poll until it returns (round-trip is
-// bounded by the agent's upload interval, typically a few seconds).
+// Ask the agent for a fresh snapshot of the scopes it can serve, then poll briefly
+// until it answers. A POST may return an INLINE DENIAL (request_id null) when none
+// of the requested scopes was effective — handle that without polling.
 async function requestSnapshot() {
-  // Always cancel any in-flight poll first: switching to a different (or
-  // unsupported) agent must not leave the previous interval running against the
-  // newly selected id.
   stopPoll()
   loading.value = false
-  if (!selected.value || !permitted.value) {
+  denialScopes.value = []
+  remediation.value = null
+  if (!selected.value) {
+    snapshot.value = null
+    return
+  }
+  // Always request the full desired scope set (not just the effective scopes) so
+  // the response includes explicit denied/unsupported results and the remediation
+  // env line for every scope the agent cannot collect — both when it grants none
+  // and, crucially, when it grants only a partial subset.
+  const scopes = ALL_SNAPSHOT_SCOPES
+  if (!scopes.length) {
     snapshot.value = null
     return
   }
@@ -95,18 +164,30 @@ async function requestSnapshot() {
   error.value = ''
   snapshot.value = null
   try {
-    const { request_id } = await api.requestSnapshot(selected.value, canProcs.value, canConns.value)
+    const res = await api.requestSnapshot(selected.value, scopes)
+    if (res.request_id === null) {
+      denialScopes.value = (res.scopes || []).filter((s) => s.status !== 'collected')
+      remediation.value = res.remediation ?? null
+      loading.value = false
+      return
+    }
+    const request_id = res.request_id
     let tries = 0
     poll = window.setInterval(async () => {
       tries++
       try {
-        const res = await api.getSnapshot(selected.value)
-        if (res.snapshot && res.snapshot.request_id === request_id) {
-          snapshot.value = res.snapshot
+        const r = await api.getSnapshot(selected.value)
+        if (r.snapshot && r.snapshot.request_id === request_id) {
+          snapshot.value = r.snapshot
+          denialScopes.value = r.snapshot.scopes.filter((s) => s.status !== 'collected')
+          // The GET response carries remediation for any permission-denied scope, so
+          // partial runtime denials show the env line too (not only the POST path).
+          remediation.value = r.remediation ?? null
           revalidateConnFilter()
           loading.value = false
           stopPoll()
         } else if (tries > 25) {
+          // A short poll only: the agent simply hasn't answered yet (not a denial).
           loading.value = false
           error.value = t('processes.waitTimeout')
           stopPoll()
@@ -134,16 +215,13 @@ const processes = computed<ProcessInfo[]>(() => {
   const ps = [...(snapshot.value?.processes || [])]
   ps.sort((a, b) => {
     if (sortKey.value === 'name') return a.name.localeCompare(b.name)
-    if (sortKey.value === 'ram') return b.rss_bytes - a.rss_bytes
-    return b.cpu_pct - a.cpu_pct
+    if (sortKey.value === 'ram') return (b.rss_bytes ?? 0) - (a.rss_bytes ?? 0)
+    return (b.cpu_pct ?? 0) - (a.cpu_pct ?? 0)
   })
   return ps
 })
 const connections = computed<ConnectionInfo[]>(() => snapshot.value?.connections || [])
 
-// Connections narrowed by the active filter. Name mode aggregates every
-// connection whose non-empty process_name exactly matches (across all PIDs); PID
-// mode matches the exact PID. No filter (null) shows everything.
 const filteredConnections = computed<ConnectionInfo[]>(() => {
   const cs = connections.value
   const f = connFilter.value
@@ -152,11 +230,6 @@ const filteredConnections = computed<ConnectionInfo[]>(() => {
   return cs.filter((c) => c.pid === f.pid)
 })
 
-// Name options for name-basis filtering: sorted, deduplicated, non-empty process
-// names from the process list plus connection-only data (so a connection-only
-// agent still gets options). Empty names are excluded here — they can't drive a
-// name filter. The current name is injected if momentarily absent so the
-// <select> keeps showing it (name basis only).
 const connNameOptions = computed<string[]>(() => {
   const seen = new Set<string>()
   for (const p of snapshot.value?.processes || []) if (p.name) seen.add(p.name)
@@ -166,10 +239,6 @@ const connNameOptions = computed<string[]>(() => {
   return [...seen].sort((a, b) => a.localeCompare(b))
 })
 
-// PID options for pid-basis filtering. The full process list is the primary
-// source, so processes with zero connections stay selectable; a connection-only
-// agent derives options from the connections. Connections without a PID are
-// skipped. The current PID is injected if momentarily absent (pid basis only).
 const connPidOptions = computed<{ pid: number; name: string }[]>(() => {
   const opts: { pid: number; name: string }[] = []
   const seen = new Set<number>()
@@ -191,7 +260,6 @@ const connPidOptions = computed<{ pid: number; name: string }[]>(() => {
   return opts
 })
 
-// Bridge between the name <select>'s string value and the name filter.
 const connNameValue = computed<string>({
   get: () => {
     const f = connFilter.value
@@ -202,7 +270,6 @@ const connNameValue = computed<string>({
   },
 })
 
-// Bridge between the PID <select>'s string value and the PID filter.
 const connPidValue = computed<string>({
   get: () => {
     const f = connFilter.value
@@ -219,7 +286,6 @@ const connPidValue = computed<string>({
   },
 })
 
-// Basis-specific empty message when the current filter matches nothing.
 const connFilterEmptyMsg = computed<string>(() => {
   const f = connFilter.value
   if (!f) return ''
@@ -227,19 +293,15 @@ const connFilterEmptyMsg = computed<string>(() => {
   return t('processes.noConnsForProcess', { name: f.name || '—', pid: f.pid })
 })
 
-// Switching the basis clears the current selection (they aren't comparable).
 function setConnBasis(b: ConnBasis) {
   if (connBasis.value === b) return
   connBasis.value = b
   connFilter.value = null
 }
 
-// The quick-add-monitor query for a connection row, or null when the row's
-// remote address yields no usable target (or a TCP row without a valid port).
 function connQuickAdd(c: ConnectionInfo) {
   return quickAddQuery(c.proto, c.remote_addr)
 }
-// Accessible label for a row's quick-add link, worded per resulting monitor kind.
 function connQuickAddAria(c: ConnectionInfo): string {
   const q = connQuickAdd(c)
   if (!q) return ''
@@ -248,10 +310,6 @@ function connQuickAddAria(c: ConnectionInfo): string {
     : t('processes.quickAddIcmpAria', { target: q.target })
 }
 
-// Jump from a process row to its connections without asking for a new snapshot —
-// just filter the already-loaded data and switch tabs, following the current
-// basis. A process with an empty name can't drive a name filter, so in name mode
-// it visibly falls back to the PID basis instead.
 function viewConnections(p: ProcessInfo) {
   if (connBasis.value === 'name' && !p.name) connBasis.value = 'pid'
   if (connBasis.value === 'name') connFilter.value = { basis: 'name', name: p.name }
@@ -259,10 +317,6 @@ function viewConnections(p: ProcessInfo) {
   tab.value = 'connections'
 }
 
-// After a fresh snapshot, keep the filter only if it still resolves: a name is
-// revalidated by name existence; a PID by the same PID+name pair (PIDs are
-// recycled, so a bare PID match isn't enough). Both consult the process list and
-// fall back to the connection side for a connection-only agent.
 function revalidateConnFilter() {
   const f = connFilter.value
   if (!f) return
@@ -287,9 +341,25 @@ function fmtRun(sec: number): string {
   return `${h}h ${m}m ${s}s`
 }
 
+// Denial panel copy: a headline per scope keyed by why it was withheld, plus a
+// remediation sub-line (env hint for permission denials, a platform explanation
+// for unsupported, the server reason for a runtime failure).
+function denyLine(sc: SnapshotScopeResult): string {
+  const scope = permLabel(sc.scope)
+  if (sc.status === 'denied') return t('processes.denyDenied', { scope })
+  if (sc.status === 'unsupported') return t('processes.denyUnsupported', { scope })
+  return t('processes.denyFailed', { scope })
+}
+function denySub(sc: SnapshotScopeResult): string {
+  if (sc.status === 'denied') {
+    const env = remediation.value?.permissions_env
+    return env ? t('processes.remediationEnv', { env }) : ''
+  }
+  if (sc.status === 'unsupported') return t('processes.unsupportedExplain')
+  return sc.reason || ''
+}
+
 async function onAgentChange() {
-  // Switching agents must not carry a selection across to unrelated data, but the
-  // chosen basis (name/PID) is a UI preference and is retained.
   connFilter.value = null
   await refreshAgent()
   await requestSnapshot()
@@ -315,7 +385,7 @@ onBeforeUnmount(stopPoll)
             {{ a.hostname || a.id }} ({{ a.platform }}) — {{ a.status }}
           </option>
         </select>
-        <button class="btn" :disabled="loading || !permitted" @click="requestSnapshot">
+        <button class="btn" :disabled="loading" @click="requestSnapshot">
           {{ loading ? t('processes.fetching') : t('processes.refreshSnapshot') }}
         </button>
       </div>
@@ -324,16 +394,25 @@ onBeforeUnmount(stopPoll)
     <p class="hint sub">{{ t('processes.sub') }}</p>
     <p v-if="error" class="err">{{ error }}</p>
 
-    <div v-if="!permitted && agent" class="card empty">
-      <h3>{{ t('processes.notEnabledTitle') }}</h3>
-      <p class="hint">
-        {{ t('processes.notEnabledHint1') }}<code>--report-processes</code>{{ t('processes.notEnabledHint2') }}<code>--report-connections</code>{{ t('processes.notEnabledHint3') }}
-      </p>
+    <!-- Scopes the agent could not collect this round (shown for both the
+         partial-permission and the no-permission case, always with remediation). -->
+    <div v-if="denialScopes.length" class="card denial">
+      <h4>{{ t('processes.denialTitle') }}</h4>
+      <p class="hint">{{ t('processes.denialIntro') }}</p>
+      <ul class="deny-list">
+        <li v-for="sc in denialScopes" :key="sc.scope">
+          <span class="deny-head">{{ denyLine(sc) }}</span>
+          <span v-if="denySub(sc)" class="deny-sub">{{ denySub(sc) }}</span>
+        </li>
+      </ul>
     </div>
 
-    <template v-else>
-      <!-- tabs: switch between 进程 and 网络连接 instead of stacking them, so a
-           long process list doesn't bury the network connections below it. -->
+    <div v-if="!permitted && agent && !denialScopes.length" class="card empty">
+      <h3>{{ t('processes.noPermTitle') }}</h3>
+      <p class="hint">{{ t('processes.noPermHint') }}</p>
+    </div>
+
+    <template v-if="permitted">
       <div class="tabs" role="tablist">
         <button
           v-if="canProcs"
@@ -363,7 +442,7 @@ onBeforeUnmount(stopPoll)
       <section class="panel" v-if="canProcs" v-show="tab === 'processes'">
         <div class="panel-head">
           <span class="spacer"></span>
-          <div class="sort">
+          <div class="sort" v-if="colResource">
             <label>{{ t('processes.sortLabel') }}</label>
             <select v-model="sortKey">
               <option value="cpu">CPU</option>
@@ -376,26 +455,32 @@ onBeforeUnmount(stopPoll)
           <table class="data-table">
             <thead>
               <tr>
-                <th>{{ t('processes.thProcName') }}</th><th>PID</th><th>{{ t('processes.thStatus') }}</th><th>{{ t('processes.thUser') }}</th>
-                <th class="num">CPU %</th><th class="num">{{ t('processes.thMem') }}</th><th class="num">{{ t('processes.thVirt') }}</th>
-                <th class="num">{{ t('processes.thDisk') }}</th><th class="num">{{ t('processes.thRuntime') }}</th>
-                <th v-if="canConns"></th>
+                <th v-if="colBasic">{{ t('processes.thProcName') }}</th>
+                <th v-if="colBasic">PID</th>
+                <th v-if="colBasic">{{ t('processes.thStatus') }}</th>
+                <th v-if="colOwner">{{ t('processes.thUser') }}</th>
+                <th class="num" v-if="colResource">CPU %</th>
+                <th class="num" v-if="colResource">{{ t('processes.thMem') }}</th>
+                <th class="num" v-if="colResource">{{ t('processes.thVirt') }}</th>
+                <th class="num" v-if="colResource">{{ t('processes.thRuntime') }}</th>
+                <th class="num" v-if="colIo">{{ t('processes.thDisk') }}</th>
+                <th v-if="colConnOwner"></th>
               </tr>
             </thead>
             <tbody>
-              <tr v-if="loading && !processes.length"><td :colspan="canConns ? 10 : 9" class="hint">{{ t('processes.fetching') }}</td></tr>
-              <tr v-else-if="!processes.length"><td :colspan="canConns ? 10 : 9" class="hint">{{ t('common.noData') }}</td></tr>
+              <tr v-if="loading && !processes.length"><td :colspan="procCols || 1" class="hint">{{ t('processes.waitingAgent') }}</td></tr>
+              <tr v-else-if="!processes.length"><td :colspan="procCols || 1" class="hint">{{ t('common.noData') }}</td></tr>
               <tr v-for="p in processes" :key="p.pid">
-                <td class="mono">{{ p.name }}</td>
-                <td class="mono">{{ p.pid }}</td>
-                <td>{{ p.status || '—' }}</td>
-                <td class="mono dim">{{ p.user || '—' }}</td>
-                <td class="num">{{ p.cpu_pct.toFixed(1) }}</td>
-                <td class="num">{{ fmtBytes(p.rss_bytes) }}</td>
-                <td class="num dim">{{ fmtBytes(p.virt_bytes) }}</td>
-                <td class="num dim">{{ fmtBytes(p.disk_read_bytes) }} / {{ fmtBytes(p.disk_write_bytes) }}</td>
-                <td class="num dim">{{ fmtRun(p.run_time_seconds) }}</td>
-                <td v-if="canConns" class="num">
+                <td class="mono" v-if="colBasic">{{ p.name }}</td>
+                <td class="mono" v-if="colBasic">{{ p.pid }}</td>
+                <td v-if="colBasic">{{ p.status || '—' }}</td>
+                <td class="mono dim" v-if="colOwner">{{ p.user || '—' }}</td>
+                <td class="num" v-if="colResource">{{ p.cpu_pct != null ? p.cpu_pct.toFixed(1) : '—' }}</td>
+                <td class="num" v-if="colResource">{{ p.rss_bytes != null ? fmtBytes(p.rss_bytes) : '—' }}</td>
+                <td class="num dim" v-if="colResource">{{ p.virt_bytes != null ? fmtBytes(p.virt_bytes) : '—' }}</td>
+                <td class="num dim" v-if="colResource">{{ p.run_time_seconds != null ? fmtRun(p.run_time_seconds) : '—' }}</td>
+                <td class="num dim" v-if="colIo">{{ p.disk_read_bytes != null ? fmtBytes(p.disk_read_bytes) : '—' }} / {{ p.disk_write_bytes != null ? fmtBytes(p.disk_write_bytes) : '—' }}</td>
+                <td v-if="colConnOwner" class="num">
                   <button
                     class="link-btn"
                     :aria-label="t('processes.viewConnsAria', { name: p.name, pid: p.pid })"
@@ -413,9 +498,7 @@ onBeforeUnmount(stopPoll)
       <!-- connections -->
       <section class="panel" v-if="canConns" v-show="tab === 'connections'">
         <div class="panel-head">
-          <!-- Segmented control choosing whether the filter matches by process
-               name (aggregating all PIDs) or an exact PID. -->
-          <div class="basis" role="group" :aria-label="t('processes.connBasisLabel')">
+          <div class="basis" v-if="colConnOwner" role="group" :aria-label="t('processes.connBasisLabel')">
             <span class="basis-label">{{ t('processes.connBasisLabel') }}</span>
             <button
               type="button"
@@ -437,7 +520,7 @@ onBeforeUnmount(stopPoll)
             </button>
           </div>
           <span class="spacer"></span>
-          <div class="sort">
+          <div class="sort" v-if="colConnOwner">
             <label for="conn-filter">{{ t('processes.connFilterLabel') }}</label>
             <select v-if="connBasis === 'name'" id="conn-filter" v-model="connNameValue">
               <option value="">{{ t('processes.connFilterAll') }}</option>
@@ -454,25 +537,33 @@ onBeforeUnmount(stopPoll)
         <div class="table-wrap">
           <table class="data-table">
             <thead>
-              <tr><th>{{ t('processes.thProto') }}</th><th>{{ t('processes.thLocalAddr') }}</th><th>{{ t('processes.thRemoteAddr') }}</th><th>{{ t('processes.thStatus') }}</th><th>PID</th><th>{{ t('processes.thProcess') }}</th><th></th></tr>
+              <tr>
+                <th v-if="colSummary">{{ t('processes.thProto') }}</th>
+                <th v-if="colLocal">{{ t('processes.thLocalAddr') }}</th>
+                <th v-if="colRemote">{{ t('processes.thRemoteAddr') }}</th>
+                <th v-if="colSummary">{{ t('processes.thStatus') }}</th>
+                <th v-if="colConnOwner">PID</th>
+                <th v-if="colConnOwner">{{ t('processes.thProcess') }}</th>
+                <th v-if="colRemote"></th>
+              </tr>
             </thead>
             <tbody>
-              <tr v-if="loading && !connections.length"><td colspan="7" class="hint">{{ t('processes.fetching') }}</td></tr>
+              <tr v-if="loading && !connections.length"><td :colspan="connCols || 1" class="hint">{{ t('processes.waitingAgent') }}</td></tr>
               <tr v-else-if="connFilter && !filteredConnections.length">
-                <td colspan="7" class="hint">
+                <td :colspan="connCols || 1" class="hint">
                   {{ connFilterEmptyMsg }}
                   <button class="link-btn" @click="connFilter = null">{{ t('processes.clearFilter') }}</button>
                 </td>
               </tr>
-              <tr v-else-if="!connections.length"><td colspan="7" class="hint">{{ t('common.noData') }}</td></tr>
+              <tr v-else-if="!connections.length"><td :colspan="connCols || 1" class="hint">{{ t('common.noData') }}</td></tr>
               <tr v-for="(c, i) in filteredConnections" :key="i">
-                <td class="mono">{{ c.proto }}</td>
-                <td class="mono">{{ c.local_addr }}</td>
-                <td class="mono dim">{{ c.remote_addr || '—' }}</td>
-                <td>{{ c.state || '—' }}</td>
-                <td class="mono">{{ c.pid || '—' }}</td>
-                <td class="mono dim">{{ c.process_name || '—' }}</td>
-                <td class="num">
+                <td class="mono" v-if="colSummary">{{ c.proto }}</td>
+                <td class="mono" v-if="colLocal">{{ c.local_addr || '—' }}</td>
+                <td class="mono dim" v-if="colRemote">{{ c.remote_addr || '—' }}</td>
+                <td v-if="colSummary">{{ c.state || '—' }}</td>
+                <td class="mono" v-if="colConnOwner">{{ c.pid || '—' }}</td>
+                <td class="mono dim" v-if="colConnOwner">{{ c.process_name || '—' }}</td>
+                <td class="num" v-if="colRemote">
                   <RouterLink
                     v-if="connQuickAdd(c)"
                     class="link-btn"
@@ -507,6 +598,34 @@ onBeforeUnmount(stopPoll)
 .sub {
   margin-top: -6px;
   margin-bottom: 14px;
+}
+.denial {
+  padding: 14px 16px;
+  margin-bottom: 16px;
+  border-left: 3px solid var(--warn, #fbbf24);
+}
+.denial h4 {
+  margin: 0 0 4px;
+  font-size: 14px;
+}
+.deny-list {
+  margin: 8px 0 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.deny-head {
+  display: block;
+  font-size: 13px;
+  color: var(--text);
+}
+.deny-sub {
+  display: block;
+  font-size: 12px;
+  color: var(--text-dim);
+  margin-top: 2px;
 }
 .tabs {
   display: flex;
@@ -561,7 +680,6 @@ onBeforeUnmount(stopPoll)
   align-items: center;
   gap: 8px;
 }
-/* Segmented control for the connection filter basis (name vs PID). */
 .basis {
   display: flex;
   align-items: center;
@@ -597,17 +715,12 @@ onBeforeUnmount(stopPoll)
   border-color: var(--primary);
   background: var(--primary-soft, var(--surface-2));
 }
-/* Let the connections filter drop below the row on narrow screens instead of
-   overflowing, and keep the <select> from bleeding past the panel edge. */
 .panel-head {
   flex-wrap: wrap;
 }
 .sort select {
   max-width: 100%;
 }
-/* Native buttons that read as links: focusable (keyboard-accessible) yet inline
-   with surrounding text. Used for the row "view connections" action and the
-   "clear filter" affordance in the empty state. */
 .link-btn {
   border: none;
   background: transparent;
@@ -622,10 +735,5 @@ onBeforeUnmount(stopPoll)
 .empty {
   text-align: center;
   padding: 40px 20px;
-}
-.empty code {
-  background: var(--surface-2);
-  padding: 1px 6px;
-  border-radius: 5px;
 }
 </style>

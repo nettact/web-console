@@ -1,7 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { createI18n } from 'vue-i18n'
-import { defineComponent } from 'vue'
 
 import en from '../locales/en'
 import Processes from './Processes.vue'
@@ -14,14 +13,39 @@ const apiMock = vi.hoisted(() => ({
   getSnapshot: vi.fn(),
 }))
 
-vi.mock('../api', () => ({ api: apiMock }))
-vi.mock('vue-router', () => ({ useRoute: () => ({ query: {} }) }))
+// The page imports RouterLink directly from vue-router, so the mock must export a
+// stub component (a name-based global stub would not replace the direct import).
+const routerMock = vi.hoisted(() => ({
+  RouterLink: {
+    name: 'RouterLink',
+    props: ['to'],
+    template: '<a><slot /></a>',
+  },
+}))
 
-const RouterLinkStub = defineComponent({
-  name: 'RouterLink',
-  props: ['to'],
-  template: '<a><slot /></a>',
-})
+vi.mock('../api', () => ({ api: apiMock }))
+vi.mock('vue-router', () => ({ useRoute: () => ({ query: {} }), RouterLink: routerMock.RouterLink }))
+
+const RouterLinkStub = routerMock.RouterLink
+
+// Snapshot scopes the fixtures report as collected. The reworked page is
+// scope-driven: which columns/controls render depends on which permission scopes
+// the agent actually collected, so fixtures carry both the agent's effective
+// permissions and the per-scope snapshot result.
+const PROC_SCOPES = [
+  'host.process.basic.read',
+  'host.process.owner.read',
+  'host.process.resource.read',
+  'host.process.io.read',
+]
+const CONN_SCOPES = [
+  'host.connection.summary.read',
+  'host.connection.local.read',
+  'host.connection.remote.read',
+  'host.connection.owner.read',
+]
+const collectedScopes = (ids: string[]) =>
+  ids.map((scope) => ({ scope, status: 'collected' as const }))
 
 const fullAgent: Agent = {
   id: 'agent-1',
@@ -31,7 +55,11 @@ const fullAgent: Agent = {
   platform: 'windows',
   agent_version: 'test',
   status: 'online',
-  capabilities: ['host.process.read', 'host.connection.read'],
+  supported: [...PROC_SCOPES, ...CONN_SCOPES],
+  granted: [...PROC_SCOPES, ...CONN_SCOPES],
+  effective: [...PROC_SCOPES, ...CONN_SCOPES],
+  policy_source: 'environment',
+  policy_hash: 'test',
   last_seen_at: null,
   created_at: '2026-01-01T00:00:00Z',
 }
@@ -39,6 +67,7 @@ const fullAgent: Agent = {
 const initialSnapshot: HostSnapshot = {
   ts: '2026-01-01T00:00:00Z',
   request_id: 'r1',
+  scopes: collectedScopes([...PROC_SCOPES, ...CONN_SCOPES]),
   process_total: 4,
   processes: [
     {
@@ -81,11 +110,15 @@ const initialSnapshot: HostSnapshot = {
 
 let wrapper: VueWrapper | undefined
 
-async function render(snapshot: HostSnapshot = initialSnapshot, agent: Agent = fullAgent) {
+async function render(
+  snapshot: HostSnapshot = initialSnapshot,
+  agent: Agent = fullAgent,
+  remediation?: { reason: string; permissions_env?: string },
+) {
   apiMock.agents.mockResolvedValue([agent])
   apiMock.agent.mockResolvedValue(agent)
   apiMock.requestSnapshot.mockResolvedValue({ request_id: snapshot.request_id })
-  apiMock.getSnapshot.mockResolvedValue({ snapshot })
+  apiMock.getSnapshot.mockResolvedValue({ snapshot, remediation })
 
   const i18n = createI18n({ legacy: false, locale: 'en', messages: { en } })
   wrapper = mount(Processes, {
@@ -171,11 +204,14 @@ describe('Processes network-connection filtering', () => {
   it('keeps a connection-only PID selected when process_name stays omitted', async () => {
     const connectionOnlyAgent: Agent = {
       ...fullAgent,
-      capabilities: ['host.connection.read'],
+      supported: CONN_SCOPES,
+      granted: CONN_SCOPES,
+      effective: CONN_SCOPES,
     }
     const first: HostSnapshot = {
       ts: initialSnapshot.ts,
       request_id: 'r1',
+      scopes: collectedScopes(CONN_SCOPES),
       process_total: 0,
       connections: [{ proto: 'udp', local_addr: '0.0.0.0:4000', pid: 40 }],
     }
@@ -214,12 +250,54 @@ describe('Processes network-connection filtering', () => {
   })
 
   it('does not expose the jump action without connection capability', async () => {
-    const processOnlyAgent: Agent = { ...fullAgent, capabilities: ['host.process.read'] }
-    const processOnlySnapshot: HostSnapshot = { ...initialSnapshot, connections: undefined }
+    const processOnlyAgent: Agent = {
+      ...fullAgent,
+      supported: PROC_SCOPES,
+      granted: PROC_SCOPES,
+      effective: PROC_SCOPES,
+    }
+    const processOnlySnapshot: HostSnapshot = {
+      ...initialSnapshot,
+      scopes: collectedScopes(PROC_SCOPES),
+      connections: undefined,
+    }
     const page = await render(processOnlySnapshot, processOnlyAgent)
 
     expect(page.findAll('button').some((item) => item.text() === 'View connections')).toBe(false)
     expect(page.find('select#conn-filter').exists()).toBe(false)
-    expect(apiMock.requestSnapshot).toHaveBeenCalledWith('agent-1', true, false)
+    expect(apiMock.requestSnapshot).toHaveBeenCalledWith('agent-1', [...PROC_SCOPES, ...CONN_SCOPES])
+  })
+
+  it('requests all desired scopes and renders remediation for a partial grant', async () => {
+    const partialAgent: Agent = {
+      ...fullAgent,
+      supported: [...PROC_SCOPES, ...CONN_SCOPES],
+      granted: ['host.process.basic.read'],
+      effective: ['host.process.basic.read'],
+    }
+    const partialSnapshot: HostSnapshot = {
+      ts: initialSnapshot.ts,
+      request_id: 'partial',
+      scopes: [
+        { scope: 'host.process.basic.read', status: 'collected' },
+        ...[...PROC_SCOPES.slice(1), ...CONN_SCOPES].map((scope) => ({
+          scope,
+          status: 'denied' as const,
+          reason: 'permission_not_granted',
+        })),
+      ],
+      process_total: 1,
+      processes: [{ pid: 10, name: 'alpha' }],
+    }
+    const env = 'NETTACT_AGENT_PERMISSIONS=host.process.basic.read,host.connection.summary.read'
+    const page = await render(partialSnapshot, partialAgent, {
+      reason: 'permission_blocked',
+      permissions_env: env,
+    })
+
+    expect(apiMock.requestSnapshot).toHaveBeenCalledWith('agent-1', [...PROC_SCOPES, ...CONN_SCOPES])
+    expect(page.get('.denial').text()).toContain(env)
+    expect(page.get('.denial').text()).toContain('not granted')
+    expect(page.text()).toContain('alpha')
   })
 })
