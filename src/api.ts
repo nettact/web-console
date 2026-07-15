@@ -473,6 +473,8 @@ export const api = {
   // Global server settings (flat key/value map, e.g. console_base_url).
   settings: () => req<Record<string, string>>('GET', '/api/v1/settings'),
   updateSettings: (patch: Record<string, string>) => req<unknown>('PUT', '/api/v1/settings', patch),
+  dashboardLayout: () => req<unknown>('GET', '/api/v1/dashboard-layout'),
+  updateDashboardLayout: (layout: unknown) => req<unknown>('PUT', '/api/v1/dashboard-layout', layout),
   incidents: (page = 1, pageSize = 15) =>
     req<IncidentPage>('GET', `/api/v1/incidents?page=${page}&page_size=${pageSize}`),
   timeline: (id: string) => req<TimelineEntry[]>('GET', `/api/v1/incidents/${encodeURIComponent(id)}/timeline`),

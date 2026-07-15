@@ -1,8 +1,18 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { onBeforeRouteLeave } from 'vue-router'
 import { api, type Agent, type AgentInterfaces, type Device, type Quota, type Sample, type StatusEvent } from '../api'
+import DashboardCardControls from '../components/DashboardCardControls.vue'
 import { toDateLocale } from '../i18n'
+import {
+  DASHBOARD_CARD_DEFINITIONS,
+  cloneDashboardLayout,
+  defaultDashboardLayout,
+  dashboardLayoutPayload,
+  normalizeDashboardLayout,
+  type DashboardCardLayout,
+} from '../lib/dashboardLayout'
 import { fmtBps, fmtBytes } from '../lib/format'
 import { natCodeLabel, natTone } from '../lib/metricMeta'
 
@@ -19,8 +29,179 @@ const ifaceData = ref<AgentInterfaces | null>(null)
 const error = ref('')
 const loading = ref(true)
 const refreshing = ref(false)
+const layoutLoading = ref(true)
+const layoutSaving = ref(false)
 let timer: number | undefined
 let loadSequence = 0
+let stopPointerCardDrag: (() => void) | undefined
+
+// The console currently has one authenticated administrator and no lesser
+// roles. The server stores one instance-wide layout, so every authenticated
+// browser connected to this server sees the same dashboard arrangement.
+const savedLayout = ref<DashboardCardLayout[]>(defaultDashboardLayout())
+const draftLayout = ref<DashboardCardLayout[]>(defaultDashboardLayout())
+const editingLayout = ref(false)
+const layoutError = ref('')
+const draggingCardID = ref('')
+const activeLayout = computed(() => editingLayout.value ? draftLayout.value : savedLayout.value)
+const layoutDirty = computed(() => JSON.stringify(draftLayout.value) !== JSON.stringify(savedLayout.value))
+const allCardsHidden = computed(() => activeLayout.value.every((card) => !card.visible))
+const hiddenCardDefinitions = computed(() =>
+  DASHBOARD_CARD_DEFINITIONS.filter((definition) => !draftLayout.value.find((card) => card.id === definition.id)?.visible),
+)
+const visibleCardCount = computed(() => draftLayout.value.filter((card) => card.visible).length)
+
+const cardDefinition = (id: string) => DASHBOARD_CARD_DEFINITIONS.find((card) => card.id === id)!
+const cardLayout = (id: string) => activeLayout.value.find((card) => card.id === id)
+const cardVisible = (id: string) => cardLayout(id)?.visible ?? false
+const cardGridStyle = (id: string): Record<string, string | number> => {
+  const index = activeLayout.value.findIndex((card) => card.id === id)
+  const size = cardLayout(id)?.size ?? 'wide'
+  return { order: index, gridColumn: `span ${size === 'compact' ? 3 : size === 'medium' ? 6 : 12}` }
+}
+
+function beginLayoutEdit() {
+  if (!editingLayout.value) draftLayout.value = cloneDashboardLayout(savedLayout.value)
+  layoutError.value = ''
+  editingLayout.value = true
+}
+
+async function loadServerLayout() {
+  try {
+    const next = normalizeDashboardLayout(await api.dashboardLayout())
+    savedLayout.value = next
+    draftLayout.value = cloneDashboardLayout(next)
+    layoutError.value = ''
+  } catch {
+    layoutError.value = t('dashboard.layoutLoadError')
+  } finally {
+    layoutLoading.value = false
+  }
+}
+
+async function saveLayout() {
+  if (layoutSaving.value) return
+  layoutSaving.value = true
+  try {
+    const stored = await api.updateDashboardLayout(dashboardLayoutPayload(draftLayout.value))
+    const next = normalizeDashboardLayout(stored)
+    savedLayout.value = next
+    draftLayout.value = cloneDashboardLayout(next)
+    layoutError.value = ''
+    editingLayout.value = false
+  } catch {
+    layoutError.value = t('dashboard.layoutSaveError')
+  } finally {
+    layoutSaving.value = false
+  }
+}
+
+function cancelLayoutEdit() {
+  if (layoutDirty.value && !window.confirm(t('dashboard.layoutDiscardConfirm'))) return
+  draftLayout.value = cloneDashboardLayout(savedLayout.value)
+  layoutError.value = ''
+  editingLayout.value = false
+}
+
+function restoreDefaultLayout() {
+  if (!window.confirm(t('dashboard.layoutRestoreConfirm'))) return
+  draftLayout.value = defaultDashboardLayout()
+}
+
+function moveVisibleCard(id: string, offset: number) {
+  const visible = draftLayout.value.filter((card) => card.visible)
+  const visibleIndex = visible.findIndex((card) => card.id === id)
+  const neighbor = visible[visibleIndex + offset]
+  if (!neighbor) return
+  const currentIndex = draftLayout.value.findIndex((card) => card.id === id)
+  const neighborIndex = draftLayout.value.findIndex((card) => card.id === neighbor.id)
+  const next = cloneDashboardLayout(draftLayout.value)
+  ;[next[currentIndex], next[neighborIndex]] = [next[neighborIndex], next[currentIndex]]
+  draftLayout.value = next
+}
+
+function visibleCardIndex(id: string): number {
+  return draftLayout.value.filter((card) => card.visible).findIndex((card) => card.id === id)
+}
+
+function updateCardSize(id: string, size: DashboardCardLayout['size']) {
+  const card = draftLayout.value.find((candidate) => candidate.id === id)
+  const definition = cardDefinition(id)
+  if (card && definition.sizes.includes(size)) card.size = size
+}
+
+function removeWidget(id: string) {
+  const card = draftLayout.value.find((candidate) => candidate.id === id)
+  if (card) card.visible = false
+}
+
+function addWidget(id: string) {
+  const card = draftLayout.value.find((candidate) => candidate.id === id)
+  if (card) card.visible = true
+}
+
+function startCardDrag(id: string, event: DragEvent) {
+  if (!editingLayout.value) return
+  draggingCardID.value = id
+  if (event.dataTransfer) {
+    event.dataTransfer.effectAllowed = 'move'
+    event.dataTransfer.setData('text/plain', id)
+  }
+}
+
+function reorderLayoutCard(sourceID: string, targetID: string) {
+  const source = draftLayout.value.findIndex((card) => card.id === sourceID)
+  const destination = draftLayout.value.findIndex((card) => card.id === targetID)
+  if (source < 0 || destination < 0 || source === destination) return
+  const next = cloneDashboardLayout(draftLayout.value)
+  const [card] = next.splice(source, 1)
+  next.splice(destination, 0, card)
+  draftLayout.value = next
+}
+
+function dropLayoutCard(targetID: string) {
+  if (!editingLayout.value) return
+  const sourceID = draggingCardID.value
+  draggingCardID.value = ''
+  reorderLayoutCard(sourceID, targetID)
+}
+
+function startPointerCardDrag(id: string, event: PointerEvent) {
+  if (!editingLayout.value) return
+  stopPointerCardDrag?.()
+  draggingCardID.value = id
+  ;(event.currentTarget as HTMLElement).setPointerCapture?.(event.pointerId)
+
+  const move = (nextEvent: PointerEvent) => {
+    const target = (document.elementFromPoint(nextEvent.clientX, nextEvent.clientY) as HTMLElement | null)
+      ?.closest<HTMLElement>('[data-layout-card]')
+    const targetID = target?.dataset.layoutCard
+    if (targetID && targetID !== id) reorderLayoutCard(id, targetID)
+  }
+  const finish = () => {
+    draggingCardID.value = ''
+    stopPointerCardDrag = undefined
+    window.removeEventListener('pointermove', move)
+    window.removeEventListener('pointerup', finish)
+    window.removeEventListener('pointercancel', finish)
+  }
+  stopPointerCardDrag = finish
+
+  window.addEventListener('pointermove', move)
+  window.addEventListener('pointerup', finish)
+  window.addEventListener('pointercancel', finish)
+}
+
+function warnUnsaved(event: BeforeUnloadEvent) {
+  if (!editingLayout.value || !layoutDirty.value) return
+  event.preventDefault()
+  event.returnValue = ''
+}
+
+onBeforeRouteLeave(() => {
+  if (!editingLayout.value || !layoutDirty.value) return true
+  return window.confirm(t('dashboard.layoutLeaveConfirm'))
+})
 
 const currentAgent = computed(() => agents.value.find((agent) => agent.id === selected.value) ?? null)
 const onlineCount = computed(() => agents.value.filter((agent) => agent.status === 'online').length)
@@ -302,12 +483,21 @@ const networkHealth = computed(() => {
   return { tone: 'good', label: t('dashboard.healthGood') }
 })
 
+const publicLosses = computed(() => byKind('probe.icmp.loss_pct').filter((sample) => sample.target !== 'gateway').map((sample) => sample.value))
+const availabilityPct = computed(() => {
+  const losses = publicLosses.value
+  if (!losses.length) return null
+  return losses.reduce((sum, loss) => sum + Math.max(0, 100 - loss), 0) / losses.length
+})
+const failureCount = computed(() => statusHistory.value.filter((event) => event.status === 'offline').length)
+
 const fmt = (value: number | null, digits = 0) => (value == null ? '—' : value.toFixed(digits))
 const fmtTime = (value: string | null | undefined) =>
   value ? new Date(value).toLocaleString(toDateLocale(locale.value), { hour12: false }) : '—'
 
 onMounted(async () => {
-  await loadAgents()
+  window.addEventListener('beforeunload', warnUnsaved)
+  await Promise.all([loadAgents(), loadServerLayout()])
   await loadMetrics()
   // Refresh agents alongside metrics: status now flips within seconds
   // server-side. loadAgents only assigns `selected` when it's empty, so the
@@ -319,6 +509,8 @@ onMounted(async () => {
 })
 onBeforeUnmount(() => {
   if (timer) window.clearInterval(timer)
+  window.removeEventListener('beforeunload', warnUnsaved)
+  stopPointerCardDrag?.()
 })
 </script>
 
@@ -339,15 +531,53 @@ onBeforeUnmount(() => {
             </option>
           </select>
         </label>
+        <button class="layout-add-button" type="button" :disabled="layoutLoading || layoutSaving" @click="beginLayoutEdit">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14" /></svg>
+          {{ t('dashboard.layoutModifyLayout') }}
+        </button>
         <button class="refresh-button" :class="{ spinning: refreshing }" :title="t('common.refresh')" @click="loadMetrics">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 6v5h-5M4 18v-5h5M6.1 9a7 7 0 0 1 11.8-2.6L20 11M4 13l2.1 4.6A7 7 0 0 0 17.9 15" /></svg>
         </button>
       </div>
     </header>
+    <section v-if="editingLayout" class="direct-layout-toolbar">
+      <div>
+        <span v-if="layoutDirty" class="unsaved-chip">{{ t('dashboard.layoutUnsaved') }}</span>
+        <p>{{ t('dashboard.layoutDirectHint') }}</p>
+      </div>
+      <p v-if="layoutError" class="err">{{ layoutError }}</p>
+      <div class="direct-layout-actions">
+        <button class="btn restore-button" type="button" @click="restoreDefaultLayout">{{ t('dashboard.layoutRestore') }}</button>
+        <button class="btn" type="button" @click="cancelLayoutEdit">{{ t('dashboard.layoutCancel') }}</button>
+        <button class="btn btn-primary" type="button" :disabled="layoutSaving || !layoutDirty" @click="saveLayout">{{ t('common.save') }}</button>
+      </div>
+    </section>
+
+    <section v-if="editingLayout" class="widget-catalog" aria-labelledby="widget-catalog-title">
+      <div class="widget-catalog-head">
+        <div>
+          <h3 id="widget-catalog-title">{{ t('dashboard.layoutCatalogTitle') }}</h3>
+          <p>{{ t('dashboard.layoutCatalogHint') }}</p>
+        </div>
+      </div>
+      <div v-if="hiddenCardDefinitions.length" class="widget-catalog-grid">
+        <article v-for="definition in hiddenCardDefinitions" :key="definition.id" class="widget-option">
+          <div class="widget-preview">
+            <span class="widget-preview-icon"><i></i><i></i><i></i><i></i></span>
+            <div><strong>{{ t(definition.titleKey) }}</strong><small>{{ definition.sizes.map((size) => t(`dashboard.layoutSize_${size}`)).join(' / ') }}</small></div>
+          </div>
+          <button class="btn btn-primary" type="button" @click="addWidget(definition.id)">
+            {{ t('dashboard.layoutAdd') }}
+          </button>
+        </article>
+      </div>
+      <p v-else class="catalog-empty">{{ t('dashboard.layoutAllWidgetsAdded') }}</p>
+    </section>
 
     <p v-if="error" class="err dashboard-error">{{ error }}</p>
+    <p v-if="layoutError && !editingLayout" class="err dashboard-error">{{ layoutError }}</p>
 
-    <div v-if="loading" class="dashboard-loading">
+    <div v-if="loading || layoutLoading" class="dashboard-loading">
       <span></span><span></span><span></span>
     </div>
 
@@ -360,7 +590,9 @@ onBeforeUnmount(() => {
     </div>
 
     <template v-else>
-      <section class="agent-hero" :class="`health-${networkHealth.tone}`">
+      <div class="custom-dashboard-grid">
+      <section v-if="cardVisible('overall')" class="agent-hero dashboard-card-shell" :class="`health-${networkHealth.tone}`" :style="cardGridStyle('overall')" data-layout-card="overall" :data-layout-editing="editingLayout || undefined" :data-dragging="draggingCardID === 'overall' || undefined" :draggable="editingLayout" @dragstart="startCardDrag('overall', $event)" @dragend="draggingCardID = ''" @dragover.prevent @drop="dropLayoutCard('overall')">
+        <DashboardCardControls v-if="editingLayout" :title="t(cardDefinition('overall').titleKey)" :size="cardLayout('overall')!.size" :sizes="cardDefinition('overall').sizes" :first="visibleCardIndex('overall') === 0" :last="visibleCardIndex('overall') === visibleCardCount - 1" @resize="updateCardSize('overall', $event)" @move="moveVisibleCard('overall', $event)" @remove="removeWidget('overall')" @pointer-drag="startPointerCardDrag('overall', $event)" />
         <div class="hero-glow"></div>
         <div class="agent-identity">
           <div class="agent-mark">
@@ -386,19 +618,44 @@ onBeforeUnmount(() => {
           <div v-if="quota"><strong>{{ quota.used }}</strong><span>/ {{ quota.max === 0 ? '∞' : quota.max }} {{ t('dashboard.agentQuota') }}</span></div>
         </div>
       </section>
+      <article v-if="cardVisible('availability')" class="insight-card dashboard-card-shell" :class="availabilityPct == null ? 'is-unknown' : availabilityPct >= 99 ? 'is-good' : availabilityPct >= 95 ? 'is-warn' : 'is-bad'" :style="cardGridStyle('availability')" data-layout-card="availability" :data-layout-editing="editingLayout || undefined" :data-dragging="draggingCardID === 'availability' || undefined" :draggable="editingLayout" @dragstart="startCardDrag('availability', $event)" @dragend="draggingCardID = ''" @dragover.prevent @drop="dropLayoutCard('availability')">
+        <DashboardCardControls v-if="editingLayout" :title="t(cardDefinition('availability').titleKey)" :size="cardLayout('availability')!.size" :sizes="cardDefinition('availability').sizes" :first="visibleCardIndex('availability') === 0" :last="visibleCardIndex('availability') === visibleCardCount - 1" @resize="updateCardSize('availability', $event)" @move="moveVisibleCard('availability', $event)" @remove="removeWidget('availability')" @pointer-drag="startPointerCardDrag('availability', $event)" />
+        <span>{{ t('dashboard.cardAvailability') }}</span>
+        <strong>{{ availabilityPct == null ? '--' : `${availabilityPct.toFixed(1)}%` }}</strong>
+        <p>{{ t('dashboard.availabilityFoot', { n: publicLosses.length }) }}</p>
+      </article>
+      <article v-if="cardVisible('latency')" class="insight-card dashboard-card-shell" :class="worstPublicRtt == null ? 'is-unknown' : worstPublicRtt < 80 ? 'is-good' : worstPublicRtt < 150 ? 'is-warn' : 'is-bad'" :style="cardGridStyle('latency')" data-layout-card="latency" :data-layout-editing="editingLayout || undefined" :data-dragging="draggingCardID === 'latency' || undefined" :draggable="editingLayout" @dragstart="startCardDrag('latency', $event)" @dragend="draggingCardID = ''" @dragover.prevent @drop="dropLayoutCard('latency')">
+        <DashboardCardControls v-if="editingLayout" :title="t(cardDefinition('latency').titleKey)" :size="cardLayout('latency')!.size" :sizes="cardDefinition('latency').sizes" :first="visibleCardIndex('latency') === 0" :last="visibleCardIndex('latency') === visibleCardCount - 1" @resize="updateCardSize('latency', $event)" @move="moveVisibleCard('latency', $event)" @remove="removeWidget('latency')" @pointer-drag="startPointerCardDrag('latency', $event)" />
+        <span>{{ t('dashboard.cardLatency') }}</span>
+        <strong>{{ worstPublicRtt == null ? '--' : `${worstPublicRtt.toFixed(0)} ms` }}</strong>
+        <p>{{ t('dashboard.latencyFoot') }}</p>
+      </article>
+      <article v-if="cardVisible('failures')" class="insight-card dashboard-card-shell" :class="failureCount ? 'is-bad' : 'is-good'" :style="cardGridStyle('failures')" data-layout-card="failures" :data-layout-editing="editingLayout || undefined" :data-dragging="draggingCardID === 'failures' || undefined" :draggable="editingLayout" @dragstart="startCardDrag('failures', $event)" @dragend="draggingCardID = ''" @dragover.prevent @drop="dropLayoutCard('failures')">
+        <DashboardCardControls v-if="editingLayout" :title="t(cardDefinition('failures').titleKey)" :size="cardLayout('failures')!.size" :sizes="cardDefinition('failures').sizes" :first="visibleCardIndex('failures') === 0" :last="visibleCardIndex('failures') === visibleCardCount - 1" @resize="updateCardSize('failures', $event)" @move="moveVisibleCard('failures', $event)" @remove="removeWidget('failures')" @pointer-drag="startPointerCardDrag('failures', $event)" />
+        <span>{{ t('dashboard.cardFailures') }}</span>
+        <strong>{{ failureCount }}</strong>
+        <p>{{ t('dashboard.failuresFoot') }}</p>
+      </article>
+      <article v-if="cardVisible('agent-status')" class="insight-card dashboard-card-shell" :class="onlineCount === agents.length ? 'is-good' : onlineCount ? 'is-warn' : 'is-bad'" :style="cardGridStyle('agent-status')" data-layout-card="agent-status" :data-layout-editing="editingLayout || undefined" :data-dragging="draggingCardID === 'agent-status' || undefined" :draggable="editingLayout" @dragstart="startCardDrag('agent-status', $event)" @dragend="draggingCardID = ''" @dragover.prevent @drop="dropLayoutCard('agent-status')">
+        <DashboardCardControls v-if="editingLayout" :title="t(cardDefinition('agent-status').titleKey)" :size="cardLayout('agent-status')!.size" :sizes="cardDefinition('agent-status').sizes" :first="visibleCardIndex('agent-status') === 0" :last="visibleCardIndex('agent-status') === visibleCardCount - 1" @resize="updateCardSize('agent-status', $event)" @move="moveVisibleCard('agent-status', $event)" @remove="removeWidget('agent-status')" @pointer-drag="startPointerCardDrag('agent-status', $event)" />
+        <span>{{ t('dashboard.cardAgentStatus') }}</span>
+        <strong>{{ onlineCount }} / {{ agents.length }}</strong>
+        <p>{{ t('dashboard.onlineAgentsFoot') }}</p>
+      </article>
 
-      <section class="metric-grid">
-        <article class="metric-card nat-kpi" :class="primaryNAT ? `is-${primaryNAT.tone}` : 'is-unknown'">
-          <div class="metric-icon nat"><svg viewBox="0 0 24 24"><path d="M12 3v4M5.6 5.6l2.8 2.8M3 12h4M5.6 18.4l2.8-2.8M12 17v4M18.4 18.4l-2.8-2.8M17 12h4M18.4 5.6l-2.8 2.8" /><circle cx="12" cy="12" r="5" /></svg></div>
-          <div class="metric-copy"><span>{{ t('dashboard.natType') }}</span><strong class="nat-type-value">{{ primaryNAT?.type ?? t('dashboard.notDetected') }}</strong><p>{{ primaryNAT?.target ?? t('dashboard.natTypeFoot') }}</p></div>
-        </article>
-        <article class="metric-card is-info">
-          <div class="metric-icon devices"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="12" rx="2" /><path d="M8 20h8M12 16v4" /></svg></div>
-          <div class="metric-copy"><span>{{ t('dashboard.lanDevices') }}</span><strong>{{ devices.length }}</strong><p>{{ t('dashboard.lanDevicesFoot') }}</p></div>
-        </article>
-      </section>
+      <article v-if="cardVisible('nat-summary')" class="metric-card nat-kpi dashboard-card-shell" :class="primaryNAT ? `is-${primaryNAT.tone}` : 'is-unknown'" :style="cardGridStyle('nat-summary')" data-layout-card="nat-summary" :data-layout-editing="editingLayout || undefined" :data-dragging="draggingCardID === 'nat-summary' || undefined" :draggable="editingLayout" @dragstart="startCardDrag('nat-summary', $event)" @dragend="draggingCardID = ''" @dragover.prevent @drop="dropLayoutCard('nat-summary')">
+        <DashboardCardControls v-if="editingLayout" :title="t(cardDefinition('nat-summary').titleKey)" :size="cardLayout('nat-summary')!.size" :sizes="cardDefinition('nat-summary').sizes" :first="visibleCardIndex('nat-summary') === 0" :last="visibleCardIndex('nat-summary') === visibleCardCount - 1" @resize="updateCardSize('nat-summary', $event)" @move="moveVisibleCard('nat-summary', $event)" @remove="removeWidget('nat-summary')" @pointer-drag="startPointerCardDrag('nat-summary', $event)" />
+        <div class="metric-icon nat"><svg viewBox="0 0 24 24"><path d="M12 3v4M5.6 5.6l2.8 2.8M3 12h4M5.6 18.4l2.8-2.8M12 17v4M18.4 18.4l-2.8-2.8M17 12h4M18.4 5.6l-2.8 2.8" /><circle cx="12" cy="12" r="5" /></svg></div>
+        <div class="metric-copy"><span>{{ t('dashboard.natType') }}</span><strong class="nat-type-value">{{ primaryNAT?.type ?? t('dashboard.notDetected') }}</strong><p>{{ primaryNAT?.target ?? t('dashboard.natTypeFoot') }}</p></div>
+      </article>
+      <article v-if="cardVisible('lan-summary')" class="metric-card is-info dashboard-card-shell" :style="cardGridStyle('lan-summary')" data-layout-card="lan-summary" :data-layout-editing="editingLayout || undefined" :data-dragging="draggingCardID === 'lan-summary' || undefined" :draggable="editingLayout" @dragstart="startCardDrag('lan-summary', $event)" @dragend="draggingCardID = ''" @dragover.prevent @drop="dropLayoutCard('lan-summary')">
+        <DashboardCardControls v-if="editingLayout" :title="t(cardDefinition('lan-summary').titleKey)" :size="cardLayout('lan-summary')!.size" :sizes="cardDefinition('lan-summary').sizes" :first="visibleCardIndex('lan-summary') === 0" :last="visibleCardIndex('lan-summary') === visibleCardCount - 1" @resize="updateCardSize('lan-summary', $event)" @move="moveVisibleCard('lan-summary', $event)" @remove="removeWidget('lan-summary')" @pointer-drag="startPointerCardDrag('lan-summary', $event)" />
+        <div class="metric-icon devices"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="12" rx="2" /><path d="M8 20h8M12 16v4" /></svg></div>
+        <div class="metric-copy"><span>{{ t('dashboard.lanDevices') }}</span><strong>{{ devices.length }}</strong><p>{{ t('dashboard.lanDevicesFoot') }}</p></div>
+      </article>
 
-      <section v-if="hasHost" class="surface system-monitor-surface dashboard-section">
+      <section v-if="(hasHost || editingLayout) && cardVisible('system-status')" class="surface system-monitor-surface dashboard-section dashboard-card-shell" :style="cardGridStyle('system-status')" data-layout-card="system-status" :data-layout-editing="editingLayout || undefined" :data-dragging="draggingCardID === 'system-status' || undefined" :draggable="editingLayout" @dragstart="startCardDrag('system-status', $event)" @dragend="draggingCardID = ''" @dragover.prevent @drop="dropLayoutCard('system-status')">
+        <DashboardCardControls v-if="editingLayout" :title="t(cardDefinition('system-status').titleKey)" :size="cardLayout('system-status')!.size" :sizes="cardDefinition('system-status').sizes" :first="visibleCardIndex('system-status') === 0" :last="visibleCardIndex('system-status') === visibleCardCount - 1" @resize="updateCardSize('system-status', $event)" @move="moveVisibleCard('system-status', $event)" @remove="removeWidget('system-status')" @pointer-drag="startPointerCardDrag('system-status', $event)" />
         <div class="surface-head compact">
           <div><span class="section-kicker">HOST</span><h3>{{ t('dashboard.systemStatus') }}</h3></div>
           <RouterLink class="icon-link" :to="{ path: '/host-metrics', query: { agent: selected } }">→</RouterLink>
@@ -462,7 +719,8 @@ onBeforeUnmount(() => {
         </div>
       </section>
 
-      <section class="surface services-surface dashboard-section">
+      <section v-if="cardVisible('important-targets')" class="surface services-surface dashboard-section dashboard-card-shell" :style="cardGridStyle('important-targets')" data-layout-card="important-targets" :data-layout-editing="editingLayout || undefined" :data-dragging="draggingCardID === 'important-targets' || undefined" :draggable="editingLayout" @dragstart="startCardDrag('important-targets', $event)" @dragend="draggingCardID = ''" @dragover.prevent @drop="dropLayoutCard('important-targets')">
+        <DashboardCardControls v-if="editingLayout" :title="t(cardDefinition('important-targets').titleKey)" :size="cardLayout('important-targets')!.size" :sizes="cardDefinition('important-targets').sizes" :first="visibleCardIndex('important-targets') === 0" :last="visibleCardIndex('important-targets') === visibleCardCount - 1" @resize="updateCardSize('important-targets', $event)" @move="moveVisibleCard('important-targets', $event)" @remove="removeWidget('important-targets')" @pointer-drag="startPointerCardDrag('important-targets', $event)" />
         <div class="surface-head">
           <div><span class="section-kicker">{{ t('dashboard.monitoring') }}</span><h3>{{ t('dashboard.serviceStatus') }}</h3></div>
           <RouterLink class="text-link" to="/target-status">{{ t('dashboard.viewAll') }} →</RouterLink>
@@ -502,8 +760,8 @@ onBeforeUnmount(() => {
         </div>
       </section>
 
-      <section class="resource-overview-grid dashboard-section">
-        <section class="surface overview-resource-panel devices-surface">
+        <section v-if="cardVisible('lan-devices')" class="surface overview-resource-panel devices-surface dashboard-card-shell" :style="cardGridStyle('lan-devices')" data-layout-card="lan-devices" :data-layout-editing="editingLayout || undefined" :data-dragging="draggingCardID === 'lan-devices' || undefined" :draggable="editingLayout" @dragstart="startCardDrag('lan-devices', $event)" @dragend="draggingCardID = ''" @dragover.prevent @drop="dropLayoutCard('lan-devices')">
+          <DashboardCardControls v-if="editingLayout" :title="t(cardDefinition('lan-devices').titleKey)" :size="cardLayout('lan-devices')!.size" :sizes="cardDefinition('lan-devices').sizes" :first="visibleCardIndex('lan-devices') === 0" :last="visibleCardIndex('lan-devices') === visibleCardCount - 1" @resize="updateCardSize('lan-devices', $event)" @move="moveVisibleCard('lan-devices', $event)" @remove="removeWidget('lan-devices')" @pointer-drag="startPointerCardDrag('lan-devices', $event)" />
           <div class="resource-panel-head">
             <span class="resource-panel-icon devices"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="13" rx="2"/><path d="M8 21h8M12 17v4"/></svg></span>
             <h3>{{ t('dashboard.lanDevices') }}</h3>
@@ -526,7 +784,8 @@ onBeforeUnmount(() => {
           </div>
         </section>
 
-        <section class="surface overview-resource-panel interface-surface">
+        <section v-if="cardVisible('interfaces')" class="surface overview-resource-panel interface-surface dashboard-card-shell" :style="cardGridStyle('interfaces')" data-layout-card="interfaces" :data-layout-editing="editingLayout || undefined" :data-dragging="draggingCardID === 'interfaces' || undefined" :draggable="editingLayout" @dragstart="startCardDrag('interfaces', $event)" @dragend="draggingCardID = ''" @dragover.prevent @drop="dropLayoutCard('interfaces')">
+          <DashboardCardControls v-if="editingLayout" :title="t(cardDefinition('interfaces').titleKey)" :size="cardLayout('interfaces')!.size" :sizes="cardDefinition('interfaces').sizes" :first="visibleCardIndex('interfaces') === 0" :last="visibleCardIndex('interfaces') === visibleCardCount - 1" @resize="updateCardSize('interfaces', $event)" @move="moveVisibleCard('interfaces', $event)" @remove="removeWidget('interfaces')" @pointer-drag="startPointerCardDrag('interfaces', $event)" />
           <div class="resource-panel-head">
             <span class="resource-panel-icon interfaces"><svg viewBox="0 0 24 24"><rect x="5" y="7" width="14" height="10" rx="2"/><path d="M9 11h6M12 7V3M12 17v4M8 3h8"/></svg></span>
             <h3>{{ t('dashboard.adapterList') }}</h3>
@@ -574,7 +833,8 @@ onBeforeUnmount(() => {
           </div>
         </section>
 
-        <section class="surface overview-resource-panel disk-surface">
+        <section v-if="cardVisible('disks')" class="surface overview-resource-panel disk-surface dashboard-card-shell" :style="cardGridStyle('disks')" data-layout-card="disks" :data-layout-editing="editingLayout || undefined" :data-dragging="draggingCardID === 'disks' || undefined" :draggable="editingLayout" @dragstart="startCardDrag('disks', $event)" @dragend="draggingCardID = ''" @dragover.prevent @drop="dropLayoutCard('disks')">
+          <DashboardCardControls v-if="editingLayout" :title="t(cardDefinition('disks').titleKey)" :size="cardLayout('disks')!.size" :sizes="cardDefinition('disks').sizes" :first="visibleCardIndex('disks') === 0" :last="visibleCardIndex('disks') === visibleCardCount - 1" @resize="updateCardSize('disks', $event)" @move="moveVisibleCard('disks', $event)" @remove="removeWidget('disks')" @pointer-drag="startPointerCardDrag('disks', $event)" />
           <div class="resource-panel-head">
             <span class="resource-panel-icon disks"><svg viewBox="0 0 24 24"><path d="M5 4h14l2 5v10H3V9l2-5zM3 10h18M7 15h.01M11 15h6"/></svg></span>
             <h3>{{ t('dashboard.diskStatus') }}</h3>
@@ -597,7 +857,8 @@ onBeforeUnmount(() => {
           </div>
         </section>
 
-        <section class="surface overview-resource-panel activity-surface">
+        <section v-if="cardVisible('activity')" class="surface overview-resource-panel activity-surface dashboard-card-shell" :style="cardGridStyle('activity')" data-layout-card="activity" :data-layout-editing="editingLayout || undefined" :data-dragging="draggingCardID === 'activity' || undefined" :draggable="editingLayout" @dragstart="startCardDrag('activity', $event)" @dragend="draggingCardID = ''" @dragover.prevent @drop="dropLayoutCard('activity')">
+          <DashboardCardControls v-if="editingLayout" :title="t(cardDefinition('activity').titleKey)" :size="cardLayout('activity')!.size" :sizes="cardDefinition('activity').sizes" :first="visibleCardIndex('activity') === 0" :last="visibleCardIndex('activity') === visibleCardCount - 1" @resize="updateCardSize('activity', $event)" @move="moveVisibleCard('activity', $event)" @remove="removeWidget('activity')" @pointer-drag="startPointerCardDrag('activity', $event)" />
           <div class="resource-panel-head">
             <span class="resource-panel-icon activity"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v6l4 2"/></svg></span>
             <h3>{{ t('dashboard.recentActivity') }}</h3>
@@ -623,7 +884,12 @@ onBeforeUnmount(() => {
             </div>
           </div>
         </section>
-      </section>
+      </div>
+        <section v-if="allCardsHidden" class="card empty-layout-state">
+          <h3>{{ t('dashboard.layoutAllHidden') }}</h3>
+          <p>{{ t('dashboard.layoutAllHiddenHint') }}</p>
+          <button v-if="!editingLayout" class="btn btn-primary" type="button" @click="beginLayoutEdit">{{ t('dashboard.layoutAddWidget') }}</button>
+        </section>
     </template>
   </main>
 </template>
@@ -669,7 +935,6 @@ onBeforeUnmount(() => {
 .health-good .health-summary strong { color: var(--success); }.health-warn .health-summary strong { color: var(--warning); }.health-bad .health-summary strong { color: var(--danger); }
 .fleet-summary { display: flex; gap: 26px; padding-left: 26px; border-left: 1px solid var(--border); z-index: 1; }.fleet-summary div { display: grid; }.fleet-summary strong { font-size: 24px; line-height: 1.1; }.fleet-summary span { color: var(--text-muted); font-size: 10px; white-space: nowrap; }
 
-.metric-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; margin-bottom: 18px; }
 .metric-card { position: relative; display: flex; align-items: center; gap: 14px; min-height: 126px; padding: 20px; overflow: hidden; border: 1px solid var(--border); border-radius: 18px; background: var(--surface); box-shadow: var(--shadow-soft); }
 .metric-card::after { content: ''; position: absolute; right: -28px; bottom: -42px; width: 110px; height: 110px; border-radius: 50%; background: currentColor; opacity: .045; }
 .metric-card.is-good { color: var(--success); }.metric-card.is-warn { color: var(--warning); }.metric-card.is-bad { color: var(--danger); }.metric-card.is-unknown, .metric-card.is-info { color: var(--primary); }
@@ -684,6 +949,19 @@ onBeforeUnmount(() => {
 .service-row { display: flex; align-items: center; gap: 7px; min-height: 31px; border-top: 1px solid color-mix(in srgb, var(--border) 60%, transparent); }.service-row:first-of-type { border-top: 0; }.target-name { flex: 1; overflow: hidden; color: var(--text-dim); text-overflow: ellipsis; white-space: nowrap; }.service-row .value { color: var(--text); font-size: 11px; font-variant-numeric: tabular-nums; white-space: nowrap; }.http-status { padding: 1px 5px; font-size: 9px; font-weight: 700; border-radius: 5px; }.http-status.good { color: var(--success); background: var(--success-soft); }.http-status.bad { color: var(--danger); background: var(--danger-soft); }.mini-empty { padding: 16px 0; color: var(--text-muted); font-size: 11px; }.mini-empty.padded { padding: 28px 20px; text-align: center; }
 
 .system-monitor-surface { padding-bottom: 16px; }.system-monitor-grid { display: grid; grid-template-columns: minmax(280px, .95fr) minmax(420px, 1.25fr); gap: 14px; padding: 16px; }.monitor-primary-column, .monitor-secondary-column { display: grid; gap: 14px; min-width: 0; }.monitor-primary-column { grid-template-rows: 1fr 1fr; }.monitor-secondary-column { grid-template-rows: auto 1fr auto; }.monitor-card { min-width: 0; padding: 18px 20px; border: 1px solid var(--border); border-radius: 14px; background: linear-gradient(145deg, var(--surface-2), color-mix(in srgb, var(--surface-2) 72%, var(--primary-soft))); box-shadow: inset 0 1px rgba(255,255,255,.025); }.monitor-card-title { display: flex; align-items: center; gap: 10px; }.monitor-card-title > strong { font-size: 14px; }.monitor-icon { display: grid; place-items: center; width: 30px; height: 30px; flex: none; border-radius: 9px; }.monitor-icon svg { width: 20px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }.monitor-icon.cpu { color: var(--success); background: var(--success-soft); }.monitor-icon.memory, .monitor-icon.load, .monitor-icon.io, .monitor-icon.uptime { color: var(--primary); background: var(--primary-soft); }.monitor-big-value { display: block; margin-top: 14px; font-size: clamp(34px, 4vw, 48px); font-weight: 700; line-height: 1; letter-spacing: -.04em; font-variant-numeric: tabular-nums; }.cpu-value { color: var(--success); }.memory-value { color: var(--primary); }.monitor-card p { margin: 12px 0 0; color: var(--text-muted); font-size: 12px; }.cpu-monitor-body { display: flex; align-items: center; justify-content: space-between; gap: 20px; }.usage-ring { --usage-angle: 0deg; position: relative; display: block; width: 70px; height: 70px; flex: none; border-radius: 50%; background: conic-gradient(var(--success) var(--usage-angle), color-mix(in srgb, var(--success) 13%, var(--surface-2)) 0); }.usage-ring::after { content: ''; position: absolute; inset: 9px; border-radius: 50%; background: var(--surface-solid); }.usage-ring i { position: absolute; inset: 16px; z-index: 1; border-radius: 50%; background: var(--surface-2); }.memory-progress { height: 8px; margin-top: 18px; overflow: hidden; border-radius: 999px; background: color-mix(in srgb, var(--primary) 12%, var(--surface)); }.memory-progress i { display: block; height: 100%; border-radius: inherit; background: linear-gradient(90deg, var(--primary-strong), var(--primary)); box-shadow: 0 0 12px var(--primary-glow); }.load-monitor-card { padding-bottom: 14px; }.load-dials { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin-top: 10px; }.load-dial-item { display: grid; justify-items: center; min-width: 0; }.load-dial-item > span { margin-top: -2px; color: var(--text-muted); font-size: 11px; white-space: nowrap; }.load-dial-item > span strong { color: var(--text); }.load-dial { --needle-angle: -125deg; position: relative; width: 74px; height: 48px; overflow: hidden; }.load-dial::before { content: ''; position: absolute; left: 5px; top: 5px; width: 64px; height: 64px; border-radius: 50%; background: conic-gradient(from 225deg, var(--success) 0 17%, var(--primary) 17% 36%, var(--warning) 36% 50%, var(--danger) 50% 56%, transparent 56% 100%); -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 9px), #000 0); mask: radial-gradient(farthest-side, transparent calc(100% - 9px), #000 0); opacity: .9; }.load-dial i { position: absolute; left: 36px; bottom: 4px; width: 2px; height: 27px; z-index: 1; border-radius: 2px; background: var(--text); transform: rotate(var(--needle-angle)); transform-origin: 50% 100%; }.load-dial b { position: absolute; left: 32px; bottom: 0; width: 10px; height: 10px; z-index: 2; border: 3px solid var(--surface-solid); border-radius: 50%; background: var(--text); }.io-monitor-card { display: grid; align-content: center; }.io-values { display: grid; gap: 10px; margin-top: 14px; }.io-values > div { display: grid; grid-template-columns: 24px 70px 1fr; align-items: center; gap: 6px; }.io-values span { color: var(--text-muted); }.io-values strong { font-size: 16px; font-variant-numeric: tabular-nums; }.io-arrow { font-size: 22px; line-height: 1; }.io-arrow.up { color: var(--success); }.io-arrow.down { color: var(--primary); }.uptime-monitor-card { display: flex; align-items: center; gap: 14px; padding-top: 14px; padding-bottom: 14px; }.uptime-monitor-card > div { display: grid; }.uptime-monitor-card span { color: var(--text-muted); font-size: 11px; }.uptime-monitor-card strong { margin-top: 2px; font-size: 20px; font-variant-numeric: tabular-nums; }
+.system-monitor-surface { container-type: inline-size; }
+@container (max-width: 680px) {
+  .system-monitor-surface .system-monitor-grid { grid-template-columns: 1fr; }
+  .system-monitor-surface .monitor-primary-column {
+    grid-template-columns: 1fr 1fr;
+    grid-template-rows: auto;
+  }
+  .system-monitor-surface .monitor-secondary-column {
+    grid-template-columns: 1fr 1fr;
+    grid-template-rows: auto;
+  }
+  .system-monitor-surface .load-monitor-card { grid-column: 1 / -1; }
+}
 .resource-card { display: grid; align-content: center; min-width: 0; min-height: 92px; padding: 15px 16px; border: 1px solid var(--border); border-radius: 13px; background: var(--surface-2); }.resource-card > div:first-child { display: flex; justify-content: space-between; gap: 12px; font-size: 11px; }.resource-card span { color: var(--text-muted); }.resource-card em { margin-left: 4px; color: var(--text-dim); font-style: normal; }.resource-card strong { font-variant-numeric: tabular-nums; }.resource-card > small { display: block; margin-top: 5px; color: var(--text-muted); font-size: 9px; text-align: right; }.resource-track { height: 5px; margin-top: 9px; overflow: hidden; border-radius: 99px; background: var(--surface); }.resource-track i { display: block; height: 100%; border-radius: inherit; background: var(--primary); }.resource-track i.is-good { background: var(--success); }.resource-track i.is-warn { background: var(--warning); }.resource-track i.is-bad { background: var(--danger); }
 
 /* Keep the system monitor compact so its inner cards have a useful width. */
@@ -791,7 +1069,7 @@ onBeforeUnmount(() => {
   min-height: 0;
   overflow: auto;
   flex: 1;
-  overscroll-behavior: contain;
+  overscroll-behavior-y: auto;
   scrollbar-width: none;
   -ms-overflow-style: none;
 }
@@ -977,8 +1255,119 @@ onBeforeUnmount(() => {
   .resource-panel-icon { width: 36px; height: 36px; }
   .resource-panel-head h3 { font-size: 16px; }
 }
-@media (max-width: 1120px) { .metric-grid { grid-template-columns: repeat(2, 1fr); }.service-columns { grid-template-columns: repeat(2, minmax(0, 1fr)); }.service-group:nth-child(odd) { border-left: 0; }.service-group:nth-child(n + 3) { border-top: 1px solid var(--border); }.agent-hero { grid-template-columns: 1fr auto; }.fleet-summary { grid-column: 1 / -1; padding: 16px 0 0; border-top: 1px solid var(--border); border-left: 0; } }
+@media (max-width: 1120px) { .service-columns { grid-template-columns: repeat(2, minmax(0, 1fr)); }.service-group:nth-child(odd) { border-left: 0; }.service-group:nth-child(n + 3) { border-top: 1px solid var(--border); }.agent-hero { grid-template-columns: 1fr auto; }.fleet-summary { grid-column: 1 / -1; padding: 16px 0 0; border-top: 1px solid var(--border); border-left: 0; } }
 @media (max-width: 900px) { .system-monitor-grid { grid-template-columns: 1fr; }.monitor-primary-column { grid-template-columns: 1fr 1fr; grid-template-rows: auto; }.monitor-secondary-column { grid-template-columns: 1fr 1fr; grid-template-rows: auto; }.load-monitor-card { grid-column: 1 / -1; } }
-@media (max-width: 760px) { .dashboard-page { padding: 22px 16px 42px; }.dashboard-head { align-items: stretch; flex-direction: column; }.head-actions, .agent-picker { width: 100%; }.agent-picker { flex: 1; }.agent-picker select { width: 100%; min-width: 0; }.agent-hero { grid-template-columns: 1fr; padding: 22px; }.health-summary { padding-top: 16px; border-top: 1px solid var(--border); }.fleet-summary { grid-column: auto; }.metric-grid, .service-columns, .monitor-primary-column, .monitor-secondary-column { grid-template-columns: 1fr; }.load-monitor-card { grid-column: auto; }.service-group + .service-group { border-top: 1px solid var(--border); border-left: 0; }.metric-card { min-height: 108px; }.service-group { padding: 14px 16px; }.system-monitor-grid { padding: 12px; }.load-dials { gap: 8px; }.io-values > div { grid-template-columns: 24px 60px 1fr; } }
-@media (max-width: 420px) { .metric-grid { grid-template-columns: 1fr; }.fleet-summary { flex-direction: column; gap: 12px; }.agent-identity { align-items: flex-start; }.agent-line { align-items: flex-start; flex-direction: column; gap: 4px; } }
+@media (max-width: 760px) { .dashboard-page { padding: 22px 16px 42px; }.dashboard-head { align-items: stretch; flex-direction: column; }.head-actions, .agent-picker { width: 100%; }.agent-picker { flex: 1; }.agent-picker select { width: 100%; min-width: 0; }.agent-hero { grid-template-columns: 1fr; padding: 22px; }.health-summary { padding-top: 16px; border-top: 1px solid var(--border); }.fleet-summary { grid-column: auto; }.service-columns, .monitor-primary-column, .monitor-secondary-column { grid-template-columns: 1fr; }.load-monitor-card { grid-column: auto; }.service-group + .service-group { border-top: 1px solid var(--border); border-left: 0; }.metric-card { min-height: 108px; }.service-group { padding: 14px 16px; }.system-monitor-grid { padding: 12px; }.load-dials { gap: 8px; }.io-values > div { grid-template-columns: 24px 60px 1fr; } }
+@media (max-width: 420px) { .fleet-summary { flex-direction: column; gap: 12px; }.agent-identity { align-items: flex-start; }.agent-line { align-items: flex-start; flex-direction: column; gap: 4px; } }
+/* Server-synced dashboard layout editor and the shared 12-column card grid. */
+.layout-add-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  height: 42px;
+  padding: 0 13px;
+  color: var(--primary);
+  font-size: 11px;
+  font-weight: 700;
+  border: 1px solid color-mix(in srgb, var(--primary) 42%, var(--border));
+  border-radius: 11px;
+  background: var(--primary-soft);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.layout-add-button:hover { border-color: var(--primary); }
+.layout-add-button svg { width: 16px; fill: none; stroke: currentColor; stroke-width: 1.7; }
+.unsaved-chip { padding: 4px 9px; color: var(--warning); font-size: 10px; font-weight: 700; border-radius: 999px; background: color-mix(in srgb, var(--warning) 12%, transparent); }
+.custom-dashboard-grid { display: grid; grid-template-columns: repeat(12, minmax(0, 1fr)); align-items: start; gap: 18px; }
+.dashboard-card-shell { position: relative; min-width: 0; margin: 0 !important; transition: opacity .16s ease, transform .16s ease, outline-color .16s ease; }
+.custom-dashboard-grid > .devices-surface,
+.custom-dashboard-grid > .interface-surface,
+.custom-dashboard-grid > .disk-surface,
+.custom-dashboard-grid > .activity-surface {
+  grid-row: auto; min-height: 0; height: auto; align-self: stretch;
+}
+.insight-card {
+  --insight-color: var(--primary);
+  display: grid;
+  align-content: center;
+  min-width: 0;
+  min-height: 126px;
+  padding: 18px 20px;
+  border: 1px solid color-mix(in srgb, var(--insight-color) 25%, var(--border));
+  border-radius: 18px;
+  background: linear-gradient(145deg, var(--surface), color-mix(in srgb, var(--insight-color) 5%, var(--surface)));
+  box-shadow: var(--shadow-soft);
+}
+.insight-card.is-good { --insight-color: var(--success); }
+.insight-card.is-warn { --insight-color: var(--warning); }
+.insight-card.is-bad { --insight-color: var(--danger); }
+.insight-card > span { color: var(--text-muted); font-size: 10px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
+.insight-card strong { margin-top: 7px; color: var(--insight-color); font-size: 28px; font-variant-numeric: tabular-nums; }
+.insight-card p { margin: 4px 0 0; color: var(--text-muted); font-size: 10px; }
+.empty-layout-state { margin-top: 18px; padding: 48px 20px; }
+.empty-layout-state p { margin: 0 0 10px; color: var(--text-muted); }
+@media (max-width: 900px) {
+  .dashboard-card-shell { grid-column: 1 / -1 !important; }
+}
+.direct-layout-toolbar {
+  position: sticky;
+  top: max(10px, env(safe-area-inset-top));
+  z-index: 900;
+  pointer-events: none;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin: -8px 0 20px;
+  padding: 12px 14px;
+  border: 1px solid color-mix(in srgb, var(--primary) 35%, var(--border));
+  border-radius: 14px;
+  background: var(--surface);
+  box-shadow: 0 12px 30px -22px rgba(15, 23, 42, .72);
+  backdrop-filter: blur(16px);
+}
+.direct-layout-toolbar > div:first-child { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.direct-layout-toolbar p { margin: 0; color: var(--text-muted); font-size: 11px; }
+.direct-layout-toolbar > .err { margin-left: auto; }
+.direct-layout-actions { display: flex; gap: 8px; margin-left: auto; pointer-events: auto; }
+.widget-catalog {
+  position: relative;
+  z-index: 1;
+  width: 100%;
+  max-height: min(560px, 70vh);
+  margin: -8px 0 20px;
+  padding: 20px;
+  overflow: auto;
+  color: var(--text);
+  border: 1px solid color-mix(in srgb, var(--primary) 38%, var(--border));
+  border-radius: 18px;
+  background: var(--surface-solid);
+  box-shadow: var(--shadow-soft);
+}
+.widget-catalog-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-bottom: 16px; }
+.widget-catalog-head h3 { font-size: 20px; }
+.widget-catalog-head p { margin: 4px 0 0; color: var(--text-muted); font-size: 11px; }
+.widget-catalog-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.widget-option { display: flex; align-items: center; gap: 12px; min-width: 0; padding: 12px; border: 1px solid var(--border); border-radius: 14px; background: var(--surface-2); }
+.widget-preview { display: flex; align-items: center; gap: 11px; min-width: 0; flex: 1; }
+.widget-preview > div { display: grid; min-width: 0; }
+.widget-preview strong { overflow: hidden; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+.widget-preview small { margin-top: 3px; color: var(--text-muted); font-size: 9px; }
+.widget-preview-icon { display: grid; grid-template-columns: repeat(2, 12px); gap: 3px; padding: 8px; flex: none; border-radius: 9px; background: var(--primary-soft); }
+.widget-preview-icon i { width: 12px; height: 9px; border-radius: 2px; background: color-mix(in srgb, var(--primary) 62%, transparent); }
+.widget-option > .btn { flex: none; }
+.catalog-empty { padding: 48px 20px; color: var(--text-muted); text-align: center; }
+.dashboard-card-shell[data-layout-editing] {
+  outline: 2px solid color-mix(in srgb, var(--primary) 52%, transparent);
+  outline-offset: 2px;
+  cursor: grab;
+  user-select: none;
+}
+.dashboard-card-shell[data-layout-editing] > :not(.dashboard-card-controls) { pointer-events: none; }
+.dashboard-card-shell[data-dragging] { opacity: .38; transform: scale(.985); }
+@media (max-width: 680px) {
+  .direct-layout-toolbar { align-items: stretch; flex-direction: column; }
+  .direct-layout-actions { width: 100%; margin-left: 0; }
+  .direct-layout-actions .restore-button { margin-right: auto; }
+  .widget-catalog-grid { grid-template-columns: 1fr; }
+}
 </style>

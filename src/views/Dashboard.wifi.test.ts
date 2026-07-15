@@ -8,6 +8,8 @@ import type { Agent, AgentInterfaces, Sample, StatusEvent } from '../api'
 
 const apiMock = vi.hoisted(() => ({
   agents: vi.fn(),
+  dashboardLayout: vi.fn(),
+  updateDashboardLayout: vi.fn(),
   quota: vi.fn(),
   metrics: vi.fn(),
   latest: vi.fn(),
@@ -54,6 +56,7 @@ async function render(
   agent: Agent = baseAgent,
   latest: Sample[] = [],
   history: StatusEvent[] = [],
+  layout: unknown = null,
 ) {
   apiMock.agents.mockResolvedValue([agent])
   apiMock.quota.mockResolvedValue({ used: 1, max: 10 })
@@ -61,6 +64,8 @@ async function render(
   apiMock.latest.mockResolvedValue(latest)
   apiMock.listDevices.mockResolvedValue([])
   apiMock.agentStatusHistory.mockResolvedValue(history)
+  apiMock.dashboardLayout.mockResolvedValue(layout)
+  apiMock.updateDashboardLayout.mockImplementation(async (payload: unknown) => payload)
   apiMock.agentInterfaces.mockResolvedValue(ifaces)
 
   wrapper = mount(Dashboard, {
@@ -174,5 +179,86 @@ describe('Dashboard network adapter list', () => {
     expect(events[1].classes()).toContain('is-online')
     expect(events.slice(0, 3).map((event) => event.get('.row-number').text())).toEqual(['1', '2', '3'])
     expect(wrapper?.get('.activity-surface').text()).toContain('20 records')
+  })
+  it('applies the instance layout returned by the server on initial load', async () => {
+    const serverLayout = {
+      version: 1,
+      cards: [
+        { id: 'availability', visible: true, size: 'medium' },
+        { id: 'overall', visible: true, size: 'wide' },
+        { id: 'latency', visible: false, size: 'compact' },
+      ],
+    }
+    await render(connected, baseAgent, [], [], serverLayout)
+
+    const availability = wrapper!.findAll('.insight-card').find((card) => card.text().includes('Current availability'))!
+    expect(availability.attributes('style')).toContain('order: 0')
+    expect(wrapper!.get('.agent-hero').attributes('style')).toContain('order: 1')
+    expect(wrapper!.findAll('.insight-card').some((card) => card.text().includes('Current latency'))).toBe(false)
+  })
+
+  it('directly drags, resizes, removes, and re-adds widgets before saving', async () => {
+    await render(connected)
+
+    await wrapper!.get('.layout-add-button').trigger('click')
+    expect(wrapper!.find('.layout-card-list').exists()).toBe(false)
+    expect(wrapper!.find('.widget-catalog').exists()).toBe(true)
+    await wrapper!.get('.dashboard-page').trigger('click')
+    expect(wrapper!.find('.widget-catalog').exists()).toBe(true)
+
+    const cards = wrapper!.findAll('.insight-card')
+    const availability = cards.find((card) => card.text().includes('Current availability'))!
+    const latency = cards.find((card) => card.text().includes('Current latency'))!
+    const dataTransfer = { effectAllowed: '', setData: vi.fn() }
+    await latency.trigger('dragstart', { dataTransfer })
+    await availability.trigger('drop')
+    await latency.findAll('.ratio-buttons button')[1].trigger('click')
+
+    await wrapper!.get('.interface-surface .remove-card-button').trigger('click')
+    expect(wrapper!.find('.interface-surface').exists()).toBe(false)
+    expect(wrapper!.find('.widget-catalog').exists()).toBe(true)
+    const adapterOption = wrapper!.findAll('.widget-option').find((option) => option.text().includes('Network adapters'))!
+    await adapterOption.get('.btn-primary').trigger('click')
+    expect(wrapper!.find('.interface-surface').exists()).toBe(true)
+    expect(wrapper!.find('.widget-catalog').exists()).toBe(true)
+    await wrapper!.get('.interface-surface .remove-card-button').trigger('click')
+
+    await wrapper!.get('.direct-layout-actions .btn-primary').trigger('click')
+    await flushPromises()
+    expect(wrapper!.find('.widget-catalog').exists()).toBe(false)
+    const stored = apiMock.updateDashboardLayout.mock.calls[0][0]
+    expect(stored.cards.find((card: { id: string }) => card.id === 'interfaces').visible).toBe(false)
+    expect(stored.cards.find((card: { id: string }) => card.id === 'latency').size).toBe('medium')
+    expect(stored.cards.slice(0, 3).map((card: { id: string }) => card.id)).toEqual([
+      'overall', 'latency', 'availability',
+    ])
+  })
+
+  it('keeps the layout draft open when the server save fails', async () => {
+    await render(connected)
+
+    apiMock.updateDashboardLayout.mockRejectedValueOnce(new Error('server unavailable'))
+    await wrapper!.get('.layout-add-button').trigger('click')
+    await wrapper!.get('.interface-surface .remove-card-button').trigger('click')
+    await wrapper!.get('.direct-layout-actions .btn-primary').trigger('click')
+    await flushPromises()
+
+    expect(wrapper!.find('.widget-catalog').exists()).toBe(true)
+    expect(wrapper!.get('.direct-layout-toolbar .err').text()).toContain('Could not save the layout')
+    expect(apiMock.updateDashboardLayout).toHaveBeenCalledOnce()
+  })
+
+  it('keeps an add-widget recovery action when every widget is hidden', async () => {
+    await render(connected)
+
+    await wrapper!.get('.layout-add-button').trigger('click')
+    while (wrapper!.find('.remove-card-button').exists()) {
+      await wrapper!.get('.remove-card-button').trigger('click')
+    }
+    await wrapper!.get('.direct-layout-actions .btn-primary').trigger('click')
+
+    const empty = wrapper!.get('.empty-layout-state')
+    expect(empty.text()).toContain('All widgets are hidden')
+    expect(empty.get('button').text()).toContain('Add widget')
   })
 })
