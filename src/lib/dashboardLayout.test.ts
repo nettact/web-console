@@ -11,8 +11,9 @@ import {
 describe('dashboard layout', () => {
   it('uses the documented default order and keeps the required cards visible', () => {
     const layout = defaultDashboardLayout()
-    expect(layout.map((card) => card.id).slice(0, 6)).toEqual([
-      'overall', 'availability', 'latency', 'failures', 'agent-status', 'important-targets',
+    expect(layout.map((card) => card.id).slice(0, 13)).toEqual([
+      'overall', 'availability', 'latency', 'failures', 'agent-status', 'active-alerts', 'monitor-health',
+      'network-quality', 'data-freshness', 'wifi-summary', 'traffic-trend', 'incident-summary', 'important-targets',
     ])
     expect(layout.every((card) => card.visible)).toBe(true)
     const systemStatus = DASHBOARD_CARD_DEFINITIONS.find((card) => card.id === 'system-status')!

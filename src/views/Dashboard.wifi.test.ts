@@ -16,6 +16,9 @@ const apiMock = vi.hoisted(() => ({
   listDevices: vi.fn(),
   agentStatusHistory: vi.fn(),
   agentInterfaces: vi.fn(),
+  alerts: vi.fn(),
+  agentMonitorStatus: vi.fn(),
+  incidents: vi.fn(),
 }))
 
 vi.mock('../api', () => ({ api: apiMock }))
@@ -64,6 +67,9 @@ async function render(
   apiMock.latest.mockResolvedValue(latest)
   apiMock.listDevices.mockResolvedValue([])
   apiMock.agentStatusHistory.mockResolvedValue(history)
+  apiMock.alerts.mockResolvedValue([])
+  apiMock.agentMonitorStatus.mockResolvedValue([])
+  apiMock.incidents.mockResolvedValue({ items: [], total: 0, page: 1, page_size: 1, summary: { open: 0, opened_24h: 0, resolved_24h: 0, top_layer: '' } })
   apiMock.dashboardLayout.mockResolvedValue(layout)
   apiMock.updateDashboardLayout.mockImplementation(async (payload: unknown) => payload)
   apiMock.agentInterfaces.mockResolvedValue(ifaces)
@@ -260,5 +266,55 @@ describe('Dashboard network adapter list', () => {
     const empty = wrapper!.get('.empty-layout-state')
     expect(empty.text()).toContain('All widgets are hidden')
     expect(empty.get('button').text()).toContain('Add widget')
+  })
+
+  it('renders the action, freshness, wireless, trend, and incident widgets', async () => {
+    apiMock.alerts.mockResolvedValueOnce([{
+      id: 'alert-1', rule_name: 'Public loss', agent_id: 'agent-1', agent_host: 'host-1',
+      target: '1.1.1.1', layer: 'internet', severity: 'critical', state: 'firing', value: 100,
+      started_at: '2026-07-16T01:00:00Z', desc_en: 'Packet loss is critical',
+    }])
+    apiMock.agentMonitorStatus.mockResolvedValueOnce([
+      {
+        agent_id: 'agent-1', monitor_id: 'icmp-1', kind: 'icmp', target: '1.1.1.1',
+        status: 'active', missing_permissions: [], config_version: 1, updated_at: '2026-07-16T02:00:00Z',
+      },
+      {
+        agent_id: 'agent-1', monitor_id: 'dns-1', kind: 'dns', target: 'example.com',
+        status: 'permission_blocked', missing_permissions: ['network.dns'], config_version: 1,
+        updated_at: '2026-07-16T02:00:00Z',
+      },
+    ])
+    apiMock.incidents.mockResolvedValueOnce({
+      items: [], total: 4, page: 1, page_size: 1,
+      summary: { open: 2, opened_24h: 3, resolved_24h: 1, top_layer: 'dns' },
+    })
+    const history = (kind: string, value: number, unit: string): Sample[] => [{
+      ts: '2026-07-16T01:55:00Z', kind, target: kind.startsWith('probe.') ? '1.1.1.1' : 'host',
+      layer: kind.startsWith('probe.') ? 'internet' : 'host', value, unit, monitor_id: kind.startsWith('probe.') ? 'icmp-1' : undefined,
+    }]
+    apiMock.metrics
+      .mockResolvedValueOnce(history('probe.icmp.rtt_ms', 42, 'ms'))
+      .mockResolvedValueOnce(history('probe.icmp.loss_pct', 2, 'pct'))
+      .mockResolvedValueOnce(history('probe.icmp.jitter_ms', 4, 'ms'))
+      .mockResolvedValueOnce(history('host.net.rx_bps', 2048, 'bps'))
+      .mockResolvedValueOnce(history('host.net.tx_bps', 1024, 'bps'))
+
+    await render(connected, baseAgent, [
+      ...history('probe.icmp.loss_pct', 100, 'pct'),
+      ...history('host.net.rx_bps', 2048, 'bps'),
+      ...history('host.net.tx_bps', 1024, 'bps'),
+    ])
+
+    expect(wrapper!.get('.alert-summary-card').text()).toContain('Public loss')
+    expect(wrapper!.get('[data-layout-card="monitor-health"]').text()).toContain('Probe failed')
+    expect(wrapper!.get('[data-layout-card="monitor-health"]').text()).toContain('Permission / target blocked')
+    expect(wrapper!.get('[data-layout-card="network-quality"]').text()).toContain('42.0 ms')
+    expect(wrapper!.get('[data-layout-card="data-freshness"]').text()).toContain('Data freshness')
+    expect(wrapper!.get('[data-layout-card="wifi-summary"]').text()).toContain('Wi-Fi summary')
+    expect(wrapper!.get('[data-layout-card="traffic-trend"]').text()).toContain('2.0 KB/s')
+    expect(wrapper!.get('[data-layout-card="incident-summary"]').text()).toContain('DNS')
+    expect(wrapper!.get('[data-layout-card="incident-summary"]').text()).toContain('3')
+    expect(wrapper!.findAll('.metric-chart-stub')).toHaveLength(2)
   })
 })

@@ -261,6 +261,13 @@ export interface IncidentPage {
   total: number
   page: number
   page_size: number
+  summary: IncidentSummary
+}
+export interface IncidentSummary {
+  open: number
+  opened_24h: number
+  resolved_24h: number
+  top_layer: string
 }
 export interface Alert {
   id: string

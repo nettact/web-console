@@ -2,8 +2,20 @@
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { onBeforeRouteLeave } from 'vue-router'
-import { api, type Agent, type AgentInterfaces, type Device, type Quota, type Sample, type StatusEvent } from '../api'
+import {
+  api,
+  type Agent,
+  type AgentInterfaces,
+  type Alert,
+  type Device,
+  type IncidentSummary,
+  type MonitorStatusRow,
+  type Quota,
+  type Sample,
+  type StatusEvent,
+} from '../api'
 import DashboardCardControls from '../components/DashboardCardControls.vue'
+import MetricChart from '../components/MetricChart.vue'
 import { toDateLocale } from '../i18n'
 import {
   DASHBOARD_CARD_DEFINITIONS,
@@ -14,9 +26,9 @@ import {
   type DashboardCardLayout,
 } from '../lib/dashboardLayout'
 import { fmtBps, fmtBytes } from '../lib/format'
-import { natCodeLabel, natTone } from '../lib/metricMeta'
+import { familyOf, natCodeLabel, natTone, statusSource } from '../lib/metricMeta'
 
-const { t, locale } = useI18n()
+const { t, te, locale } = useI18n()
 
 const SITE = 'site_default'
 const agents = ref<Agent[]>([])
@@ -26,13 +38,23 @@ const statusHistory = ref<StatusEvent[]>([])
 const snapshot = ref<Sample[]>([])
 const devices = ref<Device[]>([])
 const ifaceData = ref<AgentInterfaces | null>(null)
+const alerts = ref<Alert[]>([])
+const monitorStatuses = ref<MonitorStatusRow[]>([])
+const incidentSummary = ref<IncidentSummary | null>(null)
+const qualityRttHistory = ref<Sample[]>([])
+const qualityLossHistory = ref<Sample[]>([])
+const qualityJitterHistory = ref<Sample[]>([])
+const trafficRxHistory = ref<Sample[]>([])
+const trafficTxHistory = ref<Sample[]>([])
 const error = ref('')
 const loading = ref(true)
 const refreshing = ref(false)
 const layoutLoading = ref(true)
 const layoutSaving = ref(false)
 let timer: number | undefined
+let historyTimer: number | undefined
 let loadSequence = 0
+let historySequence = 0
 let stopPointerCardDrag: (() => void) | undefined
 
 // The console currently has one authenticated administrator and no lesser
@@ -228,17 +250,23 @@ async function loadMetrics() {
   refreshing.value = true
   try {
     const id = selected.value
-    const [nextSnapshot, nextDevices, nextHistory, nextIfaces] = await Promise.all([
+    const [nextSnapshot, nextDevices, nextHistory, nextIfaces, nextAlerts, nextMonitorStatuses, nextIncidentSummary] = await Promise.all([
       api.latest(id),
       api.listDevices(SITE),
       api.agentStatusHistory(id),
       api.agentInterfaces(id).catch(() => null),
+      api.alerts().catch(() => [] as Alert[]),
+      api.agentMonitorStatus(id).catch(() => [] as MonitorStatusRow[]),
+      api.incidents(1, 1).then((page) => page.summary).catch(() => null),
     ])
     if (sequence !== loadSequence) return
     snapshot.value = nextSnapshot
     devices.value = nextDevices
     statusHistory.value = nextHistory
     ifaceData.value = nextIfaces
+    alerts.value = nextAlerts
+    monitorStatuses.value = nextMonitorStatuses
+    incidentSummary.value = nextIncidentSummary
     error.value = ''
   } catch (e) {
     if (sequence === loadSequence) error.value = String((e as Error).message || e)
@@ -247,11 +275,41 @@ async function loadMetrics() {
   }
 }
 
+async function loadHistory() {
+  if (!selected.value) return
+  const sequence = ++historySequence
+  const id = selected.value
+  try {
+    const opts = { sinceSeconds: 24 * 3600, limit: 1500 }
+    const [rtt, loss, jitter, rx, tx] = await Promise.all([
+      api.metrics(id, 'probe.icmp.rtt_ms', opts),
+      api.metrics(id, 'probe.icmp.loss_pct', opts),
+      api.metrics(id, 'probe.icmp.jitter_ms', opts),
+      api.metrics(id, 'host.net.rx_bps', opts),
+      api.metrics(id, 'host.net.tx_bps', opts),
+    ])
+    if (sequence !== historySequence) return
+    qualityRttHistory.value = rtt
+    qualityLossHistory.value = loss
+    qualityJitterHistory.value = jitter
+    trafficRxHistory.value = rx
+    trafficTxHistory.value = tx
+  } catch {
+    // Keep the last successful history while live cards refresh independently.
+  }
+}
+
 async function changeAgent() {
   snapshot.value = []
   statusHistory.value = []
   ifaceData.value = null
-  await loadMetrics()
+  monitorStatuses.value = []
+  qualityRttHistory.value = []
+  qualityLossHistory.value = []
+  qualityJitterHistory.value = []
+  trafficRxHistory.value = []
+  trafficTxHistory.value = []
+  await Promise.all([loadMetrics(), loadHistory()])
 }
 
 const rowKey = (sample: Sample) => sample.monitor_id || sample.target
@@ -491,6 +549,108 @@ const availabilityPct = computed(() => {
 })
 const failureCount = computed(() => statusHistory.value.filter((event) => event.status === 'offline').length)
 
+const severityRank: Record<string, number> = { critical: 0, error: 1, warn: 2, info: 3 }
+const currentAlerts = computed(() => [...alerts.value].sort((a, b) =>
+  (severityRank[a.severity] ?? 9) - (severityRank[b.severity] ?? 9)
+    || new Date(a.started_at).getTime() - new Date(b.started_at).getTime(),
+))
+const alertReason = (alert: Alert) => (locale.value === 'en' ? alert.desc_en : alert.desc_zh) || alert.target_name || alert.target
+
+type MonitorHealthState = 'active' | 'probe_failed' | 'permission_blocked' | 'target_blocked' | 'unsupported'
+const monitorHealth = computed(() => {
+  const counts: Record<MonitorHealthState, number> = {
+    active: 0,
+    probe_failed: 0,
+    permission_blocked: 0,
+    target_blocked: 0,
+    unsupported: 0,
+  }
+  for (const row of monitorStatuses.value) {
+    if (row.status !== 'active') {
+      counts[row.status]++
+      continue
+    }
+    const kind = row.kind || ''
+    const family = kind === 'gateway' ? 'probe.icmp' : kind.startsWith('probe.') ? familyOf(kind) : `probe.${kind}`
+    const source = statusSource(family)
+    const latest = source
+      ? snapshot.value.find((sample) => sample.monitor_id === row.monitor_id && sample.kind === source.kind)
+      : undefined
+    if (source && latest && source.toUp(latest.value) < 0.5) counts.probe_failed++
+    else counts.active++
+  }
+  return { ...counts, total: monitorStatuses.value.length }
+})
+
+function aggregateWorst(samples: Sample[]): Sample[] {
+  const buckets = new Map<string, Sample>()
+  for (const sample of samples) {
+    if (sample.target === 'gateway') continue
+    const previous = buckets.get(sample.ts)
+    if (!previous || sample.value > previous.value) buckets.set(sample.ts, { ...sample, target: 'public' })
+  }
+  return [...buckets.values()].sort((a, b) => new Date(a.ts).getTime() - new Date(b.ts).getTime())
+}
+
+const qualityRtt = computed(() => aggregateWorst(qualityRttHistory.value))
+const qualityLoss = computed(() => aggregateWorst(qualityLossHistory.value))
+const qualityJitter = computed(() => aggregateWorst(qualityJitterHistory.value))
+const qualityChartMetrics = computed(() => [
+  { key: 'rtt', label: t('dashboard.qualityRtt'), kind: 'probe.icmp.rtt_ms', unit: 'ms', color: '#38bdf8', samples: qualityRtt.value },
+  { key: 'jitter', label: t('dashboard.qualityJitter'), kind: 'probe.icmp.jitter_ms', unit: 'ms', color: '#a78bfa', samples: qualityJitter.value },
+  { key: 'loss', label: t('dashboard.qualityLoss'), kind: 'probe.icmp.loss_pct', unit: 'pct', color: '#fbbf24', samples: qualityLoss.value },
+].filter((metric) => metric.samples.length))
+
+function percentile(samples: Sample[], pct: number): number | null {
+  if (!samples.length) return null
+  const values = samples.map((sample) => sample.value).sort((a, b) => a - b)
+  return values[Math.min(values.length - 1, Math.ceil(values.length * pct) - 1)]
+}
+const qualityRttP95 = computed(() => percentile(qualityRtt.value, 0.95))
+const qualityJitterP95 = computed(() => percentile(qualityJitter.value, 0.95))
+const qualityLossAvg = computed(() => qualityLoss.value.length
+  ? qualityLoss.value.reduce((sum, sample) => sum + sample.value, 0) / qualityLoss.value.length
+  : null)
+
+const trafficChartMetrics = computed(() => [
+  { key: 'rx', label: t('dashboard.download'), kind: 'host.net.rx_bps', unit: 'bps', color: '#38bdf8', samples: trafficRxHistory.value },
+  { key: 'tx', label: t('dashboard.upload'), kind: 'host.net.tx_bps', unit: 'bps', color: '#f472b6', samples: trafficTxHistory.value },
+].filter((metric) => metric.samples.length))
+const trafficPeak = computed(() => {
+  const values = [...trafficRxHistory.value, ...trafficTxHistory.value].map((sample) => sample.value)
+  return values.length ? Math.max(...values) : null
+})
+
+const newestTelemetryAt = computed(() => {
+  const times = snapshot.value.map((sample) => new Date(sample.ts).getTime()).filter(Number.isFinite)
+  if (times.length) return Math.max(...times)
+  const seen = currentAgent.value?.last_seen_at ? new Date(currentAgent.value.last_seen_at).getTime() : NaN
+  return Number.isFinite(seen) ? seen : null
+})
+const freshnessAgeSeconds = computed(() => newestTelemetryAt.value == null ? null : Math.max(0, (Date.now() - newestTelemetryAt.value) / 1000))
+const freshnessTone = computed(() => {
+  if (currentAgent.value?.status !== 'online') return 'bad'
+  if (freshnessAgeSeconds.value == null) return 'unknown'
+  if (freshnessAgeSeconds.value <= 90) return 'good'
+  if (freshnessAgeSeconds.value <= 300) return 'warn'
+  return 'bad'
+})
+const freshnessLabel = computed(() => t(`dashboard.freshness_${freshnessTone.value}`))
+function fmtAge(seconds: number | null): string {
+  if (seconds == null) return '—'
+  if (seconds < 90) return t('common.durSeconds', { n: Math.round(seconds) })
+  if (seconds < 5400) return t('common.durMinutes', { n: Math.round(seconds / 60) })
+  return t('common.durHours', { n: (seconds / 3600).toFixed(1) })
+}
+
+const primaryWifi = computed(() => wifiRows.value.find((adapter) => adapter.connected) ?? wifiRows.value[0] ?? null)
+const incidentLayerLabel = computed(() => {
+  const layer = incidentSummary.value?.top_layer
+  if (!layer) return '—'
+  const key = `incidents.layer.${layer}`
+  return te(key) ? t(key) : layer
+})
+
 const fmt = (value: number | null, digits = 0) => (value == null ? '—' : value.toFixed(digits))
 const fmtTime = (value: string | null | undefined) =>
   value ? new Date(value).toLocaleString(toDateLocale(locale.value), { hour12: false }) : '—'
@@ -499,6 +659,7 @@ onMounted(async () => {
   window.addEventListener('beforeunload', warnUnsaved)
   await Promise.all([loadAgents(), loadServerLayout()])
   await loadMetrics()
+  await loadHistory()
   // Refresh agents alongside metrics: status now flips within seconds
   // server-side. loadAgents only assigns `selected` when it's empty, so the
   // current selection survives every refresh.
@@ -506,9 +667,11 @@ onMounted(async () => {
     loadMetrics()
     loadAgents()
   }, 5000)
+  historyTimer = window.setInterval(loadHistory, 5 * 60 * 1000)
 })
 onBeforeUnmount(() => {
   if (timer) window.clearInterval(timer)
+  if (historyTimer) window.clearInterval(historyTimer)
   window.removeEventListener('beforeunload', warnUnsaved)
   stopPointerCardDrag?.()
 })
@@ -642,6 +805,101 @@ onBeforeUnmount(() => {
         <strong>{{ onlineCount }} / {{ agents.length }}</strong>
         <p>{{ t('dashboard.onlineAgentsFoot') }}</p>
       </article>
+
+      <section v-if="cardVisible('active-alerts')" class="surface overview-summary-card alert-summary-card dashboard-card-shell" :class="currentAlerts.length ? 'has-problem' : 'is-clear'" :style="cardGridStyle('active-alerts')" data-layout-card="active-alerts" :data-layout-editing="editingLayout || undefined" :data-dragging="draggingCardID === 'active-alerts' || undefined" :draggable="editingLayout" @dragstart="startCardDrag('active-alerts', $event)" @dragend="draggingCardID = ''" @dragover.prevent @drop="dropLayoutCard('active-alerts')">
+        <DashboardCardControls v-if="editingLayout" :title="t(cardDefinition('active-alerts').titleKey)" :size="cardLayout('active-alerts')!.size" :sizes="cardDefinition('active-alerts').sizes" :first="visibleCardIndex('active-alerts') === 0" :last="visibleCardIndex('active-alerts') === visibleCardCount - 1" @resize="updateCardSize('active-alerts', $event)" @move="moveVisibleCard('active-alerts', $event)" @remove="removeWidget('active-alerts')" @pointer-drag="startPointerCardDrag('active-alerts', $event)" />
+        <div class="summary-card-head">
+          <div><span class="section-kicker">SITE</span><h3>{{ t('dashboard.activeAlerts') }}</h3></div>
+          <RouterLink class="text-link" to="/incidents">{{ t('dashboard.viewAll') }} →</RouterLink>
+        </div>
+        <div v-if="!currentAlerts.length" class="summary-clear-state"><strong>✓</strong><span>{{ t('dashboard.noActiveAlerts') }}</span></div>
+        <div v-else class="summary-list">
+          <article v-for="alert in currentAlerts.slice(0, 3)" :key="alert.id" class="summary-list-row">
+            <i class="severity-dot" :class="`severity-${alert.severity}`"></i>
+            <span class="summary-row-copy"><strong>{{ alert.rule_name }}</strong><small>{{ alert.agent_host || alert.agent_id }} · {{ alertReason(alert) }}</small></span>
+            <time>{{ fmtAge((Date.now() - new Date(alert.started_at).getTime()) / 1000) }}</time>
+          </article>
+        </div>
+      </section>
+
+      <section v-if="cardVisible('monitor-health')" class="surface overview-summary-card dashboard-card-shell" :class="monitorHealth.probe_failed || monitorHealth.permission_blocked || monitorHealth.target_blocked ? 'has-problem' : 'is-clear'" :style="cardGridStyle('monitor-health')" data-layout-card="monitor-health" :data-layout-editing="editingLayout || undefined" :data-dragging="draggingCardID === 'monitor-health' || undefined" :draggable="editingLayout" @dragstart="startCardDrag('monitor-health', $event)" @dragend="draggingCardID = ''" @dragover.prevent @drop="dropLayoutCard('monitor-health')">
+        <DashboardCardControls v-if="editingLayout" :title="t(cardDefinition('monitor-health').titleKey)" :size="cardLayout('monitor-health')!.size" :sizes="cardDefinition('monitor-health').sizes" :first="visibleCardIndex('monitor-health') === 0" :last="visibleCardIndex('monitor-health') === visibleCardCount - 1" @resize="updateCardSize('monitor-health', $event)" @move="moveVisibleCard('monitor-health', $event)" @remove="removeWidget('monitor-health')" @pointer-drag="startPointerCardDrag('monitor-health', $event)" />
+        <div class="summary-card-head">
+          <div><span class="section-kicker">AGENT</span><h3>{{ t('dashboard.monitorHealth') }}</h3></div>
+          <RouterLink class="text-link" :to="{ path: '/target-status', query: { agent: selected } }">{{ t('dashboard.viewAll') }} →</RouterLink>
+        </div>
+        <p v-if="currentAgent?.status !== 'online'" class="offline-impact">{{ t('dashboard.monitorOfflineImpact', { n: monitorHealth.total }) }}</p>
+        <div class="health-count-grid">
+          <div class="health-count good"><strong>{{ monitorHealth.active }}</strong><span>{{ t('dashboard.monitorActive') }}</span></div>
+          <div class="health-count bad"><strong>{{ monitorHealth.probe_failed }}</strong><span>{{ t('dashboard.monitorProbeFailed') }}</span></div>
+          <div class="health-count warn"><strong>{{ monitorHealth.permission_blocked + monitorHealth.target_blocked }}</strong><span>{{ t('dashboard.monitorBlocked') }}</span></div>
+          <div class="health-count muted"><strong>{{ monitorHealth.unsupported }}</strong><span>{{ t('dashboard.monitorUnsupported') }}</span></div>
+        </div>
+      </section>
+
+      <section v-if="cardVisible('network-quality')" class="surface trend-summary-card dashboard-card-shell" :style="cardGridStyle('network-quality')" data-layout-card="network-quality" :data-layout-editing="editingLayout || undefined" :data-dragging="draggingCardID === 'network-quality' || undefined" :draggable="editingLayout" @dragstart="startCardDrag('network-quality', $event)" @dragend="draggingCardID = ''" @dragover.prevent @drop="dropLayoutCard('network-quality')">
+        <DashboardCardControls v-if="editingLayout" :title="t(cardDefinition('network-quality').titleKey)" :size="cardLayout('network-quality')!.size" :sizes="cardDefinition('network-quality').sizes" :first="visibleCardIndex('network-quality') === 0" :last="visibleCardIndex('network-quality') === visibleCardCount - 1" @resize="updateCardSize('network-quality', $event)" @move="moveVisibleCard('network-quality', $event)" @remove="removeWidget('network-quality')" @pointer-drag="startPointerCardDrag('network-quality', $event)" />
+        <div class="summary-card-head">
+          <div><span class="section-kicker">24H</span><h3>{{ t('dashboard.networkQuality24h') }}</h3></div>
+          <RouterLink class="text-link" :to="{ path: '/target-status', query: { agent: selected } }">{{ t('dashboard.viewAll') }} →</RouterLink>
+        </div>
+        <div class="trend-stat-row">
+          <div><span>{{ t('dashboard.qualityRttP95') }}</span><strong>{{ fmt(qualityRttP95, 1) }}<small> ms</small></strong></div>
+          <div><span>{{ t('dashboard.qualityLossAvg') }}</span><strong>{{ fmt(qualityLossAvg, 2) }}<small>%</small></strong></div>
+          <div><span>{{ t('dashboard.qualityJitterP95') }}</span><strong>{{ fmt(qualityJitterP95, 1) }}<small> ms</small></strong></div>
+        </div>
+        <MetricChart v-if="qualityChartMetrics.length" class="dashboard-trend-chart" :title="t('dashboard.last24Hours')" :metrics="qualityChartMetrics" />
+        <div v-else class="summary-empty">{{ t('dashboard.noQualityHistory') }}</div>
+      </section>
+
+      <article v-if="cardVisible('data-freshness')" class="metric-card freshness-card dashboard-card-shell" :class="`is-${freshnessTone}`" :style="cardGridStyle('data-freshness')" data-layout-card="data-freshness" :data-layout-editing="editingLayout || undefined" :data-dragging="draggingCardID === 'data-freshness' || undefined" :draggable="editingLayout" @dragstart="startCardDrag('data-freshness', $event)" @dragend="draggingCardID = ''" @dragover.prevent @drop="dropLayoutCard('data-freshness')">
+        <DashboardCardControls v-if="editingLayout" :title="t(cardDefinition('data-freshness').titleKey)" :size="cardLayout('data-freshness')!.size" :sizes="cardDefinition('data-freshness').sizes" :first="visibleCardIndex('data-freshness') === 0" :last="visibleCardIndex('data-freshness') === visibleCardCount - 1" @resize="updateCardSize('data-freshness', $event)" @move="moveVisibleCard('data-freshness', $event)" @remove="removeWidget('data-freshness')" @pointer-drag="startPointerCardDrag('data-freshness', $event)" />
+        <div class="freshness-content">
+          <span>{{ t('dashboard.dataFreshness') }}</span>
+          <strong>{{ freshnessLabel }}</strong>
+          <b>{{ fmtAge(freshnessAgeSeconds) }}</b>
+          <small>{{ t('dashboard.freshnessSeries', { n: snapshot.length }) }}</small>
+        </div>
+      </article>
+
+      <article v-if="cardVisible('wifi-summary')" class="metric-card wifi-summary-card dashboard-card-shell" :class="primaryWifi?.connected ? 'is-good' : primaryWifi ? 'is-warn' : 'is-unknown'" :style="cardGridStyle('wifi-summary')" data-layout-card="wifi-summary" :data-layout-editing="editingLayout || undefined" :data-dragging="draggingCardID === 'wifi-summary' || undefined" :draggable="editingLayout" @dragstart="startCardDrag('wifi-summary', $event)" @dragend="draggingCardID = ''" @dragover.prevent @drop="dropLayoutCard('wifi-summary')">
+        <DashboardCardControls v-if="editingLayout" :title="t(cardDefinition('wifi-summary').titleKey)" :size="cardLayout('wifi-summary')!.size" :sizes="cardDefinition('wifi-summary').sizes" :first="visibleCardIndex('wifi-summary') === 0" :last="visibleCardIndex('wifi-summary') === visibleCardCount - 1" @resize="updateCardSize('wifi-summary', $event)" @move="moveVisibleCard('wifi-summary', $event)" @remove="removeWidget('wifi-summary')" @pointer-drag="startPointerCardDrag('wifi-summary', $event)" />
+        <div class="wifi-summary-content">
+          <span>{{ t('dashboard.wifiSummary') }}</span>
+          <template v-if="primaryWifi">
+            <strong>{{ primaryWifi.connected ? (primaryWifi.ssid || t('dashboard.wifiHiddenSsid')) : wifiStateLabel(primaryWifi) }}</strong>
+            <b>{{ primaryWifi.signalDbm == null ? '—' : `${primaryWifi.signalDbm} dBm` }}<small v-if="primaryWifi.grade"> · {{ primaryWifi.grade.label }}</small></b>
+            <small v-if="primaryWifi.connected">{{ wifiBandLabel(primaryWifi.band) }} · {{ primaryWifi.channel == null ? '—' : t('dashboard.wifiChannelShort', { n: primaryWifi.channel }) }}</small>
+          </template>
+          <template v-else><strong>{{ wifiSupported ? t('dashboard.wifiNoAdapter') : t('dashboard.wifiUnsupported') }}</strong><small>{{ t('dashboard.wifiSummaryHint') }}</small></template>
+        </div>
+      </article>
+
+      <section v-if="cardVisible('traffic-trend')" class="surface trend-summary-card dashboard-card-shell" :style="cardGridStyle('traffic-trend')" data-layout-card="traffic-trend" :data-layout-editing="editingLayout || undefined" :data-dragging="draggingCardID === 'traffic-trend' || undefined" :draggable="editingLayout" @dragstart="startCardDrag('traffic-trend', $event)" @dragend="draggingCardID = ''" @dragover.prevent @drop="dropLayoutCard('traffic-trend')">
+        <DashboardCardControls v-if="editingLayout" :title="t(cardDefinition('traffic-trend').titleKey)" :size="cardLayout('traffic-trend')!.size" :sizes="cardDefinition('traffic-trend').sizes" :first="visibleCardIndex('traffic-trend') === 0" :last="visibleCardIndex('traffic-trend') === visibleCardCount - 1" @resize="updateCardSize('traffic-trend', $event)" @move="moveVisibleCard('traffic-trend', $event)" @remove="removeWidget('traffic-trend')" @pointer-drag="startPointerCardDrag('traffic-trend', $event)" />
+        <div class="summary-card-head"><div><span class="section-kicker">24H</span><h3>{{ t('dashboard.trafficTrend') }}</h3></div></div>
+        <div class="traffic-live-row">
+          <span><i class="rx-dot"></i>{{ t('dashboard.download') }} <strong>{{ fmtBps(hostVal('host.net.rx_bps')) }}</strong></span>
+          <span><i class="tx-dot"></i>{{ t('dashboard.upload') }} <strong>{{ fmtBps(hostVal('host.net.tx_bps')) }}</strong></span>
+          <span>{{ t('dashboard.trafficPeak') }} <strong>{{ fmtBps(trafficPeak) }}</strong></span>
+        </div>
+        <MetricChart v-if="trafficChartMetrics.length" class="dashboard-trend-chart compact-chart" :title="t('dashboard.last24Hours')" :metrics="trafficChartMetrics" />
+        <div v-else class="summary-empty">{{ t('dashboard.noTrafficHistory') }}</div>
+      </section>
+
+      <section v-if="cardVisible('incident-summary')" class="surface overview-summary-card incident-summary-card dashboard-card-shell" :class="incidentSummary?.open ? 'has-problem' : 'is-clear'" :style="cardGridStyle('incident-summary')" data-layout-card="incident-summary" :data-layout-editing="editingLayout || undefined" :data-dragging="draggingCardID === 'incident-summary' || undefined" :draggable="editingLayout" @dragstart="startCardDrag('incident-summary', $event)" @dragend="draggingCardID = ''" @dragover.prevent @drop="dropLayoutCard('incident-summary')">
+        <DashboardCardControls v-if="editingLayout" :title="t(cardDefinition('incident-summary').titleKey)" :size="cardLayout('incident-summary')!.size" :sizes="cardDefinition('incident-summary').sizes" :first="visibleCardIndex('incident-summary') === 0" :last="visibleCardIndex('incident-summary') === visibleCardCount - 1" @resize="updateCardSize('incident-summary', $event)" @move="moveVisibleCard('incident-summary', $event)" @remove="removeWidget('incident-summary')" @pointer-drag="startPointerCardDrag('incident-summary', $event)" />
+        <div class="summary-card-head">
+          <div><span class="section-kicker">SITE · 24H</span><h3>{{ t('dashboard.incidentSummary') }}</h3></div>
+          <RouterLink class="text-link" to="/incidents">{{ t('dashboard.viewAll') }} →</RouterLink>
+        </div>
+        <div class="incident-stat-grid">
+          <div><strong>{{ incidentSummary?.open ?? 0 }}</strong><span>{{ t('dashboard.incidentOpen') }}</span></div>
+          <div><strong>{{ incidentSummary?.opened_24h ?? 0 }}</strong><span>{{ t('dashboard.incidentOpened24h') }}</span></div>
+          <div><strong>{{ incidentSummary?.resolved_24h ?? 0 }}</strong><span>{{ t('dashboard.incidentResolved24h') }}</span></div>
+        </div>
+        <p class="incident-layer"><span>{{ t('dashboard.incidentTopLayer') }}</span><strong>{{ incidentLayerLabel }}</strong></p>
+      </section>
 
       <article v-if="cardVisible('nat-summary')" class="metric-card nat-kpi dashboard-card-shell" :class="primaryNAT ? `is-${primaryNAT.tone}` : 'is-unknown'" :style="cardGridStyle('nat-summary')" data-layout-card="nat-summary" :data-layout-editing="editingLayout || undefined" :data-dragging="draggingCardID === 'nat-summary' || undefined" :draggable="editingLayout" @dragstart="startCardDrag('nat-summary', $event)" @dragend="draggingCardID = ''" @dragover.prevent @drop="dropLayoutCard('nat-summary')">
         <DashboardCardControls v-if="editingLayout" :title="t(cardDefinition('nat-summary').titleKey)" :size="cardLayout('nat-summary')!.size" :sizes="cardDefinition('nat-summary').sizes" :first="visibleCardIndex('nat-summary') === 0" :last="visibleCardIndex('nat-summary') === visibleCardCount - 1" @resize="updateCardSize('nat-summary', $event)" @move="moveVisibleCard('nat-summary', $event)" @remove="removeWidget('nat-summary')" @pointer-drag="startPointerCardDrag('nat-summary', $event)" />
@@ -1018,10 +1276,6 @@ onBeforeUnmount(() => {
   grid-template-rows: clamp(420px, 31vw, 500px) clamp(330px, 23vw, 364px);
   gap: 24px;
 }
-.devices-surface { grid-column: 1 / 11; grid-row: 1; }
-.interface-surface { grid-column: 11 / 21; grid-row: 1; }
-.disk-surface { grid-column: 1 / 9; grid-row: 2; }
-.activity-surface { grid-column: 9 / 21; grid-row: 2; }
 
 .overview-resource-panel {
   display: flex;
@@ -1278,14 +1532,8 @@ onBeforeUnmount(() => {
 .layout-add-button:hover { border-color: var(--primary); }
 .layout-add-button svg { width: 16px; fill: none; stroke: currentColor; stroke-width: 1.7; }
 .unsaved-chip { padding: 4px 9px; color: var(--warning); font-size: 10px; font-weight: 700; border-radius: 999px; background: color-mix(in srgb, var(--warning) 12%, transparent); }
-.custom-dashboard-grid { display: grid; grid-template-columns: repeat(12, minmax(0, 1fr)); align-items: start; gap: 18px; }
-.dashboard-card-shell { position: relative; min-width: 0; margin: 0 !important; transition: opacity .16s ease, transform .16s ease, outline-color .16s ease; }
-.custom-dashboard-grid > .devices-surface,
-.custom-dashboard-grid > .interface-surface,
-.custom-dashboard-grid > .disk-surface,
-.custom-dashboard-grid > .activity-surface {
-  grid-row: auto; min-height: 0; height: auto; align-self: stretch;
-}
+.custom-dashboard-grid { display: grid; grid-template-columns: repeat(12, minmax(0, 1fr)); align-items: stretch; gap: 18px; }
+.dashboard-card-shell { position: relative; min-width: 0; height: auto; margin: 0 !important; align-self: stretch; transition: opacity .16s ease, transform .16s ease, outline-color .16s ease; }
 .insight-card {
   --insight-color: var(--primary);
   display: grid;
@@ -1369,5 +1617,61 @@ onBeforeUnmount(() => {
   .direct-layout-actions { width: 100%; margin-left: 0; }
   .direct-layout-actions .restore-button { margin-right: auto; }
   .widget-catalog-grid { grid-template-columns: 1fr; }
+}
+/* Action-oriented overview cards. */
+.overview-summary-card, .trend-summary-card { min-height: 250px; padding: 20px; }
+.overview-summary-card.has-problem { border-color: color-mix(in srgb, var(--danger) 28%, var(--border)); }
+.overview-summary-card.is-clear { border-color: color-mix(in srgb, var(--success) 22%, var(--border)); }
+.summary-card-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-bottom: 18px; }
+.summary-card-head h3 { margin-top: 4px; font-size: 18px; }
+.summary-clear-state { display: grid; place-items: center; min-height: 150px; color: var(--text-muted); text-align: center; }
+.summary-clear-state strong { display: grid; place-items: center; width: 44px; height: 44px; margin-bottom: 8px; color: var(--success); border-radius: 50%; background: color-mix(in srgb, var(--success) 12%, transparent); font-size: 22px; }
+.summary-list { display: grid; gap: 8px; }
+.summary-list-row { display: grid; grid-template-columns: 9px minmax(0, 1fr) auto; align-items: center; gap: 10px; padding: 10px 11px; border-radius: 11px; background: var(--surface-2); }
+.summary-list-row time { color: var(--text-muted); font-size: 10px; white-space: nowrap; }
+.summary-row-copy { display: grid; min-width: 0; }
+.summary-row-copy strong, .summary-row-copy small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.summary-row-copy strong { font-size: 12px; }
+.summary-row-copy small { margin-top: 3px; color: var(--text-muted); font-size: 10px; }
+.severity-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--text-muted); }
+.severity-dot.severity-critical { background: var(--danger); box-shadow: 0 0 0 4px color-mix(in srgb, var(--danger) 12%, transparent); }
+.severity-dot.severity-error { background: var(--danger); }
+.severity-dot.severity-warn { background: var(--warning); }
+.severity-dot.severity-info { background: var(--primary); }
+.offline-impact { margin: -5px 0 12px; padding: 7px 10px; color: var(--danger); border-radius: 9px; background: color-mix(in srgb, var(--danger) 9%, transparent); font-size: 10px; }
+.health-count-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.health-count { display: grid; padding: 14px; border-radius: 12px; background: var(--surface-2); }
+.health-count strong { font-size: 25px; line-height: 1; }
+.health-count span { margin-top: 7px; color: var(--text-muted); font-size: 10px; }
+.health-count.good strong { color: var(--success); }.health-count.bad strong { color: var(--danger); }.health-count.warn strong { color: var(--warning); }.health-count.muted strong { color: var(--text-muted); }
+.trend-summary-card { min-height: 390px; }
+.trend-stat-row { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin-bottom: 4px; }
+.trend-stat-row > div { display: grid; padding: 10px 12px; border-radius: 11px; background: var(--surface-2); }
+.trend-stat-row span { color: var(--text-muted); font-size: 9px; text-transform: uppercase; }
+.trend-stat-row strong { margin-top: 4px; font-size: 19px; }
+.trend-stat-row strong small { color: var(--text-muted); font-size: 10px; font-weight: 500; }
+:deep(.dashboard-trend-chart.chart) { height: 255px; }
+:deep(.dashboard-trend-chart.compact-chart.chart) { height: 225px; }
+.summary-empty { display: grid; place-items: center; min-height: 230px; color: var(--text-muted); font-size: 11px; }
+.freshness-card, .wifi-summary-card { align-items: stretch; min-height: 150px; }
+.freshness-content, .wifi-summary-content { display: grid; align-content: center; min-width: 0; width: 100%; }
+.freshness-content > span, .wifi-summary-content > span { color: var(--text-muted); font-size: 10px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; }
+.freshness-content > strong, .wifi-summary-content > strong { margin-top: 8px; overflow: hidden; color: var(--text); font-size: 22px; text-overflow: ellipsis; white-space: nowrap; }
+.freshness-content > b, .wifi-summary-content > b { margin-top: 5px; font-size: 13px; font-weight: 650; }
+.freshness-content > small, .wifi-summary-content > small { margin-top: 6px; color: var(--text-muted); font-size: 10px; }
+.wifi-summary-content > b small { font-size: 10px; font-weight: 500; }
+.traffic-live-row { display: flex; flex-wrap: wrap; gap: 8px 16px; color: var(--text-muted); font-size: 10px; }
+.traffic-live-row span { display: flex; align-items: center; gap: 5px; }
+.traffic-live-row strong { color: var(--text); }
+.traffic-live-row i { width: 7px; height: 7px; border-radius: 50%; }.rx-dot { background: #38bdf8; }.tx-dot { background: #f472b6; }
+.incident-stat-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+.incident-stat-grid > div { display: grid; padding: 14px 10px; border-radius: 12px; background: var(--surface-2); text-align: center; }
+.incident-stat-grid strong { font-size: 25px; }.incident-stat-grid span { margin-top: 6px; color: var(--text-muted); font-size: 9px; }
+.incident-layer { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 14px 0 0; padding-top: 12px; color: var(--text-muted); border-top: 1px solid var(--border); font-size: 10px; }
+.incident-layer strong { color: var(--text); font-size: 12px; }
+@media (max-width: 760px) {
+  .trend-stat-row { grid-template-columns: 1fr; }
+  .trend-summary-card { min-height: 440px; }
+  .traffic-live-row { display: grid; }
 }
 </style>
