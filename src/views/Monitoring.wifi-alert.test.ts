@@ -6,7 +6,7 @@ import en from '../locales/en'
 import Monitoring from './Monitoring.vue'
 
 const apiMock = vi.hoisted(() => ({
-  listTargets: vi.fn(), agentGroups: vi.fn(), setTargets: vi.fn(),
+  listTargets: vi.fn(), monitorGroups: vi.fn(), agentGroups: vi.fn(), setTargets: vi.fn(),
   purgeMonitor: vi.fn(), purgeTarget: vi.fn(),
   agents: vi.fn(), latest: vi.fn(), targetAgentStatus: vi.fn(),
 }))
@@ -16,6 +16,10 @@ vi.mock('../api', () => ({ api: apiMock }))
 beforeEach(() => {
   vi.clearAllMocks()
   apiMock.agentGroups.mockResolvedValue([])
+  apiMock.monitorGroups.mockResolvedValue([{
+    id: 'group-default', site_id: 'site_default', name: 'Default', is_default: true,
+    merge_enabled: true, all_agents: true, agent_group_ids: [],
+  }])
   apiMock.agents.mockResolvedValue([])
   apiMock.latest.mockResolvedValue([])
   apiMock.targetAgentStatus.mockResolvedValue([])
@@ -23,8 +27,8 @@ beforeEach(() => {
 
 it('renders host/* as Wi-Fi inside the existing host monitoring type', async () => {
   apiMock.listTargets.mockResolvedValue([{
-    id: 'wifi-anchor', kind: 'host', name: 'Office Wi-Fi', target: '*', params: {},
-    enabled: true, all_agents: true, group_ids: [],
+    id: 'wifi-anchor', group_id: 'group-default', kind: 'host', name: 'Office Wi-Fi', target: '*', params: {},
+    enabled: true,
   }])
   apiMock.agentGroups.mockResolvedValue([])
   const i18n = createI18n({ legacy: false, locale: 'en', messages: { en } })
@@ -41,8 +45,8 @@ it('renders host/* as Wi-Fi inside the existing host monitoring type', async () 
 describe('monitor permission and runtime status composition', () => {
   it('shows policy, real probe failure, active, and independent offline states', async () => {
     apiMock.listTargets.mockResolvedValue([{
-      id: 'mon-http', kind: 'http', name: 'Public site', target: 'https://example.com', params: {},
-      enabled: true, all_agents: true, group_ids: [],
+      id: 'mon-http', group_id: 'group-default', kind: 'http', name: 'Public site', target: 'https://example.com', params: {},
+      enabled: true,
     }])
     apiMock.agents.mockResolvedValue([
       { id: 'blocked', display_name: 'Blocked Agent', status: 'offline' },

@@ -7,6 +7,7 @@ import TargetStatus from './views/TargetStatus.vue'
 import HostMetrics from './views/HostMetrics.vue'
 import Monitoring from './views/Monitoring.vue'
 import MonitorForm from './views/MonitorForm.vue'
+import MonitorGroupForm from './views/MonitorGroupForm.vue'
 import Incidents from './views/Incidents.vue'
 import Agents from './views/Agents.vue'
 import Settings from './views/Settings.vue'
@@ -20,6 +21,8 @@ const router = createRouter({
     { path: '/target-status', component: TargetStatus },
     { path: '/host-metrics', component: HostMetrics },
     { path: '/monitoring', component: Monitoring },
+    { path: '/monitoring/groups/new', component: MonitorGroupForm },
+    { path: '/monitoring/groups/:id/edit', component: MonitorGroupForm },
     { path: '/monitoring/new', component: MonitorForm },
     { path: '/monitoring/new-host', component: MonitorForm },
     { path: '/monitoring/:id/edit', component: MonitorForm },

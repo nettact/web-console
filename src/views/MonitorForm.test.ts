@@ -12,8 +12,7 @@ const state = vi.hoisted(() => ({
   push: vi.fn(),
 }))
 const apiMock = vi.hoisted(() => ({
-  listTargets: vi.fn(), channels: vi.fn(), agentGroups: vi.fn(), setTargets: vi.fn(),
-  targetRules: vi.fn(), createTargetRule: vi.fn(), updateRule: vi.fn(), deleteRule: vi.fn(),
+  listTargets: vi.fn(), monitorGroups: vi.fn(), setTargets: vi.fn(),
 }))
 
 vi.mock('../api', () => ({ api: apiMock }))
@@ -24,9 +23,10 @@ vi.mock('vue-router', () => ({
 
 async function render(targets: ProbeTarget[] = []) {
   apiMock.listTargets.mockResolvedValue(targets)
-  apiMock.channels.mockResolvedValue([])
-  apiMock.agentGroups.mockResolvedValue([])
-  apiMock.targetRules.mockResolvedValue([])
+  apiMock.monitorGroups.mockResolvedValue([{
+    id: 'group-default', site_id: 'site_default', name: 'Default', is_default: true,
+    merge_enabled: true, all_agents: true, agent_group_ids: [],
+  }])
   const i18n = createI18n({ legacy: false, locale: 'en', messages: { en } })
   const page = mount(MonitorForm, {
     global: { plugins: [i18n], stubs: { RouterLink: true } },
@@ -86,7 +86,7 @@ describe('MonitorForm connection quick-add prefill', () => {
     state.route.query = { kind: 'tcp', target: '1.1.1.1', port: '443' }
     const existing: ProbeTarget = {
       id: 't1', kind: 'icmp', name: 'Existing', target: '8.8.8.8', params: {},
-      enabled: true, all_agents: true, group_ids: [],
+      enabled: true, group_id: 'group-default',
     }
     const page = await render([existing])
 

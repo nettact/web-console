@@ -559,7 +559,11 @@ const currentAlerts = computed(() => [...alerts.value].sort((a, b) =>
   (severityRank[a.severity] ?? 9) - (severityRank[b.severity] ?? 9)
     || new Date(a.started_at).getTime() - new Date(b.started_at).getTime(),
 ))
-const alertReason = (alert: Alert) => (locale.value === 'en' ? alert.desc_en : alert.desc_zh) || alert.target_name || alert.target
+const alertReason = (alert: Alert) =>
+  (locale.value === 'en' ? alert.desc_en : alert.desc_zh) ||
+  alert.evidence[0]?.target_name ||
+  alert.evidence[0]?.target_addr ||
+  alert.rule_name
 
 type MonitorHealthState = 'active' | 'probe_failed' | 'permission_blocked' | 'target_blocked' | 'unsupported'
 const monitorHealth = computed(() => {

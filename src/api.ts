@@ -205,20 +205,39 @@ export interface ProbeParams {
   // gateway
   interface?: string
 }
+// A monitoring target. It belongs to exactly one monitor group (group_id), which
+// owns the Agent execution scope and incident-merge policy shared by all of the
+// group's targets. Targets no longer carry their own Agent scope.
 export interface ProbeTarget {
   id?: string
+  group_id: string
   kind: string
   name?: string
   target: string
   params?: ProbeParams
   enabled: boolean
-  // Scope: all_agents=true pushes to every agent in the site (default). When
-  // false, the target reaches only agents in group_ids.
-  all_agents: boolean
-  group_ids?: string[]
 }
-// A named set of agents used to scope monitoring targets. An agent may belong to
-// several groups; a target scoped to a group is pushed to all its members.
+// A monitor group: a site-scoped, static owner of targets plus the shared Agent
+// execution scope (all_agents, or the union of referenced agent groups) and the
+// incident-merge policy. Every site has one undeletable default group.
+export interface MonitorGroup {
+  id: string
+  site_id: string
+  name: string
+  is_default: boolean
+  merge_enabled: boolean
+  all_agents: boolean
+  agent_group_ids: string[]
+}
+// Create/update payload for a monitor group.
+export interface MonitorGroupInput {
+  name: string
+  merge_enabled: boolean
+  all_agents: boolean
+  agent_group_ids: string[]
+}
+// A named set of agents used to scope monitor groups. An agent may belong to
+// several groups; a group scoped to an agent group reaches all its members.
 export interface AgentGroup {
   id: string
   site_id: string
@@ -240,21 +259,81 @@ export interface Device {
   first_seen: string | null
   last_seen: string | null
 }
+// ---- Incidents (INCIDENT-001), immutable snapshots (INCIDENT-002) and shared
+// traceroute reports (DIAG-001) ----
+
+// One incident: a group-aware, stable fault lifecycle. `state` is 'open' |
+// 'resolved'; `resolve_reason` distinguishes a genuine recovery ('recovered')
+// from a configuration-driven termination ('configuration_changed'). Member
+// counts are live; `snapshot_status` and `trace_count` summarize its evidence.
 export interface Incident {
   id: string
   site_id: string
+  group_id: string
+  group_name: string
   title: string
   suspected_layer: string
-  state: string
+  state: 'open' | 'resolved'
   severity: string
   summary: string
+  resolve_reason?: string
+  evidence_expired: boolean
+  snapshot_status: string
+  trace_count: number
+  member_count: number
+  active_member_count: number
   opened_at: string
   resolved_at: string | null
+}
+// One immutable, frozen condition that contributed to a firing alert.
+export interface AlertEvidence {
+  id: string
+  condition_id: string
+  target_id: string
+  target_name: string
+  target_addr: string
+  probe_kind: string
+  metric_kind: string
+  comparator: string // gt | gte | lt | lte | eq
+  threshold: number
+  value: number
+  observed_at: string
+}
+// An alert instance: one firing of a group rule on one Agent, keyed (rule,
+// agent), carrying the frozen evidence of every contributing condition. The
+// active-alerts endpoint additionally renders a bilingual fault description.
+export interface Alert {
+  id: string
+  rule_id: string
+  rule_name: string
+  group_id: string
+  group_name: string
+  agent_id: string
+  agent_host: string
+  site_id: string
+  layer: string
+  severity: string
+  state: 'firing' | 'resolved'
+  resolve_reason?: string // recovered | configuration_changed
+  incident_id?: string
+  started_at: string
+  resolved_at: string | null
+  evidence: AlertEvidence[]
+  // Present only on the active-alerts list (/alerts): server-rendered fault text.
+  desc_zh?: string
+  desc_en?: string
 }
 export interface TimelineEntry {
   ts: string
   kind: string
   message: string
+  // Entity the entry points at: an alert id, incident id or trace report id.
+  ref?: string
+}
+// GET /incidents/{id}: one incident with its member alert instances (evidence).
+export interface IncidentDetail {
+  incident: Incident
+  members: Alert[]
 }
 export interface IncidentPage {
   items: Incident[]
@@ -269,36 +348,226 @@ export interface IncidentSummary {
   resolved_24h: number
   top_layer: string
 }
-export interface Alert {
-  id: string
+
+// Snapshot lifecycle status (shared by the snapshot and each per-Agent entry).
+export type SnapshotStatus = 'collecting' | 'complete' | 'partial' | 'failed'
+// Per-field-group collection outcome (allowlisted groups only).
+export type FieldGroupStatus = 'collected' | 'denied' | 'unsupported' | 'failed'
+
+// GET /incidents/{id}/snapshot: the one immutable snapshot — the frozen server
+// base plus every per-Agent scene entry with its collection status.
+export interface SnapshotView {
+  incident_id: string
+  status: SnapshotStatus
+  base: SnapshotBase | null
+  total_bytes: number
+  truncated: boolean
+  deadline_at: string
+  created_at: string
+  entries: SnapshotEntry[]
+}
+export interface SnapshotEntry {
+  agent_id: string
+  agent_name: string
+  status: SnapshotStatus
+  reason?: string
+  clock_skew_ms: number
+  skewed: boolean
+  payload?: SnapshotEntryPayload | null
+  requested_at: string
+  received_at: string | null
+}
+// Server-authored base, frozen once at incident-open time.
+export interface SnapshotBase {
+  incident_id: string
+  site_id: string
+  group: { id: string; name: string }
+  severity: string
+  suspected_layer?: string
+  triggered_at: string
+  received_at: string
+  members: SnapshotBaseMember[]
+  agents: SnapshotBaseAgent[]
+  targets: SnapshotBaseTarget[]
+}
+export interface SnapshotBaseMember {
+  alert_id: string
+  rule_id: string
   rule_name: string
   agent_id: string
-  agent_host: string
-  target: string
+  agent_name: string
+  severity: string
+  layer?: string
+  started_at: string
+  evidence: SnapshotBaseEvidence[]
+}
+export interface SnapshotBaseEvidence {
+  condition_id: string
+  target_id: string
   target_name?: string
+  target_addr?: string
+  probe_kind?: string
+  metric_kind: string
+  comparator: string
+  threshold: number
+  value: number
+  observed_at: string
+  recent_samples?: { ts: string; value: number }[]
+}
+export interface SnapshotBaseAgent {
+  agent_id: string
+  name?: string
+  hostname?: string
+  platform?: string
+  agent_version?: string
+}
+export interface SnapshotBaseTarget {
+  monitor_id: string
+  kind?: string
+  target?: string
+  port?: number
+}
+// Per-Agent allowlisted scene payload. Only these typed groups are ever present
+// — never process lists, user names, file paths, credentials or request bodies.
+export interface SnapshotEntryPayload {
+  groups: SnapshotGroupResult[]
+  network?: SnapshotNetwork
+  agent?: SnapshotAgentInfo
+  resources?: SnapshotResources
+  targets?: SnapshotTargetResult[]
+}
+export interface SnapshotGroupResult {
+  group: string // network | agent | resources | targets
+  status: FieldGroupStatus
+  reason?: string
+  collected_at?: string
+}
+export interface SnapshotNetwork {
+  interfaces?: SnapshotInterface[]
+  default_route?: SnapshotRoute
+  dns_servers?: string[]
+}
+export interface SnapshotInterface {
+  name: string
+  addrs?: string[]
+  up: boolean
+  is_wireless?: boolean
+}
+export interface SnapshotRoute {
+  gateway?: string
+  interface?: string
+}
+export interface SnapshotAgentInfo {
+  agent_id?: string
+  hostname?: string
+  platform?: string
+  agent_version?: string
+}
+export interface SnapshotResources {
+  cpu_percent?: number
+  memory_total_bytes?: number
+  memory_used_bytes?: number
+}
+export interface SnapshotTargetResult {
+  monitor_id: string
+  kind?: string
+  target?: string
+  resolved_ips?: string[]
+  endpoints?: string[]
+  error_class?: string
+}
+
+// Terminal + pre-terminal traceroute statuses. queued/running live server-side;
+// the rest are the agent's terminal results.
+export type TraceStatus =
+  | 'queued'
+  | 'running'
+  | 'succeeded'
+  | 'partial'
+  | 'timed_out'
+  | 'unsupported'
+  | 'failed'
+  | 'canceled'
+// One traceroute report as referenced from an incident. The execution record is
+// shared: the same report_id/content appears everywhere it is referenced.
+export interface TraceSummary {
+  report_id: string
+  agent_id: string
+  agent_name: string
+  mode: string // icmp | tcp
+  dest_host: string
+  dest_ip?: string
+  port?: number
+  status: TraceStatus
+  reason?: string
+  reached: boolean
+  reached_ttl?: number
+  active_refs: number
+  requested_at: string
+  started_at: string | null
+  completed_at: string | null
+  deadline_at: string
+}
+// GET /trace-reports/{id}: a full shared report with its per-attempt hops.
+export interface TraceReportView extends TraceSummary {
+  hops: TraceHopView[]
+}
+export interface TraceHopView {
+  ttl: number
+  attempts: TraceAttemptView[]
+}
+export interface TraceAttemptView {
+  attempt: number
+  addr?: string
+  hostname?: string
+  rtt_ms?: number
+  timeout: boolean
+}
+// A group-level alert rule: a one-layer AND/OR list of conditions, each bound to
+// a target in the rule's monitor group. It produces per-Agent alert instances.
+export interface GroupRule {
+  id: string
+  group_id: string
+  site_id: string
+  name: string
+  op: 'and' | 'or'
   layer: string
   severity: string
-  state: string
-  value: number
-  started_at: string
-  // Human description of the fault, rendered server-side in both languages.
-  desc_zh?: string
-  desc_en?: string
+  channel_ids: string[]
+  enabled: boolean
+  conditions: RuleCondition[]
 }
-export interface Rule {
+// One threshold test inside a group rule, bound to a target in the rule's group.
+// consecutive breaching evaluations (fail_threshold) and an extra dwell gate
+// (for_seconds) gate when the condition is considered satisfied.
+export interface RuleCondition {
   id: string
-  probe_task_id?: string
+  rule_id: string
+  target_id: string
+  metric_kind: string
+  comparator: string // gt | gte | lt | lte | eq
+  threshold: number
+  fail_threshold: number
+  for_seconds: number
+  position: number
+}
+// Create/update payload for a group rule (ids/site are assigned server-side).
+export interface GroupRuleInput {
   name: string
+  op: 'and' | 'or'
+  layer: string
+  severity: string
+  channel_ids: string[]
+  enabled: boolean
+  conditions: RuleConditionInput[]
+}
+export interface RuleConditionInput {
+  target_id: string
   metric_kind: string
   comparator: string
   threshold: number
   fail_threshold: number
   for_seconds: number
-  layer: string
-  severity: string
-  channel_ids: string[]
-  is_template: boolean
-  enabled: boolean
 }
 export interface Channel {
   id: string
@@ -385,6 +654,26 @@ async function req<T>(method: string, url: string, body?: unknown): Promise<T> {
     throw new Error(msg)
   }
   if (r.status === 204) return undefined as T
+  return (await r.json()) as T
+}
+
+// Like req, but a 404 resolves to null instead of throwing — for optional
+// sub-resources (e.g. an incident that has no snapshot row yet). 401 still throws
+// AuthError so the router guard can redirect.
+async function reqOrNull<T>(method: string, url: string): Promise<T | null> {
+  const r = await fetch(url, { method, credentials: 'include' })
+  if (r.status === 401) throw new AuthError('unauthorized')
+  if (r.status === 404) return null
+  if (!r.ok) {
+    let msg = `${r.status} ${r.statusText}`
+    try {
+      const j = await r.json()
+      if (j?.error) msg = j.error
+    } catch {
+      /* ignore */
+    }
+    throw new Error(msg)
+  }
   return (await r.json()) as T
 }
 
@@ -484,7 +773,21 @@ export const api = {
   updateDashboardLayout: (layout: unknown) => req<unknown>('PUT', '/api/v1/dashboard-layout', layout),
   incidents: (page = 1, pageSize = 15) =>
     req<IncidentPage>('GET', `/api/v1/incidents?page=${page}&page_size=${pageSize}`),
+  // One incident with its member alert instances (each carrying frozen evidence).
+  incident: (id: string) => req<IncidentDetail>('GET', `/api/v1/incidents/${encodeURIComponent(id)}`),
   timeline: (id: string) => req<TimelineEntry[]>('GET', `/api/v1/incidents/${encodeURIComponent(id)}/timeline`),
+  // Immutable incident snapshot (server base + per-Agent scene entries). null when
+  // the incident has no snapshot row yet.
+  incidentSnapshot: (id: string) =>
+    reqOrNull<SnapshotView>('GET', `/api/v1/incidents/${encodeURIComponent(id)}/snapshot`),
+  // Traceroute reports referenced by an incident, each with this incident's
+  // active-reference count. The full hop detail is read per report id below.
+  incidentTraces: (id: string) =>
+    req<TraceSummary[]>('GET', `/api/v1/incidents/${encodeURIComponent(id)}/traces`),
+  // One full shared traceroute report with all hops — every referencing incident
+  // reads the identical execution through this report id.
+  traceReport: (reportId: string) =>
+    req<TraceReportView>('GET', `/api/v1/trace-reports/${encodeURIComponent(reportId)}`),
   alerts: () => req<Alert[]>('GET', '/api/v1/alerts'),
   // Alarm history (firing + resolved) for one agent, newest first — scoped to
   // a user-created monitor OR to a target string (host alerts).
@@ -494,14 +797,24 @@ export const api = {
     else if (scope.target) p.set('target', scope.target)
     return req<Alert[]>('GET', `/api/v1/agents/${encodeURIComponent(id)}/alerts?${p.toString()}`)
   },
-  // Alarm rules are configured per monitoring target.
-  targetRules: (probeTaskId: string) =>
-    req<Rule[]>('GET', `/api/v1/targets/${encodeURIComponent(probeTaskId)}/rules`),
-  createTargetRule: (probeTaskId: string, rule: Partial<Rule>) =>
-    req<{ id: string }>('POST', `/api/v1/targets/${encodeURIComponent(probeTaskId)}/rules`, rule),
-  updateRule: (id: string, rule: Partial<Rule>) =>
-    req<unknown>('PUT', `/api/v1/rules/${encodeURIComponent(id)}`, rule),
-  deleteRule: (id: string) => req<unknown>('DELETE', `/api/v1/rules/${encodeURIComponent(id)}`),
+  // Monitor groups own targets, their shared Agent execution scope and the
+  // incident-merge policy. CRUD is site-scoped; the default group cannot be
+  // deleted (server replies 400).
+  monitorGroups: (siteID: string) =>
+    req<MonitorGroup[]>('GET', `/api/v1/sites/${encodeURIComponent(siteID)}/monitor-groups`),
+  createMonitorGroup: (siteID: string, body: MonitorGroupInput) =>
+    req<{ id: string }>('POST', `/api/v1/sites/${encodeURIComponent(siteID)}/monitor-groups`, body),
+  updateMonitorGroup: (id: string, body: MonitorGroupInput) =>
+    req<unknown>('PUT', `/api/v1/monitor-groups/${encodeURIComponent(id)}`, body),
+  deleteMonitorGroup: (id: string) => req<unknown>('DELETE', `/api/v1/monitor-groups/${encodeURIComponent(id)}`),
+  // Group-level one-layer AND/OR alert rules, configured on a monitor group.
+  groupRules: (groupID: string) =>
+    req<GroupRule[]>('GET', `/api/v1/monitor-groups/${encodeURIComponent(groupID)}/rules`),
+  createGroupRule: (groupID: string, rule: GroupRuleInput) =>
+    req<{ id: string }>('POST', `/api/v1/monitor-groups/${encodeURIComponent(groupID)}/rules`, rule),
+  updateGroupRule: (id: string, rule: GroupRuleInput) =>
+    req<unknown>('PUT', `/api/v1/group-rules/${encodeURIComponent(id)}`, rule),
+  deleteGroupRule: (id: string) => req<unknown>('DELETE', `/api/v1/group-rules/${encodeURIComponent(id)}`),
   channels: () => req<Channel[]>('GET', '/api/v1/channels'),
   createChannel: (name: string, type: string, config: Record<string, string>) =>
     req<{ id: string }>('POST', '/api/v1/channels', { name, type, config }),

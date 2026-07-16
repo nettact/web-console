@@ -37,6 +37,85 @@ const system = reactive({ name: '', lang: 'zh' })
 const consoleUrl = ref('')
 const consoleSaved = ref(false)
 
+// Incident-evidence (INCIDENT-002) and path-diagnostic (DIAG-001) tuning, backed
+// by the flat settings API. Bounds mirror the server's validated ranges; time and
+// size fields are presented in friendly units and converted on save. There is
+// deliberately no cooldown / freshness / queue-grace / cross-fault reuse knob —
+// diagnostic report reuse is governed by alert lifecycles, not a timer.
+const diag = reactive({
+  snapshotDeadlineS: 10, // incident_snapshot_deadline_ms / 1000
+  snapshotMaxKiB: 256, // incident_snapshot_max_bytes / 1024
+  diagEnabled: true, // diag_enabled
+  totalTimeoutS: 30, // diag_total_timeout_ms / 1000
+  maxHops: 30, // diag_max_hops
+  attempts: 3, // diag_attempts_per_hop
+  agentConc: 4, // diag_agent_concurrency
+  globalConc: 16, // diag_global_concurrency
+  resolveHops: false, // diag_resolve_hops
+  retentionDays: 30, // evidence_retention_days
+})
+// [min, max] in the presented unit, mirroring server-core settings.IntKeys.
+const BOUNDS: Record<string, [number, number]> = {
+  snapshotDeadlineS: [1, 60],
+  snapshotMaxKiB: [64, 1024],
+  totalTimeoutS: [5, 120],
+  maxHops: [1, 64],
+  attempts: [1, 5],
+  agentConc: [1, 16],
+  globalConc: [1, 64],
+  retentionDays: [1, 365],
+}
+const diagSaved = ref(false)
+const diagError = ref('')
+
+function populateDiag(s: Record<string, string>) {
+  const num = (k: string, def: number) => {
+    const v = parseInt(s[k] ?? '', 10)
+    return Number.isFinite(v) ? v : def
+  }
+  diag.snapshotDeadlineS = Math.round(num('incident_snapshot_deadline_ms', 10000) / 1000)
+  diag.snapshotMaxKiB = Math.round(num('incident_snapshot_max_bytes', 262144) / 1024)
+  diag.diagEnabled = num('diag_enabled', 1) !== 0
+  diag.totalTimeoutS = Math.round(num('diag_total_timeout_ms', 30000) / 1000)
+  diag.maxHops = num('diag_max_hops', 30)
+  diag.attempts = num('diag_attempts_per_hop', 3)
+  diag.agentConc = num('diag_agent_concurrency', 4)
+  diag.globalConc = num('diag_global_concurrency', 16)
+  diag.resolveHops = num('diag_resolve_hops', 0) !== 0
+  diag.retentionDays = num('evidence_retention_days', 30)
+}
+function diagInRange(): boolean {
+  return Object.entries(BOUNDS).every(([k, [min, max]]) => {
+    const v = (diag as unknown as Record<string, number>)[k]
+    return Number.isFinite(v) && v >= min && v <= max
+  })
+}
+async function saveDiag() {
+  diagError.value = ''
+  if (!diagInRange()) {
+    diagError.value = t('settings.diag.rangeErr')
+    return
+  }
+  try {
+    await api.updateSettings({
+      incident_snapshot_deadline_ms: String(diag.snapshotDeadlineS * 1000),
+      incident_snapshot_max_bytes: String(diag.snapshotMaxKiB * 1024),
+      diag_enabled: diag.diagEnabled ? '1' : '0',
+      diag_total_timeout_ms: String(diag.totalTimeoutS * 1000),
+      diag_max_hops: String(diag.maxHops),
+      diag_attempts_per_hop: String(diag.attempts),
+      diag_agent_concurrency: String(diag.agentConc),
+      diag_global_concurrency: String(diag.globalConc),
+      diag_resolve_hops: diag.resolveHops ? '1' : '0',
+      evidence_retention_days: String(diag.retentionDays),
+    })
+    diagSaved.value = true
+    setTimeout(() => (diagSaved.value = false), 2000)
+  } catch (e) {
+    diagError.value = String((e as Error).message || e)
+  }
+}
+
 async function load() {
   try {
     const [q, s, ch, si, settings] = await Promise.all([
@@ -50,6 +129,7 @@ async function load() {
     // concrete, saveable value instead of only the placeholder (which looks like
     // a value but saves empty). Entering the console also auto-sets it (see auth).
     consoleUrl.value = settings['console_base_url'] || window.location.origin
+    populateDiag(settings)
   } catch (e) {
     error.value = String((e as Error).message || e)
   }
@@ -142,6 +222,103 @@ onMounted(load)
           <button class="btn btn-primary" @click="saveConsoleUrl">{{ t('common.save') }}</button>
           <span v-if="consoleSaved" class="hint saved">✓ {{ t('common.saved') }}</span>
         </div>
+      </div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-head"><h3>{{ t('settings.evidence.title') }}</h3></div>
+      <div class="panel-body">
+        <p class="hint">{{ t('settings.evidence.hint') }}</p>
+        <div class="knob-grid">
+          <label class="knob">
+            <span class="knob-label">{{ t('settings.evidence.snapshotDeadline') }}</span>
+            <span class="knob-input">
+              <input type="number" v-model.number="diag.snapshotDeadlineS" min="1" max="60" step="1" />
+              <span class="unit">{{ t('settings.unit.seconds') }}</span>
+            </span>
+            <span class="knob-help hint">{{ t('settings.evidence.snapshotDeadlineHelp') }}</span>
+          </label>
+          <label class="knob">
+            <span class="knob-label">{{ t('settings.evidence.snapshotMax') }}</span>
+            <span class="knob-input">
+              <input type="number" v-model.number="diag.snapshotMaxKiB" min="64" max="1024" step="64" />
+              <span class="unit">KiB</span>
+            </span>
+            <span class="knob-help hint">{{ t('settings.evidence.snapshotMaxHelp') }}</span>
+          </label>
+          <label class="knob">
+            <span class="knob-label">{{ t('settings.evidence.retention') }}</span>
+            <span class="knob-input">
+              <input type="number" v-model.number="diag.retentionDays" min="1" max="365" step="1" />
+              <span class="unit">{{ t('settings.unit.days') }}</span>
+            </span>
+            <span class="knob-help hint">{{ t('settings.evidence.retentionHelp') }}</span>
+          </label>
+        </div>
+      </div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-head"><h3>{{ t('settings.diag.title') }}</h3></div>
+      <div class="panel-body">
+        <p class="hint">{{ t('settings.diag.hint') }}</p>
+        <label class="toggle-row">
+          <input type="checkbox" v-model="diag.diagEnabled" />
+          <span>{{ t('settings.diag.enable') }}</span>
+          <span class="hint">{{ t('settings.diag.enableHelp') }}</span>
+        </label>
+        <div class="knob-grid">
+          <label class="knob">
+            <span class="knob-label">{{ t('settings.diag.totalTimeout') }}</span>
+            <span class="knob-input">
+              <input type="number" v-model.number="diag.totalTimeoutS" min="5" max="120" step="1" :disabled="!diag.diagEnabled" />
+              <span class="unit">{{ t('settings.unit.seconds') }}</span>
+            </span>
+            <span class="knob-help hint">{{ t('settings.diag.totalTimeoutHelp') }}</span>
+          </label>
+          <label class="knob">
+            <span class="knob-label">{{ t('settings.diag.maxHops') }}</span>
+            <span class="knob-input">
+              <input type="number" v-model.number="diag.maxHops" min="1" max="64" step="1" :disabled="!diag.diagEnabled" />
+              <span class="unit">{{ t('settings.unit.hops') }}</span>
+            </span>
+            <span class="knob-help hint">{{ t('settings.diag.maxHopsHelp') }}</span>
+          </label>
+          <label class="knob">
+            <span class="knob-label">{{ t('settings.diag.attempts') }}</span>
+            <span class="knob-input">
+              <input type="number" v-model.number="diag.attempts" min="1" max="5" step="1" :disabled="!diag.diagEnabled" />
+              <span class="unit">{{ t('settings.unit.perHop') }}</span>
+            </span>
+            <span class="knob-help hint">{{ t('settings.diag.attemptsHelp') }}</span>
+          </label>
+          <label class="knob">
+            <span class="knob-label">{{ t('settings.diag.agentConc') }}</span>
+            <span class="knob-input">
+              <input type="number" v-model.number="diag.agentConc" min="1" max="16" step="1" :disabled="!diag.diagEnabled" />
+              <span class="unit">{{ t('settings.unit.perAgent') }}</span>
+            </span>
+            <span class="knob-help hint">{{ t('settings.diag.agentConcHelp') }}</span>
+          </label>
+          <label class="knob">
+            <span class="knob-label">{{ t('settings.diag.globalConc') }}</span>
+            <span class="knob-input">
+              <input type="number" v-model.number="diag.globalConc" min="1" max="64" step="1" :disabled="!diag.diagEnabled" />
+              <span class="unit">{{ t('settings.unit.global') }}</span>
+            </span>
+            <span class="knob-help hint">{{ t('settings.diag.globalConcHelp') }}</span>
+          </label>
+        </div>
+        <label class="toggle-row">
+          <input type="checkbox" v-model="diag.resolveHops" :disabled="!diag.diagEnabled" />
+          <span>{{ t('settings.diag.resolveHops') }}</span>
+          <span class="hint">{{ t('settings.diag.resolveHopsHelp') }}</span>
+        </label>
+      </div>
+      <div class="panel-foot">
+        <button class="btn btn-primary" @click="saveDiag">{{ t('common.save') }}</button>
+        <span v-if="diagSaved" class="hint saved">✓ {{ t('common.saved') }}</span>
+        <span v-if="diagError" class="err inline">{{ diagError }}</span>
       </div>
     </section>
 
@@ -306,5 +483,63 @@ input.tiny-name {
 }
 .name-in {
   min-width: 120px;
+}
+.knob-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 16px;
+  margin: 14px 0 4px;
+}
+.knob {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.knob-label {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-dim);
+}
+.knob-input {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.knob-input input {
+  min-width: 96px;
+  width: 110px;
+}
+.knob-input input:disabled {
+  opacity: 0.5;
+}
+.knob-input .unit {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+.knob-help {
+  font-size: 12px;
+  line-height: 1.45;
+}
+.toggle-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 12px 0;
+  font-size: 13.5px;
+}
+.toggle-row input {
+  min-width: 0;
+}
+.panel-foot {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 0 18px 16px;
+}
+.err.inline {
+  padding: 6px 10px;
+}
+.saved {
+  color: var(--success);
 }
 </style>

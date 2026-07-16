@@ -2,7 +2,7 @@
 import { ref, reactive, computed, onMounted, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
-import { api, type ProbeTarget, type ProbeParams, type Rule, type Channel, type AgentGroup, type SaveWarning } from '../api'
+import { api, type ProbeTarget, type ProbeParams, type MonitorGroup, type SaveWarning } from '../api'
 import ComboInput from '../components/ComboInput.vue'
 
 const { t: tr } = useI18n()
@@ -16,17 +16,18 @@ const editingId = computed(() => (route.params.id as string) || '')
 const isNewHost = computed(() => route.path.endsWith('/new-host'))
 
 const all = ref<ProbeTarget[]>([])
+// Monitor groups: a target must belong to exactly one. The scope/merge policy now
+// lives on the group, so this form no longer configures Agent scope or alert rules.
+const groups = ref<MonitorGroup[]>([])
 const form = reactive<ProbeTarget>(blank())
-if (isNewHost.value) { form.kind = 'host'; form.target = 'host' }
+if (isNewHost.value) {
+  form.kind = 'host'
+  form.target = 'host'
+}
 // Quick-add prefill: the Live Connections page links here with kind/target[/port]
-// to seed a new monitor. This only sets initial form values — it never saves —
-// and applies to an ordinary create alone, never edit and never the host flow.
+// to seed a new monitor. This only sets initial form values — it never saves.
 if (!editingId.value && !isNewHost.value) applyQueryPrefill()
 
-// Read the route query for initial values, tolerating out-of-contract input.
-// Accepts only kind tcp/icmp with a non-empty target; a port is honored solely
-// for a resulting TCP monitor and only in 1-65535. Array (repeated) query values
-// are rejected. No generic HTTP/DNS/NAT prefill.
 function queryStr(v: unknown): string {
   return typeof v === 'string' ? v : ''
 }
@@ -46,25 +47,13 @@ function applyQueryPrefill() {
   }
 }
 
-// A "系统状态" (host) target is not a probe: host.* metrics are emitted by the
-// agent itself (when granted the matching host.* permissions); this target is
-// purely a server-side alerting anchor whose `target` string must equal the
-// metric series' target — "host" for CPU/memory/load, or a mount point for disk.
-// So the host flow hides the type dropdown and swaps the free-text target for a
-// guided subject selector.
 const isHostMode = computed(() => form.kind === 'host')
-// A gateway target probes the agent's own gateway (resolved from the chosen NIC,
-// or the default NIC when none is given), so it has no user-entered target — the
-// NIC selection lives in params.interface. Like host mode, it hides the free-text
-// target field and shows a guided input instead.
 const isGatewayMode = computed(() => form.kind === 'gateway')
-// Whole-machine (target "host"), a specific disk partition (target = mount
-// point), or Wi-Fi (target "*", the anchor for every wireless adapter). Selecting
-// "whole" pins target to "host"; "wifi" pins it to "*"; "disk" clears it so the
-// user types the mount point, which must match what the agent reports (e.g. "C:").
 const hostSubject = computed<'whole' | 'disk' | 'wifi'>({
   get: () => (form.target === 'host' ? 'whole' : form.target === '*' ? 'wifi' : 'disk'),
-  set: (v) => { form.target = v === 'whole' ? 'host' : v === 'wifi' ? '*' : '' },
+  set: (v) => {
+    form.target = v === 'whole' ? 'host' : v === 'wifi' ? '*' : ''
+  },
 })
 const headersText = ref('')
 const error = ref('')
@@ -79,40 +68,21 @@ const notFound = ref(false)
 const loaded = ref(false)
 
 function blank(): ProbeTarget {
-  return { kind: 'icmp', name: '', target: '', params: {}, enabled: true, all_agents: true, group_ids: [] }
+  return { group_id: '', kind: 'icmp', name: '', target: '', params: {}, enabled: true }
 }
 
-// Agent groups for the scope selector. A target is either broadcast to all agents
-// (all_agents=true) or limited to the selected groups.
-const groups = ref<AgentGroup[]>([])
-// Scope radio bound to the boolean flag so the two states stay in sync.
-const scope = computed<'all' | 'groups'>({
-  get: () => (form.all_agents ? 'all' : 'groups'),
-  set: (v) => { form.all_agents = v === 'all' },
-})
-function toggleGroup(id: string) {
-  const ids = form.group_ids || (form.group_ids = [])
-  const i = ids.indexOf(id)
-  if (i >= 0) ids.splice(i, 1)
-  else ids.push(id)
-}
+const defaultGroupId = computed(() => groups.value.find((g) => g.is_default)?.id || '')
 
-// HTTP is a single type: an empty keyword means a plain availability check; a
-// non-empty keyword adds body-content validation. Placeholder helpers for the
-// DNS resolver server/port depend on the selected resolver protocol.
 const dnsProto = computed(() => form.params?.resolver_protocol || '')
 const resolverServerPlaceholder = computed(() =>
-  dnsProto.value === 'doh' ? 'https://cloudflare-dns.com/dns-query'
-  : dnsProto.value === 'dot' ? '1.1.1.1 / dns.google'
-  : '1.1.1.1',
+  dnsProto.value === 'doh'
+    ? 'https://cloudflare-dns.com/dns-query'
+    : dnsProto.value === 'dot'
+      ? '1.1.1.1 / dns.google'
+      : '1.1.1.1',
 )
 const resolverPortPlaceholder = computed(() => (dnsProto.value === 'dot' ? '853' : '53'))
 
-// Suggested public STUN servers for the NAT monitor, offered as a pickable list on
-// the (still free-text) server field. A value may include a port (host:port);
-// without one the agent uses the transport's default STUN port (3478 for UDP/TCP,
-// 5349 for TLS/DTLS). Not all public servers implement RFC 5780 OTHER-ADDRESS, so
-// behavior discovery may be inconclusive.
 const STUN_PRESETS = [
   'stun.hot-chilli.net',
   'stun.fitauto.ru',
@@ -133,33 +103,40 @@ function placeholderFor(kind: string): string {
 
 async function loadAll() {
   try {
-    ;[all.value, channels.value, groups.value] = await Promise.all([
-      api.listTargets(SITE),
-      api.channels(),
-      api.agentGroups(SITE),
-    ])
+    ;[all.value, groups.value] = await Promise.all([api.listTargets(SITE), api.monitorGroups(SITE)])
   } catch (e) {
     // Leave loaded=false so Save stays disabled — reconciling against an empty
     // list would wipe every existing monitor.
     error.value = String((e as Error).message || e)
     return
   }
-  all.value.forEach((x) => { if (!x.params) x.params = {} })
+  all.value.forEach((x) => {
+    if (!x.params) x.params = {}
+  })
   loaded.value = true
   if (editingId.value) {
     const found = all.value.find((x) => x.id === editingId.value)
-    if (!found) { notFound.value = true; return }
+    if (!found) {
+      notFound.value = true
+      return
+    }
     Object.assign(form, JSON.parse(JSON.stringify(found)))
     if (!form.params) form.params = {}
     if (form.kind === 'nat' && !form.params.nat_transport) form.params.nat_transport = 'udp'
     headersText.value = headersToText(form.params.headers)
-    await loadRules()
+  } else if (!form.group_id) {
+    // New target: honor an explicit ?group= (from a group's "add target" link),
+    // otherwise land it in the site default group.
+    const q = queryStr(route.query.group)
+    form.group_id = groups.value.some((g) => g.id === q) ? q : defaultGroupId.value
   }
 }
 
 function headersToText(h?: Record<string, string>): string {
   if (!h) return ''
-  return Object.entries(h).map(([k, v]) => `${k}: ${v}`).join('\n')
+  return Object.entries(h)
+    .map(([k, v]) => `${k}: ${v}`)
+    .join('\n')
 }
 function textToHeaders(s: string): Record<string, string> {
   const out: Record<string, string> = {}
@@ -189,9 +166,16 @@ function cleanParams(p: ProbeParams | undefined): ProbeParams {
 
 async function save() {
   if (!loaded.value) return // never reconcile against a list that failed to load
+  if (!form.group_id) {
+    error.value = tr('mform.groupRequired')
+    return
+  }
   // Gateway targets carry no user-entered target (the server normalizes it to
   // "gateway"); every other kind needs one.
-  if (!isGatewayMode.value && !form.target.trim()) { error.value = tr('mform.targetRequired'); return }
+  if (!isGatewayMode.value && !form.target.trim()) {
+    error.value = tr('mform.targetRequired')
+    return
+  }
   busy.value = true
   saved.value = false
   error.value = ''
@@ -201,35 +185,30 @@ async function save() {
     const target = isGatewayMode.value ? 'gateway' : form.target.trim()
     const current: ProbeTarget = { ...form, target, params: cleanParams(form.params) }
     // Rebuild the full set (setTargets is a full reconcile), upserting this one.
-    const others = all.value.filter((x) => x.id && x.id !== form.id)
+    const others = all.value
+      .filter((x) => x.id && x.id !== form.id)
       .map((x) => ({ ...x, params: cleanParams(x.params) }))
     // Snapshot existing ids so a newly created monitor (which gets a fresh id not
-    // in this set) is identified unambiguously, even if it duplicates another
-    // monitor's kind/target/name.
+    // in this set) is identified unambiguously.
     const beforeIds = new Set(others.map((x) => x.id))
     const payload = [...others, current]
     const res = await api.setTargets(SITE, payload)
-    // Reload so a freshly-created monitor gets its server-assigned id (needed to
-    // configure alarm rules); locate it by id (edit) or the one new id (create).
+    // Reload so a freshly-created monitor gets its server-assigned id; locate it by
+    // id (edit) or the one new id (create).
     all.value = await api.listTargets(SITE)
-    all.value.forEach((x) => { if (!x.params) x.params = {} })
+    all.value.forEach((x) => {
+      if (!x.params) x.params = {}
+    })
     const match = form.id
       ? all.value.find((x) => x.id === form.id)
       : all.value.find((x) => x.id && !beforeIds.has(x.id))
     if (match) {
       form.id = match.id
       if (!editingId.value && match.id) router.replace(`/monitoring/${match.id}/edit`)
-      // Persist in-form alarm-rule edits before reloading, so the primary Save
-      // saves the whole form. Otherwise loadRules() overwrites the user's
-      // rule-card edits with the server's original values (the revert bug).
-      await persistRules()
-      await loadRules()
     }
     // Surface the save-time warning for THIS monitor (which in-scope agents cannot
     // run it and why), so a mixed-capability save is visible immediately.
     saveWarning.value = res.warnings.find((wgn) => wgn.monitor_id === form.id) ?? null
-    // Only now, after the target AND its rules have persisted, mark saved — so a
-    // failed rule save surfaces the error without a misleading "saved" indicator.
     saved.value = true
   } catch (e) {
     error.value = String((e as Error).message || e)
@@ -238,214 +217,19 @@ async function save() {
   }
 }
 
-// ---- alarm rules (验证/通知) ----
-const channels = ref<Channel[]>([])
-const rules = ref<Rule[]>([])
-
-// A Preset is a plain-language alarm condition. It hides the raw metric +
-// comparator + threshold model behind a friendly label. `fixed` presets are
-// on/off failures (no number to enter); the rest compare a measured value
-// (`unit`, seeded from `def`) against a user-entered threshold.
-// `scale` bridges a user-friendly display unit and the raw metric unit: the
-// entered/shown value is in `unit`, the stored threshold is value × scale (e.g.
-// network is stored bytes/s but entered as MB/s with scale 1048576). Omit → 1.
-type Preset = { key: string; label: string; metric: string; comparator: string; fixed?: number; unit?: string; def?: number; scale?: number }
-const MIB = 1024 * 1024 // matches the dashboard's base-1024 byte formatting
-const CONDITION_PRESETS: Record<string, Preset[]> = {
-  icmp: [
-    { key: 'down', label: 'mform.condDown', metric: 'probe.icmp.loss_pct', comparator: 'gte', fixed: 100 },
-    { key: 'loss', label: 'mform.condLoss', metric: 'probe.icmp.loss_pct', comparator: 'gt', unit: '%', def: 50 },
-    { key: 'rtt', label: 'mform.condLatency', metric: 'probe.icmp.rtt_ms', comparator: 'gt', unit: 'ms', def: 200 },
-    { key: 'rttmax', label: 'mform.condLatencyMax', metric: 'probe.icmp.rtt_max_ms', comparator: 'gt', unit: 'ms', def: 400 },
-    { key: 'jitter', label: 'mform.condJitter', metric: 'probe.icmp.jitter_ms', comparator: 'gt', unit: 'ms', def: 30 },
-  ],
-  dns: [
-    { key: 'fail', label: 'mform.condResolveFail', metric: 'probe.dns.ok', comparator: 'lt', fixed: 1 },
-    { key: 'slow', label: 'mform.condResolveSlow', metric: 'probe.dns.resolve_ms', comparator: 'gt', unit: 'ms', def: 500 },
-  ],
-  http: [
-    { key: 'down', label: 'mform.condUnavailable', metric: 'probe.http.ok', comparator: 'lt', fixed: 1 },
-    { key: 'slow', label: 'mform.condLatency', metric: 'probe.http.latency_ms', comparator: 'gt', unit: 'ms', def: 1000 },
-  ],
-  tcp: [
-    { key: 'down', label: 'mform.condConnectFail', metric: 'probe.tcp.ok', comparator: 'lt', fixed: 1 },
-    { key: 'slow', label: 'mform.condConnectSlow', metric: 'probe.tcp.connect_ms', comparator: 'gt', unit: 'ms', def: 1000 },
-    { key: 'dnsslow', label: 'mform.condDnsSlow', metric: 'probe.tcp.dns_ms', comparator: 'gt', unit: 'ms', def: 500 },
-  ],
-  // Framed by outcome, not NAT jargon: the NAT type already summarizes mapping +
-  // filtering, so we only surface what a user actually feels — symmetric NAT breaks
-  // P2P (games/calls/remote access), and a failed probe means no NAT info at all.
-  nat: [
-    { key: 'p2p', label: 'mform.condNatP2P', metric: 'probe.nat.type', comparator: 'gte', fixed: 5 },
-    { key: 'probefail', label: 'mform.condNatProbeFail', metric: 'probe.nat.ok', comparator: 'lt', fixed: 1 },
-  ],
-}
-// Host presets depend on the chosen subject: whole-machine metrics live on the
-// "host" series (CPU/memory), disk usage on the per-mount series, and Wi-Fi on the
-// per-adapter wifi.* series (anchored at target "*"). Splitting them this way
-// guarantees a rule's metric always matches the anchor's target string, so the
-// condition can actually fire.
-const HOST_PRESETS: Record<'whole' | 'disk' | 'wifi', Preset[]> = {
-  whole: [
-    { key: 'cpu', label: 'mform.condCpu', metric: 'host.cpu.pct', comparator: 'gt', unit: '%', def: 90 },
-    { key: 'mem', label: 'mform.condMem', metric: 'host.mem.pct', comparator: 'gt', unit: '%', def: 90 },
-    { key: 'load1', label: 'mform.condLoad1', metric: 'host.load.1m', comparator: 'gt', unit: '', def: 4 },
-    { key: 'load5', label: 'mform.condLoad5', metric: 'host.load.5m', comparator: 'gt', unit: '', def: 4 },
-    { key: 'load15', label: 'mform.condLoad15', metric: 'host.load.15m', comparator: 'gt', unit: '', def: 4 },
-    { key: 'netrx', label: 'mform.condNetRx', metric: 'host.net.rx_bps', comparator: 'gt', unit: 'MB/s', def: 100, scale: MIB },
-    { key: 'nettx', label: 'mform.condNetTx', metric: 'host.net.tx_bps', comparator: 'gt', unit: 'MB/s', def: 100, scale: MIB },
-  ],
-  disk: [
-    { key: 'disk', label: 'mform.condDisk', metric: 'host.disk.pct', comparator: 'gt', unit: '%', def: 90 },
-  ],
-  // Wi-Fi presets use strict less-than on the wifi.* metrics: disconnected is an
-  // on/off failure (fixed 1); low signal/quality compare an editable threshold
-  // (dBm is negative — a "lower" reading means a weaker signal).
-  wifi: [
-    { key: 'disconnected', label: 'mform.condWifiDown', metric: 'wifi.up', comparator: 'lt', fixed: 1 },
-    { key: 'signal', label: 'mform.condWifiSignal', metric: 'wifi.signal_dbm', comparator: 'lt', unit: 'dBm', def: -70 },
-    { key: 'quality', label: 'mform.condWifiQuality', metric: 'wifi.quality_pct', comparator: 'lt', unit: '%', def: 60 },
-  ],
-}
-// A literal IPv4/IPv6 address as a target (bracketed IPv6 allowed) — used to hide
-// DNS-phase presets that can never produce samples for such a target.
-function isLiteralIP(target: string): boolean {
-  const s = target.trim()
-  if (!s) return false
-  const v6 = s.startsWith('[') && s.endsWith(']') ? s.slice(1, -1) : s
-  if (v6.includes(':')) return /^[0-9a-fA-F:]+$/.test(v6)
-  return /^\d{1,3}(\.\d{1,3}){3}$/.test(s)
-}
-function presetsForKind(kind: string): Preset[] {
-  if (kind === 'host') return HOST_PRESETS[hostSubject.value]
-  let list = CONDITION_PRESETS[kind] || CONDITION_PRESETS.icmp
-  // Hide presets whose metric the current config can never emit, so a rule that
-  // could never fire cannot be saved.
-  if (kind === 'icmp' || kind === 'gateway') {
-    // Jitter needs >=2 received echoes; an explicit single-packet cycle never emits it.
-    if (form.params?.packet_count === 1) list = list.filter((p) => p.metric !== 'probe.icmp.jitter_ms')
-  }
-  // A literal-IP TCP target has no DNS phase, so probe.tcp.dns_ms is never emitted.
-  if (kind === 'tcp' && isLiteralIP(form.target)) {
-    list = list.filter((p) => p.metric !== 'probe.tcp.dns_ms')
-  }
-  return list
-}
-// Reverse-map a stored rule to its preset (by metric; fixed presets also match on
-// comparator). Falls back to the first preset so an unrecognized rule still shows.
-function presetKeyOf(r: Rule): string {
-  const list = presetsForKind(form.kind)
-  const p = list.find((x) => x.metric === r.metric_kind && (x.fixed == null || x.comparator === r.comparator))
-  return (p || list[0]).key
-}
-function presetByKey(key: string): Preset | undefined {
-  return presetsForKind(form.kind).find((p) => p.key === key)
-}
-function applyPreset(r: Rule, key: string) {
-  const p = presetByKey(key)
-  if (!p) return
-  r.metric_kind = p.metric
-  r.comparator = p.comparator
-  r.threshold = p.fixed != null ? p.fixed : (p.def ?? 0) * (p.scale ?? 1)
-}
-// The stored threshold is always in the raw metric unit; the editor shows/edits
-// it in the preset's display unit (threshold ÷ scale).
-function thresholdDisplay(r: Rule): number {
-  const s = presetByKey(presetKeyOf(r))?.scale ?? 1
-  return s === 1 ? r.threshold : r.threshold / s
-}
-function setThreshold(r: Rule, v: number) {
-  const s = presetByKey(presetKeyOf(r))?.scale ?? 1
-  r.threshold = (Number.isNaN(v) ? 0 : v) * s
-}
-function severityLabel(s: string): string {
-  return tr('mform.sev_' + s)
-}
-// Human-readable one-line summary of a rule, shown under the controls.
-function ruleSentence(r: Rule): string {
-  const p = presetByKey(presetKeyOf(r))
-  const cond = p ? tr(p.label) : r.metric_kind
-  const val = p && p.fixed == null ? ` ${thresholdDisplay(r)}${p.unit || ''}` : ''
-  return tr('mform.rulePreview', { cond: cond + val, n: r.fail_threshold, sev: severityLabel(r.severity) })
-}
-function layerForKind(kind: string): string {
-  if (kind === 'dns') return 'dns'
-  if (kind === 'http') return 'service'
-  if (kind === 'tcp') return 'service'
-  if (kind === 'nat') return 'wan'
-  // Gateway metrics are emitted on the LAN layer, so their alerts must correlate
-  // as LAN faults (not the default internet layer).
-  if (kind === 'gateway') return 'lan'
-  // Whole-machine and disk alerts are local faults; Wi-Fi is a wireless-layer
-  // fault so the incident correlator groups and labels it accordingly.
-  if (kind === 'host') return hostSubject.value === 'wifi' ? 'wireless' : 'local'
-  return 'internet'
-}
-async function loadRules() {
-  if (!form.id) return
-  rules.value = await api.targetRules(form.id)
-}
-async function addRule() {
-  if (!form.id) return
-  const p = presetsForKind(form.kind)[0]
-  try {
-    await api.createTargetRule(form.id, {
-      name: `${form.name || form.target} ${tr('monitoring.ruleNameSuffix')}`,
-      metric_kind: p.metric, comparator: p.comparator,
-      threshold: p.fixed != null ? p.fixed : (p.def ?? 0),
-      fail_threshold: 3, severity: 'error', layer: layerForKind(form.kind), channel_ids: [],
-    })
-    await loadRules()
-  } catch (e) {
-    error.value = String((e as Error).message || e)
-  }
-}
-// Serialize a rule card's current values for the update API. Shared by the
-// per-rule Save button and the primary Save (which persists every rule).
-function rulePayload(r: Rule): Partial<Rule> {
-  return {
-    name: r.name, metric_kind: r.metric_kind, comparator: r.comparator,
-    threshold: Number(r.threshold), fail_threshold: Number(r.fail_threshold),
-    for_seconds: Number(r.for_seconds || 0), layer: r.layer, severity: r.severity,
-    channel_ids: r.channel_ids || [], enabled: r.enabled,
-  }
-}
-async function saveRule(r: Rule) {
-  await api.updateRule(r.id, rulePayload(r))
-  await loadRules()
-}
-// Persist every rule card's edits at once. Used by the primary Save so a single
-// click saves the whole form (target + its alarm rules); leaves reloading to the
-// caller. Without this, save()'s loadRules() would clobber unsaved rule edits.
-async function persistRules() {
-  await Promise.all(rules.value.filter((r) => r.id).map((r) => api.updateRule(r.id, rulePayload(r))))
-}
-async function delRule(r: Rule) {
-  await api.deleteRule(r.id)
-  await loadRules()
-}
-function toggleChannel(r: Rule, id: string) {
-  const ids = r.channel_ids || (r.channel_ids = [])
-  const i = ids.indexOf(id)
-  if (i >= 0) ids.splice(i, 1)
-  else ids.push(id)
-}
-function channelLabel(c: Channel): string {
-  return c.name || (c.type === 'webhook' ? c.config.url : c.config.to) || c.type
-}
-
 // Ensure params exist on kind change, and drop the http-only keyword when leaving
 // http so a stale keyword can't misclassify the monitor.
-watch(() => form.kind, (k) => {
-  if (!form.params) form.params = {}
-  if (k !== 'http') {
-    form.params.keyword = ''
-    form.params.keyword_invert = false
-  }
-  // Default the NAT transport so the select shows a concrete value (UDP) rather
-  // than an empty/placeholder state.
-  if (k === 'nat' && !form.params.nat_transport) form.params.nat_transport = 'udp'
-})
+watch(
+  () => form.kind,
+  (k) => {
+    if (!form.params) form.params = {}
+    if (k !== 'http') {
+      form.params.keyword = ''
+      form.params.keyword_invert = false
+    }
+    if (k === 'nat' && !form.params.nat_transport) form.params.nat_transport = 'udp'
+  },
+)
 
 onMounted(loadAll)
 </script>
@@ -458,7 +242,8 @@ onMounted(loadAll)
     </div>
     <p v-if="error" class="err">{{ error }}</p>
 
-    <p v-if="notFound" class="hint">{{ tr('mform.notFound') }}
+    <p v-if="notFound" class="hint">
+      {{ tr('mform.notFound') }}
       <router-link to="/monitoring">{{ tr('mform.back') }}</router-link>
     </p>
 
@@ -486,10 +271,7 @@ onMounted(loadAll)
           <template v-if="isHostMode">
             <label class="field">
               <span>{{ tr('mform.hostSubject') }}</span>
-              <!-- Locked once rules exist: rules bind to this anchor's target, so
-                   switching the subject would silently orphan every rule (e.g. a
-                   host.cpu.pct rule left pointing at a disk mount never matches). -->
-              <select v-model="hostSubject" :disabled="rules.length > 0">
+              <select v-model="hostSubject">
                 <option value="whole">{{ tr('mform.hostSubjectWhole') }}</option>
                 <option value="disk">{{ tr('mform.hostSubjectDisk') }}</option>
                 <option value="wifi">{{ tr('mform.hostSubjectWifi') }}</option>
@@ -499,8 +281,7 @@ onMounted(loadAll)
               <span>{{ tr('mform.hostMountLabel') }}</span>
               <input v-model="form.target" :placeholder="tr('mform.hostMountPlaceholder')" />
             </label>
-            <p class="hint tiny wide" v-if="rules.length">{{ tr('mform.hostSubjectLocked') }}</p>
-            <p class="hint tiny wide" v-else-if="hostSubject === 'disk'">{{ tr('mform.hostMountHint') }}</p>
+            <p class="hint tiny wide" v-if="hostSubject === 'disk'">{{ tr('mform.hostMountHint') }}</p>
             <p class="hint tiny wide" v-else-if="hostSubject === 'wifi'">{{ tr('mform.hostWifiHint') }}</p>
           </template>
           <!-- gateway: no free-text target — pick an optional NIC, else default -->
@@ -542,32 +323,25 @@ onMounted(loadAll)
         </div>
       </section>
 
-      <!-- Scope: which agents this monitor applies to. For probes it limits which
-           agents run the probe (downlink); for host anchors it limits which agents'
-           system-status metrics the alert evaluates against. -->
+      <!-- Monitor group: a target belongs to exactly one. The group owns the Agent
+           execution scope and incident-merge policy shared by all its targets. -->
       <section class="panel">
-        <div class="panel-head"><h3>{{ tr('mform.secScope') }}</h3></div>
-        <p class="hint panel-hint">{{ isHostMode ? tr('mform.scopeHintHost') : tr('mform.scopeHint') }}</p>
+        <div class="panel-head"><h3>{{ tr('mform.secGroup') }}</h3></div>
+        <p class="hint panel-hint">{{ tr('mform.groupHint') }}</p>
         <div class="panel-body">
-          <label class="scope-opt">
-            <input type="radio" value="all" v-model="scope" />
-            <span>{{ tr('mform.scopeAll') }}</span>
+          <label class="field group-field">
+            <span>{{ tr('mform.monitorGroup') }}</span>
+            <select v-model="form.group_id">
+              <option value="" disabled>{{ tr('mform.groupPick') }}</option>
+              <option v-for="g in groups" :key="g.id" :value="g.id">
+                {{ g.name }}<template v-if="g.is_default"> · {{ tr('monitoring.defaultTag') }}</template>
+              </option>
+            </select>
           </label>
-          <label class="scope-opt">
-            <input type="radio" value="groups" v-model="scope" />
-            <span>{{ tr('mform.scopeGroups') }}</span>
-          </label>
-          <div v-if="scope === 'groups'" class="group-pick">
-            <p v-if="!groups.length" class="hint tiny">{{ tr('mform.noGroupsHint') }}
-              <router-link to="/agents">{{ tr('mform.manageGroups') }}</router-link>
-            </p>
-            <label v-for="g in groups" :key="g.id" class="group-chip">
-              <input type="checkbox" :checked="(form.group_ids || []).includes(g.id)" @change="toggleGroup(g.id)" />
-              <span>{{ g.name }}</span>
-              <em>{{ tr('mform.groupAgentCount', { n: g.agent_ids.length }) }}</em>
-            </label>
-            <p v-if="groups.length && !(form.group_ids || []).length" class="hint tiny warn">{{ tr('mform.scopeEmptyWarn') }}</p>
-          </div>
+          <p class="hint tiny">
+            {{ tr('mform.groupManageHint') }}
+            <router-link to="/monitoring/groups/new">{{ tr('mform.groupCreate') }}</router-link>
+          </p>
         </div>
       </section>
 
@@ -656,56 +430,6 @@ onMounted(loadAll)
         </div>
       </section>
 
-      <!-- Validation / notifications -->
-      <section class="panel">
-        <div class="panel-head"><h3>{{ tr('mform.secValidation') }}</h3></div>
-        <p class="hint panel-hint">{{ tr('mform.validationHint') }}</p>
-        <p class="hint panel-hint" v-if="form.kind === 'nat'">{{ tr('mform.natRuleHint') }}</p>
-        <div class="panel-body">
-          <p v-if="!form.id" class="hint tiny">{{ tr('mform.saveFirstForRules') }}</p>
-          <template v-else>
-            <button class="link-btn" @click="addRule">{{ tr('monitoring.newRule') }}</button>
-            <div v-if="!rules.length" class="hint tiny">{{ tr('monitoring.noRulesHint', { kind: form.kind.toUpperCase() }) }}</div>
-            <div v-for="r in rules" :key="r.id" class="rule-card">
-              <div class="rule-head">
-                <input v-model="r.name" class="rule-name" :placeholder="tr('mform.ruleName')" />
-                <label class="inline"><input type="checkbox" v-model="r.enabled" />{{ tr('monitoring.enable') }}</label>
-              </div>
-              <div class="rule-cond">
-                <span class="lead">{{ tr('mform.when') }}</span>
-                <select :value="presetKeyOf(r)" @change="applyPreset(r, ($event.target as HTMLSelectElement).value)">
-                  <option v-for="p in presetsForKind(form.kind)" :key="p.key" :value="p.key">{{ tr(p.label) }}</option>
-                </select>
-                <template v-if="presetByKey(presetKeyOf(r))?.fixed == null">
-                  <input type="number" step="any" :value="thresholdDisplay(r)" @input="setThreshold(r, ($event.target as HTMLInputElement).valueAsNumber)" class="num" />
-                  <span class="unit">{{ presetByKey(presetKeyOf(r))?.unit }}</span>
-                </template>
-                <label class="inline">{{ tr('monitoring.consecutive') }}<input type="number" v-model.number="r.fail_threshold" class="num sm" />{{ tr('monitoring.times') }}</label>
-                <span class="lead">{{ tr('mform.thenNotify') }}</span>
-                <select v-model="r.severity" class="sev">
-                  <option value="info">{{ tr('mform.sev_info') }}</option>
-                  <option value="warn">{{ tr('mform.sev_warn') }}</option>
-                  <option value="error">{{ tr('mform.sev_error') }}</option>
-                  <option value="critical">{{ tr('mform.sev_critical') }}</option>
-                </select>
-              </div>
-              <p class="rule-preview">{{ ruleSentence(r) }}</p>
-              <div class="rule-line channels">
-                <span class="chan-label">{{ tr('monitoring.notifyChannels') }}</span>
-                <span v-if="!channels.length" class="hint tiny">{{ tr('monitoring.noChannelHint') }}</span>
-                <label v-for="c in channels" :key="c.id" class="chan">
-                  <input type="checkbox" :checked="(r.channel_ids || []).includes(c.id)" @change="toggleChannel(r, c.id)" />
-                  {{ channelLabel(c) }}
-                </label>
-                <span class="spacer"></span>
-                <button class="link-btn" @click="saveRule(r)">{{ tr('common.save') }}</button>
-                <button class="link-btn danger" @click="delRule(r)">{{ tr('common.delete') }}</button>
-              </div>
-            </div>
-          </template>
-        </div>
-      </section>
-
       <div class="form-foot">
         <router-link to="/monitoring" class="btn">{{ tr('mform.cancel') }}</router-link>
         <button class="btn btn-primary" :disabled="busy || !loaded" @click="save">{{ busy ? tr('mform.saving') : tr('mform.save') }}</button>
@@ -731,21 +455,61 @@ onMounted(loadAll)
   </main>
 </template>
 
-<style scoped>.page { max-width: 860px; }
+<style scoped>
+.page {
+  max-width: 860px;
+}
 .save-warn {
   margin-top: 14px;
   padding: 14px 16px;
-  border-left: 3px solid var(--warn, #fbbf24);
+  border-left: 3px solid var(--warning, #fbbf24);
 }
-.save-warn h4 { margin: 0 0 4px; font-size: 14px; }
-.warn-list { margin: 8px 0 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 6px; }
-.warn-list li { display: flex; gap: 10px; align-items: baseline; flex-wrap: wrap; font-size: 13px; }
-.warn-agent { font-weight: 600; color: var(--text); }
-.warn-state { color: #fca5a5; font-size: 12px; }
-.warn-perms { color: var(--text-dim); font-size: 12px; }
-.warn-capable { margin: 10px 0 0; font-size: 12.5px; display: flex; gap: 8px; flex-wrap: wrap; align-items: baseline; }
-.warn-capable-label { font-weight: 600; color: var(--text); }
-.warn-capable-names { color: var(--text-dim); }
+.save-warn h4 {
+  margin: 0 0 4px;
+  font-size: 14px;
+}
+.warn-list {
+  margin: 8px 0 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.warn-list li {
+  display: flex;
+  gap: 10px;
+  align-items: baseline;
+  flex-wrap: wrap;
+  font-size: 13px;
+}
+.warn-agent {
+  font-weight: 600;
+  color: var(--text);
+}
+.warn-state {
+  color: #fca5a5;
+  font-size: 12px;
+}
+.warn-perms {
+  color: var(--text-dim);
+  font-size: 12px;
+}
+.warn-capable {
+  margin: 10px 0 0;
+  font-size: 12.5px;
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  align-items: baseline;
+}
+.warn-capable-label {
+  font-weight: 600;
+  color: var(--text);
+}
+.warn-capable-names {
+  color: var(--text-dim);
+}
 .host-intro {
   margin: 0 0 16px;
   padding: 11px 14px;
@@ -757,51 +521,73 @@ onMounted(loadAll)
   border-left: 3px solid var(--primary);
   border-radius: var(--radius-sm);
 }
-.panel { margin-bottom: 18px; }
+.panel {
+  margin-bottom: 18px;
+}
 .form-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 14px 18px;
   padding: 14px 18px;
 }
-.field { display: flex; flex-direction: column; gap: 6px; font-size: 13px; color: var(--text-dim); }
-.field.wide { grid-column: 1 / -1; }
-.field.check { flex-direction: row; align-items: center; gap: 8px; }
-.inline-check { display: inline-flex; align-items: center; gap: 6px; margin-top: 6px; font-size: 12.5px; color: var(--text-dim); }
-.inline-check input { width: auto; }
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--text-dim);
+}
+.field.wide {
+  grid-column: 1 / -1;
+}
+.field.check {
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+}
+.group-field {
+  max-width: 420px;
+}
+.group-field select {
+  width: 100%;
+}
+.inline-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 6px;
+  font-size: 12.5px;
+  color: var(--text-dim);
+}
+.inline-check input {
+  width: auto;
+}
 .field input[type='text'],
 .field input:not([type]),
 .field input[type='number'],
 .field select,
-.field textarea { width: 100%; }
-.field textarea { resize: vertical; font-family: inherit; }
-.panel-hint { margin: 0 18px 6px; }
-.panel-body { padding: 8px 18px 16px; }
-.rule-card { border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 10px 12px; margin: 10px 0; background: var(--surface); }
-.rule-head { display: flex; align-items: center; gap: 12px; margin-bottom: 8px; }
-.rule-head .rule-name { flex: 1; }
-.rule-cond { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; font-size: 13px; color: var(--text-dim); }
-.rule-cond .lead { color: var(--text-dim); }
-.rule-cond .unit { margin-left: -4px; color: var(--text-dim); }
-.rule-cond .sev { min-width: 84px; }
-.rule-preview { margin: 8px 0 0; font-size: 12px; color: var(--text-dim); }
-.rule-line { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
-.rule-line.channels { margin-top: 8px; padding-top: 8px; border-top: 1px dashed var(--border); }
-.rule-name { min-width: 130px; }
-.inline { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; color: var(--text-dim); }
-.chan-label { font-size: 12.5px; color: var(--text-dim); }
-.chan { display: inline-flex; gap: 4px; align-items: center; font-size: 12.5px; }
-.spacer { flex: 1; }
-.cmp { padding: 6px 8px; }
-.num { width: 80px; padding: 6px 8px; }
-.num.sm { width: 62px; }
-.tiny { font-size: 11.5px; margin: 4px 0 0; }
-.tiny.warn { color: var(--warn, #b26b00); }
-.scope-opt { display: flex; align-items: center; gap: 8px; font-size: 13px; margin: 4px 0; }
-.scope-opt input { width: auto; }
-.group-pick { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 8px; padding-top: 8px; border-top: 1px dashed var(--border); }
-.group-chip { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; padding: 4px 8px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface); }
-.group-chip input { width: auto; }
-.group-chip em { font-style: normal; color: var(--text-dim); font-size: 11px; }
-.form-foot { display: flex; align-items: center; gap: 12px; padding: 4px 0 20px; }
+.field textarea {
+  width: 100%;
+}
+.field textarea {
+  resize: vertical;
+  font-family: inherit;
+}
+.panel-hint {
+  margin: 0 18px 6px;
+  padding-top: 8px;
+}
+.panel-body {
+  padding: 8px 18px 16px;
+}
+.tiny {
+  font-size: 11.5px;
+  margin: 4px 0 0;
+}
+.form-foot {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 4px 0 20px;
+}
 </style>

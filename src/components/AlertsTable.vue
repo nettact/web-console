@@ -10,6 +10,12 @@ import { useMetricMeta } from '../composables/useMetricMeta'
 defineProps<{ alerts: Alert[]; showAgent?: boolean }>()
 const { t } = useI18n()
 const { sevTone, sevLabel, fmtTime } = useMetricMeta()
+
+// An alert instance (keyed rule+Agent) freezes the value of every contributing
+// condition. Render each evidence value; an AND rule that fired on several
+// conditions shows them all.
+const triggerValues = (a: Alert) =>
+  a.evidence.length ? a.evidence.map((ev) => fmtNum(ev.value)).join(', ') : '—'
 </script>
 
 <template>
@@ -37,7 +43,7 @@ const { sevTone, sevLabel, fmtTime } = useMetricMeta()
           <td>{{ a.rule_name }}</td>
           <td><span class="sev" :class="`is-${sevTone(a.severity)}`">{{ sevLabel(a.severity) }}</span></td>
           <td>{{ a.state === 'resolved' ? t('metrics.stateResolved') : a.state === 'firing' ? t('metrics.stateFiring') : a.state }}</td>
-          <td class="num mono">{{ fmtNum(a.value) }}</td>
+          <td class="num mono">{{ triggerValues(a) }}</td>
         </tr>
       </tbody>
     </table>
