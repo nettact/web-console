@@ -1,11 +1,12 @@
 export type DashboardCardSize = 'compact' | 'medium' | 'wide'
 
+export type DashboardLayoutPresetID = 'simple' | 'professional'
+
 export interface DashboardCardDefinition {
   id: string
   titleKey: string
   sizes: readonly DashboardCardSize[]
   defaultSize: DashboardCardSize
-  defaultVisible: boolean
 }
 
 export interface DashboardCardLayout {
@@ -21,39 +22,76 @@ export interface DashboardLayoutPayload {
 
 export const DASHBOARD_LAYOUT_VERSION = 1
 
-// This ordered list is the DASH-001 default information architecture. A saved
-// layout is reconciled against it on every load: removed IDs disappear and new
-// cards are appended with their current defaults. Pre-release IDs are never
-// aliased or migrated.
+// The catalog follows the professional diagnostic flow. Presets own visibility
+// and order; definitions only describe each widget's sizing constraints.
 export const DASHBOARD_CARD_DEFINITIONS: readonly DashboardCardDefinition[] = [
-  { id: 'overall', titleKey: 'dashboard.cardOverall', sizes: ['wide'], defaultSize: 'wide', defaultVisible: true },
-  { id: 'availability', titleKey: 'dashboard.cardAvailability', sizes: ['compact', 'medium'], defaultSize: 'compact', defaultVisible: true },
-  { id: 'latency', titleKey: 'dashboard.cardLatency', sizes: ['compact', 'medium'], defaultSize: 'compact', defaultVisible: true },
-  { id: 'failures', titleKey: 'dashboard.cardFailures', sizes: ['compact', 'medium'], defaultSize: 'compact', defaultVisible: true },
-  { id: 'agent-status', titleKey: 'dashboard.cardAgentStatus', sizes: ['compact', 'medium'], defaultSize: 'compact', defaultVisible: true },
-  { id: 'active-alerts', titleKey: 'dashboard.cardActiveAlerts', sizes: ['medium', 'wide'], defaultSize: 'medium', defaultVisible: true },
-  { id: 'monitor-health', titleKey: 'dashboard.cardMonitorHealth', sizes: ['medium', 'wide'], defaultSize: 'medium', defaultVisible: true },
-  { id: 'network-quality', titleKey: 'dashboard.cardNetworkQuality', sizes: ['medium', 'wide'], defaultSize: 'wide', defaultVisible: true },
-  { id: 'data-freshness', titleKey: 'dashboard.cardDataFreshness', sizes: ['compact', 'medium'], defaultSize: 'compact', defaultVisible: true },
-  { id: 'wifi-summary', titleKey: 'dashboard.cardWifiSummary', sizes: ['compact', 'medium'], defaultSize: 'compact', defaultVisible: true },
-  { id: 'traffic-trend', titleKey: 'dashboard.cardTrafficTrend', sizes: ['medium', 'wide'], defaultSize: 'medium', defaultVisible: true },
-  { id: 'incident-summary', titleKey: 'dashboard.cardIncidentSummary', sizes: ['medium', 'wide'], defaultSize: 'medium', defaultVisible: true },
-  { id: 'important-targets', titleKey: 'dashboard.cardImportantTargets', sizes: ['wide'], defaultSize: 'wide', defaultVisible: true },
-  { id: 'nat-summary', titleKey: 'dashboard.natType', sizes: ['compact', 'medium'], defaultSize: 'compact', defaultVisible: true },
-  { id: 'lan-summary', titleKey: 'dashboard.lanDevices', sizes: ['compact', 'medium'], defaultSize: 'compact', defaultVisible: true },
-  { id: 'system-status', titleKey: 'dashboard.cardSystemStatus', sizes: ['medium', 'wide'], defaultSize: 'wide', defaultVisible: true },
-  { id: 'lan-devices', titleKey: 'dashboard.cardLanDevices', sizes: ['medium', 'wide'], defaultSize: 'medium', defaultVisible: true },
-  { id: 'interfaces', titleKey: 'dashboard.cardInterfaces', sizes: ['medium', 'wide'], defaultSize: 'medium', defaultVisible: true },
-  { id: 'disks', titleKey: 'dashboard.cardDisks', sizes: ['medium', 'wide'], defaultSize: 'medium', defaultVisible: true },
-  { id: 'activity', titleKey: 'dashboard.cardActivity', sizes: ['medium', 'wide'], defaultSize: 'medium', defaultVisible: true },
+  { id: 'overall', titleKey: 'dashboard.cardOverall', sizes: ['wide'], defaultSize: 'wide' },
+  { id: 'availability', titleKey: 'dashboard.cardAvailability', sizes: ['compact', 'medium'], defaultSize: 'compact' },
+  { id: 'latency', titleKey: 'dashboard.cardLatency', sizes: ['compact', 'medium'], defaultSize: 'compact' },
+  { id: 'failures', titleKey: 'dashboard.cardFailures', sizes: ['compact', 'medium'], defaultSize: 'compact' },
+  { id: 'agent-status', titleKey: 'dashboard.cardAgentStatus', sizes: ['compact', 'medium'], defaultSize: 'compact' },
+  { id: 'active-alerts', titleKey: 'dashboard.cardActiveAlerts', sizes: ['medium', 'wide'], defaultSize: 'medium' },
+  { id: 'monitor-health', titleKey: 'dashboard.cardMonitorHealth', sizes: ['medium', 'wide'], defaultSize: 'medium' },
+  { id: 'network-quality', titleKey: 'dashboard.cardNetworkQuality', sizes: ['medium', 'wide'], defaultSize: 'wide' },
+  { id: 'data-freshness', titleKey: 'dashboard.cardDataFreshness', sizes: ['compact', 'medium'], defaultSize: 'compact' },
+  { id: 'wifi-summary', titleKey: 'dashboard.cardWifiSummary', sizes: ['compact', 'medium'], defaultSize: 'compact' },
+  { id: 'nat-summary', titleKey: 'dashboard.natType', sizes: ['compact', 'medium'], defaultSize: 'compact' },
+  { id: 'lan-summary', titleKey: 'dashboard.lanDevices', sizes: ['compact', 'medium'], defaultSize: 'compact' },
+  { id: 'traffic-trend', titleKey: 'dashboard.cardTrafficTrend', sizes: ['medium', 'wide'], defaultSize: 'medium' },
+  { id: 'incident-summary', titleKey: 'dashboard.cardIncidentSummary', sizes: ['medium', 'wide'], defaultSize: 'medium' },
+  { id: 'important-targets', titleKey: 'dashboard.cardImportantTargets', sizes: ['wide'], defaultSize: 'wide' },
+  { id: 'system-status', titleKey: 'dashboard.cardSystemStatus', sizes: ['medium', 'wide'], defaultSize: 'wide' },
+  { id: 'lan-devices', titleKey: 'dashboard.cardLanDevices', sizes: ['medium', 'wide'], defaultSize: 'medium' },
+  { id: 'interfaces', titleKey: 'dashboard.cardInterfaces', sizes: ['medium', 'wide'], defaultSize: 'medium' },
+  { id: 'disks', titleKey: 'dashboard.cardDisks', sizes: ['medium', 'wide'], defaultSize: 'medium' },
+  { id: 'activity', titleKey: 'dashboard.cardActivity', sizes: ['medium', 'wide'], defaultSize: 'medium' },
 ]
 
+const PROFESSIONAL_LAYOUT: readonly DashboardCardLayout[] = DASHBOARD_CARD_DEFINITIONS.map((card) => ({
+  id: card.id,
+  visible: true,
+  size: card.defaultSize,
+}))
+
+const SIMPLE_VISIBLE_LAYOUT: readonly DashboardCardLayout[] = [
+  { id: 'overall', visible: true, size: 'wide' },
+  { id: 'availability', visible: true, size: 'compact' },
+  { id: 'latency', visible: true, size: 'compact' },
+  { id: 'wifi-summary', visible: true, size: 'compact' },
+  { id: 'lan-summary', visible: true, size: 'compact' },
+  { id: 'active-alerts', visible: true, size: 'medium' },
+  { id: 'monitor-health', visible: true, size: 'medium' },
+  { id: 'network-quality', visible: true, size: 'wide' },
+  { id: 'traffic-trend', visible: true, size: 'wide' },
+  { id: 'lan-devices', visible: true, size: 'wide' },
+]
+
+const simpleVisibleIDs = new Set(SIMPLE_VISIBLE_LAYOUT.map((card) => card.id))
+const SIMPLE_LAYOUT: readonly DashboardCardLayout[] = [
+  ...SIMPLE_VISIBLE_LAYOUT,
+  ...PROFESSIONAL_LAYOUT
+    .filter((card) => !simpleVisibleIDs.has(card.id))
+    .map((card) => ({ ...card, visible: false })),
+]
+
+const DASHBOARD_LAYOUT_PRESETS: Readonly<Record<DashboardLayoutPresetID, readonly DashboardCardLayout[]>> = {
+  simple: SIMPLE_LAYOUT,
+  professional: PROFESSIONAL_LAYOUT,
+}
+
+export function dashboardLayoutPreset(id: DashboardLayoutPresetID): DashboardCardLayout[] {
+  return cloneDashboardLayout(DASHBOARD_LAYOUT_PRESETS[id])
+}
+
+export function identifyDashboardLayoutPreset(layout: readonly DashboardCardLayout[]): DashboardLayoutPresetID | null {
+  for (const id of ['simple', 'professional'] as const) {
+    if (JSON.stringify(layout) === JSON.stringify(DASHBOARD_LAYOUT_PRESETS[id])) return id
+  }
+  return null
+}
+
 export function defaultDashboardLayout(): DashboardCardLayout[] {
-  return DASHBOARD_CARD_DEFINITIONS.map((card) => ({
-    id: card.id,
-    visible: card.defaultVisible,
-    size: card.defaultSize,
-  }))
+  return dashboardLayoutPreset('simple')
 }
 
 export function cloneDashboardLayout(layout: readonly DashboardCardLayout[]): DashboardCardLayout[] {
@@ -66,6 +104,8 @@ export function normalizeDashboardLayout(value: unknown): DashboardCardLayout[] 
   if (stored.version !== DASHBOARD_LAYOUT_VERSION || !Array.isArray(stored.cards)) return defaultDashboardLayout()
 
   const definitions = new Map(DASHBOARD_CARD_DEFINITIONS.map((card) => [card.id, card]))
+  const defaults = defaultDashboardLayout()
+  const defaultCards = new Map(defaults.map((card) => [card.id, card]))
   const seen = new Set<string>()
   const normalized: DashboardCardLayout[] = []
 
@@ -73,17 +113,18 @@ export function normalizeDashboardLayout(value: unknown): DashboardCardLayout[] 
     if (!candidate || typeof candidate.id !== 'string' || seen.has(candidate.id)) continue
     const definition = definitions.get(candidate.id)
     if (!definition) continue
+    const fallback = defaultCards.get(definition.id)!
     normalized.push({
       id: definition.id,
-      visible: typeof candidate.visible === 'boolean' ? candidate.visible : definition.defaultVisible,
-      size: definition.sizes.includes(candidate.size) ? candidate.size : definition.defaultSize,
+      visible: typeof candidate.visible === 'boolean' ? candidate.visible : fallback.visible,
+      size: definition.sizes.includes(candidate.size) ? candidate.size : fallback.size,
     })
     seen.add(candidate.id)
   }
 
-  for (const definition of DASHBOARD_CARD_DEFINITIONS) {
-    if (seen.has(definition.id)) continue
-    normalized.push({ id: definition.id, visible: definition.defaultVisible, size: definition.defaultSize })
+  for (const fallback of defaults) {
+    if (seen.has(fallback.id)) continue
+    normalized.push({ ...fallback })
   }
   return normalized
 }
@@ -94,4 +135,3 @@ export function dashboardLayoutPayload(layout: readonly DashboardCardLayout[]): 
     cards: normalizeDashboardLayout({ version: DASHBOARD_LAYOUT_VERSION, cards: layout }),
   }
 }
-

@@ -20,10 +20,13 @@ import { toDateLocale } from '../i18n'
 import {
   DASHBOARD_CARD_DEFINITIONS,
   cloneDashboardLayout,
+  dashboardLayoutPreset,
   defaultDashboardLayout,
   dashboardLayoutPayload,
+  identifyDashboardLayoutPreset,
   normalizeDashboardLayout,
   type DashboardCardLayout,
+  type DashboardLayoutPresetID,
 } from '../lib/dashboardLayout'
 import { fmtBps, fmtBytes } from '../lib/format'
 import { familyOf, natCodeLabel, natTone, statusSource } from '../lib/metricMeta'
@@ -65,7 +68,9 @@ const draftLayout = ref<DashboardCardLayout[]>(defaultDashboardLayout())
 const editingLayout = ref(false)
 const layoutError = ref('')
 const draggingCardID = ref('')
+const layoutPresetIDs: readonly DashboardLayoutPresetID[] = ['simple', 'professional']
 const activeLayout = computed(() => editingLayout.value ? draftLayout.value : savedLayout.value)
+const activeLayoutPreset = computed(() => identifyDashboardLayoutPreset(draftLayout.value))
 const layoutDirty = computed(() => JSON.stringify(draftLayout.value) !== JSON.stringify(savedLayout.value))
 const allCardsHidden = computed(() => activeLayout.value.every((card) => !card.visible))
 const hiddenCardDefinitions = computed(() =>
@@ -125,9 +130,9 @@ function cancelLayoutEdit() {
   editingLayout.value = false
 }
 
-function restoreDefaultLayout() {
-  if (!window.confirm(t('dashboard.layoutRestoreConfirm'))) return
-  draftLayout.value = defaultDashboardLayout()
+function applyLayoutPreset(id: DashboardLayoutPresetID) {
+  draftLayout.value = dashboardLayoutPreset(id)
+  layoutError.value = ''
 }
 
 function moveVisibleCard(id: string, offset: number) {
@@ -710,9 +715,41 @@ onBeforeUnmount(() => {
       </div>
       <p v-if="layoutError" class="err">{{ layoutError }}</p>
       <div class="direct-layout-actions">
-        <button class="btn restore-button" type="button" @click="restoreDefaultLayout">{{ t('dashboard.layoutRestore') }}</button>
         <button class="btn" type="button" @click="cancelLayoutEdit">{{ t('dashboard.layoutCancel') }}</button>
         <button class="btn btn-primary" type="button" :disabled="layoutSaving || !layoutDirty" @click="saveLayout">{{ t('common.save') }}</button>
+      </div>
+    </section>
+
+    <section v-if="editingLayout" class="layout-presets" aria-labelledby="layout-presets-title">
+      <div class="layout-presets-head">
+        <div>
+          <h3 id="layout-presets-title">{{ t('dashboard.layoutPresetsTitle') }}</h3>
+          <p>{{ t('dashboard.layoutPresetsHint') }}</p>
+        </div>
+        <span class="layout-mode-chip" :class="{ custom: !activeLayoutPreset }">
+          {{ activeLayoutPreset ? t('dashboard.layoutPreset_' + activeLayoutPreset) : t('dashboard.layoutPresetCustom') }}
+        </span>
+      </div>
+      <div class="layout-preset-grid">
+        <button
+          v-for="presetID in layoutPresetIDs"
+          :key="presetID"
+          class="layout-preset-option"
+          :class="{ selected: activeLayoutPreset === presetID }"
+          type="button"
+          :aria-pressed="activeLayoutPreset === presetID"
+          :data-layout-preset="presetID"
+          @click="applyLayoutPreset(presetID)"
+        >
+          <span class="layout-preset-preview" :class="presetID">
+            <i v-for="index in (presetID === 'simple' ? 6 : 10)" :key="index"></i>
+          </span>
+          <span class="layout-preset-copy">
+            <strong>{{ t('dashboard.layoutPreset_' + presetID) }}</strong>
+            <small>{{ t('dashboard.layoutPreset_' + presetID + 'Hint') }}</small>
+          </span>
+          <span v-if="activeLayoutPreset === presetID" class="layout-preset-check" aria-hidden="true">✓</span>
+        </button>
       </div>
     </section>
 
@@ -1577,6 +1614,80 @@ onBeforeUnmount(() => {
 .direct-layout-toolbar p { margin: 0; color: var(--text-muted); font-size: 11px; }
 .direct-layout-toolbar > .err { margin-left: auto; }
 .direct-layout-actions { display: flex; gap: 8px; margin-left: auto; pointer-events: auto; }
+.layout-presets {
+  margin: -8px 0 20px;
+  padding: 20px;
+  border: 1px solid var(--border);
+  border-radius: 18px;
+  background: var(--surface-solid);
+  box-shadow: var(--shadow-soft);
+}
+.layout-presets-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-bottom: 16px; }
+.layout-presets-head h3 { font-size: 20px; }
+.layout-presets-head p { margin: 4px 0 0; color: var(--text-muted); font-size: 11px; }
+.layout-mode-chip {
+  flex: none;
+  padding: 5px 10px;
+  color: var(--primary);
+  font-size: 10px;
+  font-weight: 700;
+  border-radius: 999px;
+  background: var(--primary-soft);
+}
+.layout-mode-chip.custom { color: var(--text-muted); background: var(--surface-2); }
+.layout-preset-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.layout-preset-option {
+  display: grid;
+  grid-template-columns: 108px minmax(0, 1fr) 24px;
+  align-items: center;
+  gap: 14px;
+  min-width: 0;
+  padding: 14px;
+  color: var(--text);
+  text-align: left;
+  border: 1px solid var(--border);
+  border-radius: 15px;
+  background: var(--surface-2);
+  cursor: pointer;
+  transition: border-color .16s ease, background .16s ease, transform .16s ease;
+}
+.layout-preset-option:hover { border-color: color-mix(in srgb, var(--primary) 58%, var(--border)); transform: translateY(-1px); }
+.layout-preset-option:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+.layout-preset-option.selected {
+  border-color: color-mix(in srgb, var(--primary) 68%, var(--border));
+  background: color-mix(in srgb, var(--primary) 7%, var(--surface-2));
+}
+.layout-preset-preview {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  grid-auto-rows: 10px;
+  gap: 4px;
+  min-height: 52px;
+  padding: 8px;
+  border: 1px solid color-mix(in srgb, var(--primary) 18%, var(--border));
+  border-radius: 10px;
+  background: var(--surface);
+}
+.layout-preset-preview i { border-radius: 3px; background: color-mix(in srgb, var(--primary) 54%, var(--surface-2)); }
+.layout-preset-preview.simple i:first-child,
+.layout-preset-preview.professional i:first-child { grid-column: 1 / -1; }
+.layout-preset-preview.simple i:nth-child(6) { grid-column: 1 / -1; }
+.layout-preset-preview.professional i:nth-child(6),
+.layout-preset-preview.professional i:nth-child(9) { grid-column: span 2; }
+.layout-preset-copy { display: grid; min-width: 0; }
+.layout-preset-copy strong { font-size: 13px; }
+.layout-preset-copy small { margin-top: 5px; color: var(--text-muted); font-size: 10px; line-height: 1.45; }
+.layout-preset-check {
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  color: #fff;
+  font-size: 12px;
+  font-weight: 800;
+  border-radius: 50%;
+  background: var(--primary);
+}
 .widget-catalog {
   position: relative;
   z-index: 1;
@@ -1615,7 +1726,10 @@ onBeforeUnmount(() => {
 @media (max-width: 680px) {
   .direct-layout-toolbar { align-items: stretch; flex-direction: column; }
   .direct-layout-actions { width: 100%; margin-left: 0; }
-  .direct-layout-actions .restore-button { margin-right: auto; }
+  .layout-presets-head { align-items: stretch; flex-direction: column; }
+  .layout-mode-chip { align-self: flex-start; }
+  .layout-preset-grid { grid-template-columns: 1fr; }
+  .layout-preset-option { grid-template-columns: 84px minmax(0, 1fr) 24px; }
   .widget-catalog-grid { grid-template-columns: 1fr; }
 }
 /* Action-oriented overview cards. */

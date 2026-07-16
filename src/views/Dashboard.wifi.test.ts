@@ -5,6 +5,7 @@ import { createI18n } from 'vue-i18n'
 import en from '../locales/en'
 import Dashboard from './Dashboard.vue'
 import type { Agent, AgentInterfaces, Sample, StatusEvent } from '../api'
+import { dashboardLayoutPayload, dashboardLayoutPreset } from '../lib/dashboardLayout'
 
 const apiMock = vi.hoisted(() => ({
   agents: vi.fn(),
@@ -54,12 +55,14 @@ const connected: AgentInterfaces = {
 
 let wrapper: VueWrapper | undefined
 
+const professionalLayout = dashboardLayoutPayload(dashboardLayoutPreset('professional'))
+
 async function render(
   ifaces: AgentInterfaces,
   agent: Agent = baseAgent,
   latest: Sample[] = [],
   history: StatusEvent[] = [],
-  layout: unknown = null,
+  layout: unknown = professionalLayout,
 ) {
   apiMock.agents.mockResolvedValue([agent])
   apiMock.quota.mockResolvedValue({ used: 1, max: 10 })
@@ -85,7 +88,7 @@ async function render(
   })
   await flushPromises()
   await flushPromises()
-  return wrapper.get('.interface-surface')
+  return wrapper
 }
 
 beforeEach(() => {
@@ -101,7 +104,7 @@ afterEach(() => {
 
 describe('Dashboard network adapter list', () => {
   it('merges readable Wi-Fi values into the matching adapter row', async () => {
-    const card = await render(connected)
+    const card = (await render(connected)).get('.interface-surface')
     expect(card.text()).toContain('Network adapter list')
     expect(card.text()).toContain('en0')
     expect(card.text()).toContain('(unknown network)')
@@ -128,7 +131,7 @@ describe('Dashboard network adapter list', () => {
         },
       }],
     }
-    const card = await render(disconnected, baseAgent, oldLatest)
+    const card = (await render(disconnected, baseAgent, oldLatest)).get('.interface-surface')
     expect(card.text()).toContain('Disconnected')
     expect(card.text()).not.toContain('stale-network')
     expect(card.text()).not.toContain('-40 dBm')
@@ -146,13 +149,13 @@ describe('Dashboard network adapter list', () => {
         },
       }],
     }
-    const card = await render(unreadable)
+    const card = (await render(unreadable)).get('.interface-surface')
     expect(card.text()).toContain('Unreadable')
     expect(card.text()).toContain('System permission required')
   })
 
   it('marks merged Wi-Fi details stale while the agent is offline', async () => {
-    const card = await render(connected, { ...baseAgent, status: 'offline' })
+    const card = (await render(connected, { ...baseAgent, status: 'offline' })).get('.interface-surface')
     expect(card.text()).toContain('Status expired')
     expect(card.text()).not.toContain('-65 dBm')
   })
@@ -165,7 +168,7 @@ describe('Dashboard network adapter list', () => {
         updated_at: '2026-07-13T01:00:00Z',
       }],
     }
-    const card = await render(wired, { ...baseAgent, effective: [] })
+    const card = (await render(wired, { ...baseAgent, effective: [] })).get('.interface-surface')
     expect(card.text()).toContain('eth0')
     expect(card.text()).toContain('Network adapter')
     expect(card.text()).not.toContain('Wi-Fi status not supported')
@@ -201,6 +204,67 @@ describe('Dashboard network adapter list', () => {
     expect(availability.attributes('style')).toContain('order: 0')
     expect(wrapper!.get('.agent-hero').attributes('style')).toContain('order: 1')
     expect(wrapper!.findAll('.insight-card').some((card) => card.text().includes('Current latency'))).toBe(false)
+  })
+
+  it('uses the simple preset for an instance without a saved layout', async () => {
+    await render(connected, baseAgent, [], [], null)
+
+    const expectedVisible = [
+      'overall', 'availability', 'latency', 'wifi-summary', 'lan-summary', 'active-alerts',
+      'monitor-health', 'network-quality', 'traffic-trend', 'lan-devices',
+    ]
+    for (const [index, id] of expectedVisible.entries()) {
+      expect(wrapper!.get('[data-layout-card="' + id + '"]').attributes('style')).toContain('order: ' + index)
+    }
+    expect(wrapper!.find('[data-layout-card="data-freshness"]').exists()).toBe(false)
+    expect(wrapper!.find('[data-layout-card="interfaces"]').exists()).toBe(false)
+
+    await wrapper!.get('.layout-add-button').trigger('click')
+    expect(wrapper!.get('[data-layout-preset="simple"]').attributes('aria-pressed')).toBe('true')
+    expect(wrapper!.get('[data-layout-preset="professional"]').attributes('aria-pressed')).toBe('false')
+    expect(wrapper!.get('.layout-mode-chip').text()).toBe('Simple view')
+  })
+
+  it('previews a professional preset, keeps customization, and saves only on request', async () => {
+    await render(connected, baseAgent, [], [], null)
+    await wrapper!.get('.layout-add-button').trigger('click')
+
+    await wrapper!.get('[data-layout-preset="professional"]').trigger('click')
+    expect(apiMock.updateDashboardLayout).not.toHaveBeenCalled()
+    expect(wrapper!.get('[data-layout-preset="professional"]').attributes('aria-pressed')).toBe('true')
+    expect(wrapper!.find('[data-layout-card="interfaces"]').exists()).toBe(true)
+
+    const latency = wrapper!.get('[data-layout-card="latency"]')
+    await latency.findAll('.ratio-buttons button')[1].trigger('click')
+    expect(wrapper!.get('.layout-mode-chip').text()).toBe('Custom')
+    expect(wrapper!.get('[data-layout-preset="professional"]').attributes('aria-pressed')).toBe('false')
+
+    await wrapper!.get('.direct-layout-actions .btn-primary').trigger('click')
+    await flushPromises()
+
+    expect(apiMock.updateDashboardLayout).toHaveBeenCalledOnce()
+    const stored = apiMock.updateDashboardLayout.mock.calls[0][0]
+    expect(stored.cards.every((card: { visible: boolean }) => card.visible)).toBe(true)
+    expect(stored.cards.find((card: { id: string }) => card.id === 'latency').size).toBe('medium')
+  })
+
+  it('cancels a preset preview and restores the saved layout', async () => {
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true)
+    await render(connected)
+    await wrapper!.get('.layout-add-button').trigger('click')
+
+    await wrapper!.get('[data-layout-preset="simple"]').trigger('click')
+    expect(wrapper!.get('[data-layout-preset="simple"]').attributes('aria-pressed')).toBe('true')
+    expect(wrapper!.find('[data-layout-card="interfaces"]').exists()).toBe(false)
+
+    await wrapper!.get('.direct-layout-actions .btn:not(.btn-primary)').trigger('click')
+    expect(confirm).toHaveBeenCalledOnce()
+    expect(wrapper!.find('.layout-presets').exists()).toBe(false)
+    expect(wrapper!.find('[data-layout-card="interfaces"]').exists()).toBe(true)
+
+    await wrapper!.get('.layout-add-button').trigger('click')
+    expect(wrapper!.get('[data-layout-preset="professional"]').attributes('aria-pressed')).toBe('true')
+    confirm.mockRestore()
   })
 
   it('directly drags, resizes, removes, and re-adds widgets before saving', async () => {
