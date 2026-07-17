@@ -1,17 +1,17 @@
 <script setup lang="ts">
 // By-target comparison: the same monitoring target as seen from several agents.
-// A summary table (current state / availability / outages / latest value per
-// agent), one trend chart per numeric metric overlaying one line per agent, a
-// stacked status band per boolean metric, per-agent NAT cards, and merged alarm
-// history with an agent column.
+// The summary table's current state comes from the authoritative target-status
+// batch (per-agent execution/probe/rule); the availability/outages/latest columns,
+// trend charts, per-agent status bands and NAT/TCP cards stay metric-based
+// (historical), overlaying one line/row per agent.
 import { ref, computed, watch, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { api, type Agent, type Alert, type Sample, type MonitorStatusRow } from '../../api'
+import { api, type Agent, type Alert, type Sample, type TargetAgentStatusRow } from '../../api'
 import MetricChart from '../MetricChart.vue'
 import StatusBand from '../StatusBand.vue'
 import MetricStatCards from '../MetricStatCards.vue'
 import AlertsTable from '../AlertsTable.vue'
-import MonitorStateBadge, { type MonitorState } from './MonitorStateBadge.vue'
+import MonitorStateBadge from './MonitorStateBadge.vue'
 import { useMetricMeta } from '../../composables/useMetricMeta'
 import { useMetricCards, type Card } from '../../composables/useMetricCards'
 import {
@@ -22,10 +22,10 @@ import {
   isStatusKind,
   kindColor,
   orderOf,
-  statusSource,
 } from '../../lib/metricMeta'
-import type { Prober } from '../../lib/targetGroups'
-import { availability, boolCurrent, toPoints } from '../../lib/timeline'
+import { bandSeriesFor, type Prober } from '../../lib/targetGroups'
+import { availability, toPoints } from '../../lib/timeline'
+import { targetIndex } from '../../targetStatus'
 import { fmtByUnit, isByteUnit } from '../../lib/format'
 
 const props = defineProps<{
@@ -35,11 +35,6 @@ const props = defineProps<{
   monitorId?: string // set for user-created monitors; monitor-less system series have none
   name?: string // the monitor's display name
   probers: Prober[]
-  // Non-active operational status per agent id (permission/target/unsupported) and
-  // the ids of offline agents, so the summary composes a blocked or offline agent
-  // distinctly from an actually-failing one.
-  opStatus?: Record<string, MonitorStatusRow>
-  offlineIds?: string[]
   rangeSec: number
 }>()
 
@@ -56,6 +51,9 @@ let alertSeq = 0
 const skey = (agentId: string, kind: string) => `${agentId}::${kind}`
 const agentName = (a: Agent) => a.display_name || a.hostname || a.id
 
+// Authoritative current status for this target across agents (batch).
+const storeRow = computed(() => (props.monitorId ? targetIndex.value.get(props.monitorId) : undefined))
+
 // Unit for each kind, taken from whichever prober records it.
 const kindUnit = computed(() => {
   const m = new Map<string, string>()
@@ -67,22 +65,21 @@ const allKinds = computed(() => [...kindUnit.value.keys()].sort((a, b) => orderO
 const numericKinds = computed(() => allKinds.value.filter((k) => kindUnit.value.get(k) !== 'bool' && !INFO_KINDS.has(k)))
 const statusKinds = computed(() => allKinds.value.filter((k) => isStatusKind(k, kindUnit.value.get(k) || '')))
 // Card-only kinds shown as per-agent stat cards (categorical NAT + TCP error
-// codes, and the ICMP sample count) — everything in INFO_KINDS that a probe
-// actually records. They have no trend chart, so without this they'd be absent.
+// codes, and the ICMP sample count).
 const cardKinds = computed(() => allKinds.value.filter((k) => INFO_KINDS.has(k)))
 
 const selectedNumeric = ref<string[]>([])
 
-// The status series used for the summary table's up/down + availability.
-const source = computed(() => statusSource(props.family))
+// The historical band series used for the summary's availability/outages.
+const band = computed(() => bandSeriesFor(props.family))
 // The headline numeric shown as "latest" in the summary (RTT / resolve / latency).
 const primaryNumeric = computed(() => numericKinds.value[0] ?? '')
 
 // Every kind we need to fetch per agent: selected charts + status bands + card
-// kinds + the summary's status source + the headline numeric.
+// kinds + the summary's band source + the headline numeric.
 const fetchKinds = computed(() => {
   const set = new Set<string>([...selectedNumeric.value, ...statusKinds.value, ...cardKinds.value])
-  if (source.value) set.add(source.value.kind)
+  if (band.value) set.add(band.value.kind)
   if (primaryNumeric.value) set.add(primaryNumeric.value)
   return [...set]
 })
@@ -114,22 +111,28 @@ function chartMetrics(kind: string) {
 }
 const chartHasData = (kind: string) => props.probers.some((p) => samplesFor(p.agent.id, kind).length)
 
+// Availability% → tone (historical, threshold-based; never current inference).
+function availTone(pct: number | null): 'good' | 'bad' | 'warn' | 'unknown' {
+  if (pct === null) return 'unknown'
+  return pct >= 99 ? 'good' : pct >= 95 ? 'warn' : 'bad'
+}
+
 // One stacked row per agent for a boolean status kind.
 function statusRows(kind: string) {
-  const src = statusSource(props.family)
-  const toUp = src && src.kind === kind ? src.toUp : (v: number) => (v >= 0.5 ? 1 : 0)
+  const b = band.value
+  const toUp = b && b.kind === kind ? b.toUp : (v: number) => (v >= 0.5 ? 1 : 0)
   const now = Date.now()
   return props.probers.map((p) => {
     const raw = samplesFor(p.agent.id, kind)
     const pts = toPoints(raw).map((x) => ({ t: x.t, v: toUp(x.v) }))
-    const cur = pts.length ? boolCurrent(pts, now) : null
+    const avail = pts.length ? availability(pts, now) * 100 : null
     return {
       agent: agentName(p.agent),
       id: p.agent.id,
       samples: raw,
       toUp,
-      tone: cur === null ? 'unknown' : cur ? 'good' : 'bad',
-      avail: pts.length ? (availability(pts, now) * 100).toFixed(1) : null,
+      tone: availTone(avail),
+      avail: avail === null ? null : avail.toFixed(1),
     }
   })
 }
@@ -148,46 +151,51 @@ function agentCards(kind: string): { agent: string; card: Card }[] {
 interface SummaryRow {
   id: string
   agent: string
-  tone: 'good' | 'bad' | 'unknown'
-  status: string
+  online: boolean
+  row?: TargetAgentStatusRow // authoritative current state
+  availTone: 'good' | 'bad' | 'warn' | 'unknown'
   avail: string | null
   outages: number
   latest: string
-  block: MonitorState | null // non-active operational block (overrides the metric pill)
-  offline: boolean
 }
+// The agent set is the batch's applicable agents (so blocked/pending/offline
+// agents appear even without series); monitor-less system series fall back to the
+// probers that record data.
 const summary = computed<SummaryRow[]>(() => {
   const now = Date.now()
-  const src = source.value
+  const b = band.value
   const pn = primaryNumeric.value
   const pnUnit = pn ? kindUnit.value.get(pn) || '' : ''
-  const offline = new Set(props.offlineIds ?? [])
-  return props.probers.map((p) => {
-    let tone: 'good' | 'bad' | 'unknown' = 'unknown'
-    let status = t('targetStatus.statusUnknown')
-    let avail: string | null = null
+  const rows = storeRow.value?.agents.map((a) => ({ id: a.agent_id, agent: a.agent_name || a.agent_id, online: a.agent_online, row: a as TargetAgentStatusRow | undefined }))
+    ?? props.probers.map((p) => ({ id: p.agent.id, agent: agentName(p.agent), online: p.agent.status === 'online', row: undefined }))
+  return rows.map((base) => {
+    let avail: number | null = null
     let outages = 0
-    if (src) {
-      const pts = toPoints(samplesFor(p.agent.id, src.kind)).map((x) => ({ t: x.t, v: src.toUp(x.v) }))
+    if (b) {
+      const pts = toPoints(samplesFor(base.id, b.kind)).map((x) => ({ t: x.t, v: b.toUp(x.v) }))
       if (pts.length) {
-        const cur = boolCurrent(pts, now)
-        tone = cur === null ? 'unknown' : cur ? 'good' : 'bad'
-        status = cur === null ? t('targetStatus.statusUnknown') : cur ? t('targetStatus.statusNormal') : t('targetStatus.statusInterrupted')
-        avail = (availability(pts, now) * 100).toFixed(1)
+        avail = availability(pts, now) * 100
         for (let i = 1; i < pts.length; i++) if (pts[i - 1].v >= 0.5 && pts[i].v < 0.5) outages++
       }
     }
     let latest = '—'
     if (pn) {
-      const s = samplesFor(p.agent.id, pn)
+      const s = samplesFor(base.id, pn)
       if (s.length) {
         const v = s[s.length - 1].value
         latest = isByteUnit(pnUnit) ? fmtByUnit(pnUnit, v) : `${Number.isInteger(v) ? v : v.toFixed(1)}${unitLabel(pnUnit) ? ' ' + unitLabel(pnUnit) : ''}`
       }
     }
-    const blockRow = props.opStatus?.[p.agent.id]
-    const block = blockRow && blockRow.status !== 'active' ? (blockRow.status as MonitorState) : null
-    return { id: p.agent.id, agent: agentName(p.agent), tone, status, avail, outages, latest, block, offline: offline.has(p.agent.id) }
+    return {
+      id: base.id,
+      agent: base.agent,
+      online: base.online,
+      row: base.row,
+      availTone: availTone(avail),
+      avail: avail === null ? null : avail.toFixed(1),
+      outages,
+      latest,
+    }
   })
 })
 
@@ -268,15 +276,18 @@ onMounted(reload)
         </thead>
         <tbody>
           <tr v-for="r in summary" :key="r.id">
-            <td class="mono">{{ r.agent }}</td>
-            <td>
-              <MonitorStateBadge v-if="r.block" :state="r.block" :offline="r.offline" />
-              <span v-else class="op-cell">
-                <span class="pill" :class="`is-${r.tone}`">{{ r.status }}</span>
-                <span v-if="r.offline" class="pill is-unknown offline">{{ t('monitorState.agent_offline') }}</span>
-              </span>
+            <td class="mono">
+              <span class="dot-inline" :class="r.online ? 'on' : 'off'"></span>{{ r.agent }}
             </td>
-            <td class="num mono">{{ r.avail === null ? '—' : r.avail + '%' }}</td>
+            <td>
+              <span v-if="r.row" class="op-cell">
+                <MonitorStateBadge dim="execution" :state="r.row.execution_state" />
+                <MonitorStateBadge v-if="r.row.probe_state !== 'not_applicable'" dim="probe" :state="r.row.probe_state" />
+                <MonitorStateBadge v-if="r.row.rule_state !== 'normal'" dim="rule" :state="r.row.rule_state" />
+              </span>
+              <span v-else class="hint">—</span>
+            </td>
+            <td class="num mono" :class="`t-${r.availTone}`">{{ r.avail === null ? '—' : r.avail + '%' }}</td>
             <td class="num mono">{{ r.avail === null ? '—' : r.outages }}</td>
             <td class="num mono">{{ r.latest }}</td>
           </tr>
@@ -370,28 +381,18 @@ onMounted(reload)
 .mono {
   font-variant-numeric: tabular-nums;
 }
-.pill {
-  font-size: 12px;
-  padding: 2px 9px;
-  border-radius: 999px;
-  border: 1px solid transparent;
+.dot-inline {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  margin-right: 6px;
 }
-.pill.is-good {
-  color: #6ee7b7;
-  border-color: rgba(52, 211, 153, 0.4);
-  background: rgba(52, 211, 153, 0.1);
+.dot-inline.on {
+  background: var(--success);
 }
-.pill.is-bad {
-  color: #fca5a5;
-  border-color: rgba(248, 113, 113, 0.4);
-  background: rgba(248, 113, 113, 0.1);
-}
-.pill.is-unknown {
-  color: var(--text-dim);
-  border-color: var(--border-strong);
-}
-.pill.offline {
-  border-style: dashed;
+.dot-inline.off {
+  background: var(--border-strong);
 }
 .op-cell {
   display: inline-flex;
@@ -488,6 +489,9 @@ onMounted(reload)
 }
 .t-bad {
   color: #fca5a5;
+}
+.t-warn {
+  color: #fcd34d;
 }
 .t-unknown {
   color: var(--text-dim);

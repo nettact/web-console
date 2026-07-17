@@ -9,7 +9,7 @@ import {
   type Alert,
   type Device,
   type IncidentSummary,
-  type MonitorStatusRow,
+  type ProbeState,
   type Quota,
   type Sample,
   type StatusEvent,
@@ -29,7 +29,9 @@ import {
   type DashboardLayoutPresetID,
 } from '../lib/dashboardLayout'
 import { fmtBps, fmtBytes } from '../lib/format'
-import { familyOf, natCodeLabel, natTone, statusSource } from '../lib/metricMeta'
+import { natCodeLabel, natTone } from '../lib/metricMeta'
+import { PROBE_TONE } from '../lib/targetStatus'
+import { targetStatus } from '../targetStatus'
 
 const { t, te, locale } = useI18n()
 
@@ -42,7 +44,6 @@ const snapshot = ref<Sample[]>([])
 const devices = ref<Device[]>([])
 const ifaceData = ref<AgentInterfaces | null>(null)
 const alerts = ref<Alert[]>([])
-const monitorStatuses = ref<MonitorStatusRow[]>([])
 const incidentSummary = ref<IncidentSummary | null>(null)
 const qualityRttHistory = ref<Sample[]>([])
 const qualityLossHistory = ref<Sample[]>([])
@@ -255,13 +256,12 @@ async function loadMetrics() {
   refreshing.value = true
   try {
     const id = selected.value
-    const [nextSnapshot, nextDevices, nextHistory, nextIfaces, nextAlerts, nextMonitorStatuses, nextIncidentSummary] = await Promise.all([
+    const [nextSnapshot, nextDevices, nextHistory, nextIfaces, nextAlerts, nextIncidentSummary] = await Promise.all([
       api.latest(id),
       api.listDevices(SITE),
       api.agentStatusHistory(id),
       api.agentInterfaces(id).catch(() => null),
       api.alerts().catch(() => [] as Alert[]),
-      api.agentMonitorStatus(id).catch(() => [] as MonitorStatusRow[]),
       api.incidents(1, 1).then((page) => page.summary).catch(() => null),
     ])
     if (sequence !== loadSequence) return
@@ -270,7 +270,6 @@ async function loadMetrics() {
     statusHistory.value = nextHistory
     ifaceData.value = nextIfaces
     alerts.value = nextAlerts
-    monitorStatuses.value = nextMonitorStatuses
     incidentSummary.value = nextIncidentSummary
     error.value = ''
   } catch (e) {
@@ -308,7 +307,6 @@ async function changeAgent() {
   snapshot.value = []
   statusHistory.value = []
   ifaceData.value = null
-  monitorStatuses.value = []
   qualityRttHistory.value = []
   qualityLossHistory.value = []
   qualityJitterHistory.value = []
@@ -320,6 +318,34 @@ async function changeAgent() {
 const rowKey = (sample: Sample) => sample.monitor_id || sample.target
 const byKind = (kind: string) => snapshot.value.filter((sample) => sample.kind === kind)
 const byRowKey = (kind: string) => new Map(byKind(kind).map((sample) => [rowKey(sample), sample]))
+
+// Authoritative current probe state for one monitor on the selected agent, from
+// the target-status batch (the ONLY source of current health). null when the
+// monitor/agent pair is not in the batch (e.g. a monitor-less system series).
+function agentProbeState(monitorId: string): ProbeState | null {
+  const row = targetStatus.targets.find((t) => t.target_id === monitorId)
+  return row?.agents.find((a) => a.agent_id === selected.value)?.probe_state ?? null
+}
+
+// Service-badge tone for a current probe state, reusing the authoritative shared
+// PROBE_TONE map so a given state paints the same everywhere. healthy→good,
+// failed→bad, stale→warn; no_data / not_applicable / a missing batch row are
+// neutral (''). Numeric HTTP status and NAT type never drive this tone.
+function probeToneClass(ps: ProbeState | null): '' | 'good' | 'bad' | 'warn' {
+  if (ps === null) return ''
+  const tone = PROBE_TONE[ps]
+  return tone === 'unknown' ? '' : tone
+}
+
+// NAT reachability chip label from the authoritative probe state. stale is its
+// own warn state and is never mislabelled "unreachable"; no_data / not_applicable
+// / a missing row read as neutral "—".
+function natReachLabel(ps: ProbeState | null): string {
+  if (ps === 'healthy') return t('dashboard.reachable')
+  if (ps === 'failed') return t('dashboard.unreachable')
+  if (ps === 'stale') return t('targetStatus.probe.stale')
+  return '—'
+}
 
 const publicTargets = computed(() =>
   byKind('probe.icmp.rtt_ms')
@@ -339,6 +365,9 @@ const httpRows = computed(() => {
     url: status.get(key)!.target,
     status: status.get(key)!.value,
     latency: latency.get(key)?.value ?? null,
+    // Current health is the authoritative per-agent probe state (never inferred
+    // from the numeric HTTP status code); null ⇒ not covered by the batch here.
+    probeState: agentProbeState(key),
   }))
 })
 const interfaceSamples = computed(() => byKind('iface.up'))
@@ -464,7 +493,7 @@ interface NATRow {
   tone: 'good' | 'bad' | 'unknown'
   mapping: string
   filtering: string
-  reachable: boolean | null
+  probeState: ProbeState | null
   ts: string
 }
 
@@ -472,12 +501,14 @@ const natRows = computed<NATRow[]>(() => {
   const types = byRowKey('probe.nat.type')
   const mappings = byRowKey('probe.nat.mapping')
   const filterings = byRowKey('probe.nat.filtering')
-  const reachability = byRowKey('probe.nat.ok')
   return [...types.entries()]
     .map(([key, sample]) => {
       const mapping = mappings.get(key)
       const filtering = filterings.get(key)
-      const ok = reachability.get(key)
+      // Current health is the authoritative per-agent probe state, never inferred
+      // from a probe.nat.ok sample or the NAT type; null when the batch does not
+      // cover this pair.
+      const ps = agentProbeState(key)
       return {
         key,
         target: sample.target,
@@ -486,7 +517,7 @@ const natRows = computed<NATRow[]>(() => {
         tone: natTone('probe.nat.type', sample.value),
         mapping: mapping ? natCodeLabel('probe.nat.mapping', mapping.value) : '—',
         filtering: filtering ? natCodeLabel('probe.nat.filtering', filtering.value) : '—',
-        reachable: ok ? ok.value >= 0.5 : null,
+        probeState: ps,
         ts: sample.ts,
       }
     })
@@ -527,8 +558,10 @@ function loadLevel(value: number | null): string {
 
 // Overall network health is derived from the internet-layer public pings (the
 // gateway is now an ordinary monitor shown in the Monitoring / Target Status
-// views, not a bespoke dashboard tile). Take the worst loss/RTT across all
-// public ICMP targets as the at-a-glance signal.
+// views, not a bespoke dashboard tile). The numeric loss/RTT grading is gated on
+// authoritative facts: an offline Agent is never "good", and if the batch has no
+// fresh (non-stale, with-data) public ICMP status for this Agent the verdict is
+// "unknown" rather than a green derived from possibly stale metric values.
 const worstPublicLoss = computed(() => {
   const vals = byKind('probe.icmp.loss_pct').filter((s) => s.target !== 'gateway').map((s) => s.value)
   return vals.length ? Math.max(...vals) : null
@@ -537,9 +570,18 @@ const worstPublicRtt = computed(() => {
   const vals = byKind('probe.icmp.rtt_ms').filter((s) => s.target !== 'gateway').map((s) => s.value)
   return vals.length ? Math.max(...vals) : null
 })
+// Any public-ICMP monitor with a fresh (healthy/failed) current probe state on
+// the selected Agent, per the authoritative batch.
+const hasFreshPublicIcmp = computed(() =>
+  targetStatus.targets.some(
+    (row) =>
+      row.kind === 'icmp' &&
+      row.agents.some((a) => a.agent_id === selected.value && (a.probe_state === 'healthy' || a.probe_state === 'failed')),
+  ),
+)
 const networkHealth = computed(() => {
   if (currentAgent.value?.status !== 'online') return { tone: 'bad', label: t('dashboard.healthOffline') }
-  if (worstPublicRtt.value == null && worstPublicLoss.value == null) return { tone: 'unknown', label: t('dashboard.healthUnknown') }
+  if (!hasFreshPublicIcmp.value) return { tone: 'unknown', label: t('dashboard.healthUnknown') }
   if ((worstPublicLoss.value ?? 0) >= 2 || (worstPublicRtt.value ?? 0) >= 150) {
     return { tone: 'warn', label: t('dashboard.healthAttention') }
   }
@@ -565,6 +607,11 @@ const alertReason = (alert: Alert) =>
   alert.evidence[0]?.target_addr ||
   alert.rule_name
 
+// Monitor health for the selected Agent, counted from the authoritative
+// target-status batch (per-agent execution/probe state) — never re-inferred from
+// /latest samples. `active` = collecting with a fresh healthy probe;
+// `probe_failed` folds current failing and stale probes; blocked/unsupported come
+// straight from the execution dimension.
 type MonitorHealthState = 'active' | 'probe_failed' | 'permission_blocked' | 'target_blocked' | 'unsupported'
 const monitorHealth = computed(() => {
   const counts: Record<MonitorHealthState, number> = {
@@ -574,21 +621,34 @@ const monitorHealth = computed(() => {
     target_blocked: 0,
     unsupported: 0,
   }
-  for (const row of monitorStatuses.value) {
-    if (row.status !== 'active') {
-      counts[row.status]++
-      continue
+  let total = 0
+  for (const row of targetStatus.targets) {
+    const a = row.agents.find((x) => x.agent_id === selected.value)
+    if (!a) continue
+    total++
+    switch (a.execution_state) {
+      case 'permission_blocked':
+        counts.permission_blocked++
+        break
+      case 'target_blocked':
+        counts.target_blocked++
+        break
+      case 'unsupported':
+        counts.unsupported++
+        break
+      case 'collecting':
+        if (a.probe_state === 'failed' || a.probe_state === 'stale') counts.probe_failed++
+        else if (a.probe_state === 'healthy') counts.active++
+        // no_data / not_applicable: the pair is collecting but has no current
+        // healthy probe result — kept in the total, never counted as active.
+        break
+      default:
+        // pending / agent_offline / disabled / unassigned — not a health problem
+        // and not "collecting"; kept in the total but not attributed to a bucket.
+        break
     }
-    const kind = row.kind || ''
-    const family = kind === 'gateway' ? 'probe.icmp' : kind.startsWith('probe.') ? familyOf(kind) : `probe.${kind}`
-    const source = statusSource(family)
-    const latest = source
-      ? snapshot.value.find((sample) => sample.monitor_id === row.monitor_id && sample.kind === source.kind)
-      : undefined
-    if (source && latest && source.toUp(latest.value) < 0.5) counts.probe_failed++
-    else counts.active++
   }
-  return { ...counts, total: monitorStatuses.value.length }
+  return { ...counts, total }
 })
 
 function aggregateWorst(samples: Sample[]): Sample[] {
@@ -1044,7 +1104,7 @@ onBeforeUnmount(() => {
             <div v-if="!httpRows.length" class="mini-empty">{{ t('dashboard.noDataHttp') }}</div>
             <div v-for="row in httpRows.slice(0, 4)" :key="row.key" class="service-row">
               <span class="target-name mono">{{ row.url }}</span>
-              <span class="http-status" :class="row.status >= 200 && row.status < 400 ? 'good' : 'bad'">{{ row.status }}</span>
+              <span class="http-status" :class="probeToneClass(row.probeState)">{{ row.status }}</span>
               <span class="value">{{ row.latency == null ? '—' : `${row.latency.toFixed(0)} ms` }}</span>
             </div>
           </div>
@@ -1053,7 +1113,7 @@ onBeforeUnmount(() => {
             <div v-if="!natRows.length" class="mini-empty">{{ t('dashboard.notDetected') }}</div>
             <div v-for="row in natRows.slice(0, 4)" :key="row.key" class="service-row nat-service-row">
               <span class="nat-service-copy"><strong>{{ row.type }}</strong><small class="mono">{{ row.target }}</small></span>
-              <span class="reach-chip" :class="row.reachable === true ? 'good' : row.reachable === false ? 'bad' : ''">{{ row.reachable === true ? t('dashboard.reachable') : row.reachable === false ? t('dashboard.unreachable') : '—' }}</span>
+              <span class="reach-chip" :class="probeToneClass(row.probeState)">{{ natReachLabel(row.probeState) }}</span>
             </div>
           </div>
         </div>
@@ -1245,7 +1305,7 @@ onBeforeUnmount(() => {
 .surface { border: 1px solid var(--border); border-radius: 18px; background: var(--surface); box-shadow: var(--shadow-soft); backdrop-filter: blur(14px); overflow: hidden; }
 .surface-head { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 18px 20px 14px; }.surface-head.compact { padding-bottom: 14px; border-bottom: 1px solid var(--border); }.surface-head h3 { margin-top: 3px; font-size: 16px; }.range-chip, .count-chip { padding: 4px 9px; color: var(--text-muted); font-size: 10px; border: 1px solid var(--border); border-radius: 999px; background: var(--surface-2); }.text-link, .icon-link { color: var(--primary); font-size: 12px; }.icon-link { display: grid; place-items: center; width: 28px; height: 28px; border-radius: 8px; background: var(--primary-soft); }
 .services-surface { padding-bottom: 4px; }.service-columns { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); border-top: 1px solid var(--border); }.service-group { min-width: 0; padding: 16px 18px; }.service-group + .service-group { border-left: 1px solid var(--border); }.service-title { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; }.service-title strong { overflow: hidden; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }.service-title b { margin-left: auto; color: var(--text-muted); font-size: 10px; }.service-symbol { display: grid; place-items: center; width: 29px; height: 29px; flex: none; border-radius: 9px; }.service-symbol svg { width: 17px; height: 17px; overflow: visible; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }.service-symbol.icmp { color: var(--primary); background: var(--primary-soft); }.service-symbol.dns { color: #818cf8; background: rgba(129,140,248,.13); }.service-symbol.http { color: #ec4899; background: rgba(236,72,153,.12); }.service-symbol.nat { color: var(--success); background: var(--success-soft); }
-.service-row { display: flex; align-items: center; gap: 7px; min-height: 31px; border-top: 1px solid color-mix(in srgb, var(--border) 60%, transparent); }.service-row:first-of-type { border-top: 0; }.target-name { flex: 1; overflow: hidden; color: var(--text-dim); text-overflow: ellipsis; white-space: nowrap; }.service-row .value { color: var(--text); font-size: 11px; font-variant-numeric: tabular-nums; white-space: nowrap; }.http-status { padding: 1px 5px; font-size: 9px; font-weight: 700; border-radius: 5px; }.http-status.good { color: var(--success); background: var(--success-soft); }.http-status.bad { color: var(--danger); background: var(--danger-soft); }.mini-empty { padding: 16px 0; color: var(--text-muted); font-size: 11px; }.mini-empty.padded { padding: 28px 20px; text-align: center; }
+.service-row { display: flex; align-items: center; gap: 7px; min-height: 31px; border-top: 1px solid color-mix(in srgb, var(--border) 60%, transparent); }.service-row:first-of-type { border-top: 0; }.target-name { flex: 1; overflow: hidden; color: var(--text-dim); text-overflow: ellipsis; white-space: nowrap; }.service-row .value { color: var(--text); font-size: 11px; font-variant-numeric: tabular-nums; white-space: nowrap; }.http-status { padding: 1px 5px; font-size: 9px; font-weight: 700; border-radius: 5px; }.http-status.good { color: var(--success); background: var(--success-soft); }.http-status.bad { color: var(--danger); background: var(--danger-soft); }.http-status.warn { color: var(--warning); background: var(--warning-soft); }.mini-empty { padding: 16px 0; color: var(--text-muted); font-size: 11px; }.mini-empty.padded { padding: 28px 20px; text-align: center; }
 
 .system-monitor-surface { padding-bottom: 16px; }.system-monitor-grid { display: grid; grid-template-columns: minmax(280px, .95fr) minmax(420px, 1.25fr); gap: 14px; padding: 16px; }.monitor-primary-column, .monitor-secondary-column { display: grid; gap: 14px; min-width: 0; }.monitor-primary-column { grid-template-rows: 1fr 1fr; }.monitor-secondary-column { grid-template-rows: auto 1fr auto; }.monitor-card { min-width: 0; padding: 18px 20px; border: 1px solid var(--border); border-radius: 14px; background: linear-gradient(145deg, var(--surface-2), color-mix(in srgb, var(--surface-2) 72%, var(--primary-soft))); box-shadow: inset 0 1px rgba(255,255,255,.025); }.monitor-card-title { display: flex; align-items: center; gap: 10px; }.monitor-card-title > strong { font-size: 14px; }.monitor-icon { display: grid; place-items: center; width: 30px; height: 30px; flex: none; border-radius: 9px; }.monitor-icon svg { width: 20px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }.monitor-icon.cpu { color: var(--success); background: var(--success-soft); }.monitor-icon.memory, .monitor-icon.load, .monitor-icon.io, .monitor-icon.uptime { color: var(--primary); background: var(--primary-soft); }.monitor-big-value { display: block; margin-top: 14px; font-size: clamp(34px, 4vw, 48px); font-weight: 700; line-height: 1; letter-spacing: -.04em; font-variant-numeric: tabular-nums; }.cpu-value { color: var(--success); }.memory-value { color: var(--primary); }.monitor-card p { margin: 12px 0 0; color: var(--text-muted); font-size: 12px; }.cpu-monitor-body { display: flex; align-items: center; justify-content: space-between; gap: 20px; }.usage-ring { --usage-angle: 0deg; position: relative; display: block; width: 70px; height: 70px; flex: none; border-radius: 50%; background: conic-gradient(var(--success) var(--usage-angle), color-mix(in srgb, var(--success) 13%, var(--surface-2)) 0); }.usage-ring::after { content: ''; position: absolute; inset: 9px; border-radius: 50%; background: var(--surface-solid); }.usage-ring i { position: absolute; inset: 16px; z-index: 1; border-radius: 50%; background: var(--surface-2); }.memory-progress { height: 8px; margin-top: 18px; overflow: hidden; border-radius: 999px; background: color-mix(in srgb, var(--primary) 12%, var(--surface)); }.memory-progress i { display: block; height: 100%; border-radius: inherit; background: linear-gradient(90deg, var(--primary-strong), var(--primary)); box-shadow: 0 0 12px var(--primary-glow); }.load-monitor-card { padding-bottom: 14px; }.load-dials { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin-top: 10px; }.load-dial-item { display: grid; justify-items: center; min-width: 0; }.load-dial-item > span { margin-top: -2px; color: var(--text-muted); font-size: 11px; white-space: nowrap; }.load-dial-item > span strong { color: var(--text); }.load-dial { --needle-angle: -125deg; position: relative; width: 74px; height: 48px; overflow: hidden; }.load-dial::before { content: ''; position: absolute; left: 5px; top: 5px; width: 64px; height: 64px; border-radius: 50%; background: conic-gradient(from 225deg, var(--success) 0 17%, var(--primary) 17% 36%, var(--warning) 36% 50%, var(--danger) 50% 56%, transparent 56% 100%); -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 9px), #000 0); mask: radial-gradient(farthest-side, transparent calc(100% - 9px), #000 0); opacity: .9; }.load-dial i { position: absolute; left: 36px; bottom: 4px; width: 2px; height: 27px; z-index: 1; border-radius: 2px; background: var(--text); transform: rotate(var(--needle-angle)); transform-origin: 50% 100%; }.load-dial b { position: absolute; left: 32px; bottom: 0; width: 10px; height: 10px; z-index: 2; border: 3px solid var(--surface-solid); border-radius: 50%; background: var(--text); }.io-monitor-card { display: grid; align-content: center; }.io-values { display: grid; gap: 10px; margin-top: 14px; }.io-values > div { display: grid; grid-template-columns: 24px 70px 1fr; align-items: center; gap: 6px; }.io-values span { color: var(--text-muted); }.io-values strong { font-size: 16px; font-variant-numeric: tabular-nums; }.io-arrow { font-size: 22px; line-height: 1; }.io-arrow.up { color: var(--success); }.io-arrow.down { color: var(--primary); }.uptime-monitor-card { display: flex; align-items: center; gap: 14px; padding-top: 14px; padding-bottom: 14px; }.uptime-monitor-card > div { display: grid; }.uptime-monitor-card span { color: var(--text-muted); font-size: 11px; }.uptime-monitor-card strong { margin-top: 2px; font-size: 20px; font-variant-numeric: tabular-nums; }
 .system-monitor-surface { container-type: inline-size; }
@@ -1308,6 +1368,7 @@ onBeforeUnmount(() => {
 .reach-chip { margin-left: auto; padding: 2px 7px; color: var(--text-muted); font-size: 9px; border-radius: 999px; background: var(--surface); }
 .reach-chip.good { color: var(--success); background: var(--success-soft); }
 .reach-chip.bad { color: var(--danger); background: var(--danger-soft); }
+.reach-chip.warn { color: var(--warning); background: var(--warning-soft); }
 
 /* Reference-style resource board: paired cards share a fixed row height, while
    every body scrolls independently once it reaches that row's height cap. */

@@ -42,6 +42,10 @@ const error = ref('')
 
 const incident = computed(() => detail.value?.incident ?? null)
 const members = computed(() => detail.value?.members ?? [])
+// Count of distinct targets STILL currently abnormal on this incident's firing
+// alerts — computed server-side from current condition state, deliberately not
+// derived from the immutable evidence count.
+const abnormalTargetCount = computed(() => detail.value?.abnormal_target_count ?? 0)
 const titleId = 'incident-detail-title'
 
 const fmtDateTime = (s: string | null) =>
@@ -173,7 +177,10 @@ onBeforeUnmount(() => {
           <span class="pill">{{ t('incidents.detail.group') }}: {{ incident.group_name || '—' }}</span>
           <span class="pill">{{ layerLabel(incident.suspected_layer) }}</span>
           <span class="pill">
-            {{ t('incidents.detail.members', { active: incident.active_member_count, total: incident.member_count }) }}
+            {{ t('incidents.detail.relatedAlerts', { active: incident.active_member_count, total: incident.member_count }) }}
+          </span>
+          <span class="pill" :class="{ abnormal: abnormalTargetCount > 0 }">
+            {{ t('incidents.detail.abnormalTargets', { n: abnormalTargetCount }) }}
           </span>
         </div>
         <dl class="facts">
@@ -217,10 +224,11 @@ onBeforeUnmount(() => {
                   <th>{{ t('incidents.detail.evValue') }}</th>
                   <th>{{ t('incidents.detail.evThreshold') }}</th>
                   <th>{{ t('incidents.detail.evObserved') }}</th>
+                  <th>{{ t('incidents.detail.evState') }}</th>
                 </tr>
               </thead>
               <tbody>
-                <tr v-if="!m.evidence.length"><td colspan="6" class="hint">{{ t('incidents.detail.noEvidence') }}</td></tr>
+                <tr v-if="!m.evidence.length"><td colspan="7" class="hint">{{ t('incidents.detail.noEvidence') }}</td></tr>
                 <tr v-for="ev in m.evidence" :key="ev.id">
                   <td>
                     <span class="mono">{{ ev.target_name || ev.target_addr || ev.target_id }}</span>
@@ -234,6 +242,11 @@ onBeforeUnmount(() => {
                     {{ fmtNum(ev.threshold) }}
                   </td>
                   <td class="hint">{{ fmtDateTime(ev.observed_at) }}</td>
+                  <td>
+                    <span class="badge tiny" :class="ev.currently_abnormal ? 'open' : 'neutral'">
+                      {{ ev.currently_abnormal ? t('incidents.detail.evCurrent') : t('incidents.detail.evHistorical') }}
+                    </span>
+                  </td>
                 </tr>
               </tbody>
             </table>
@@ -366,6 +379,15 @@ onBeforeUnmount(() => {
   gap: 10px;
   flex-wrap: wrap;
   margin-bottom: 8px;
+}
+.pill.abnormal {
+  color: var(--danger);
+  border-color: rgba(248, 113, 113, 0.4);
+  background: var(--danger-soft);
+}
+.badge.tiny {
+  padding: 1px 7px;
+  font-size: 10.5px;
 }
 .mini-table {
   width: 100%;

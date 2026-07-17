@@ -148,33 +148,5 @@ export const isStatusKind = (kind: string, unit: string) => unit === 'bool' || k
 // Metrics page owns the host's own hardware: host.* + iface.* + agent.uptime_s.
 export const isTargetStatusKind = (kind: string) => kind.startsWith('probe.')
 
-// The series a monitor's overview card samples to show current up/down and
-// availability. Most probe families have a boolean `.ok`; ICMP has none, so
-// reachability is derived from loss (100% loss ⇒ down). `toUp` normalizes a raw
-// sample value to a 0/1 "up" value for the timeline helpers.
-export interface StatusSource {
-  kind: string
-  toUp: (v: number) => number
-}
-const asBool = (v: number) => (v >= 0.5 ? 1 : 0)
-export function statusSource(family: string): StatusSource | null {
-  switch (family) {
-    case 'probe.icmp':
-      return { kind: 'probe.icmp.loss_pct', toUp: (v) => (v < 100 ? 1 : 0) }
-    case 'probe.dns':
-      return { kind: 'probe.dns.ok', toUp: asBool }
-    case 'probe.http':
-      return { kind: 'probe.http.ok', toUp: asBool }
-    case 'probe.tcp':
-      return { kind: 'probe.tcp.ok', toUp: asBool }
-    case 'probe.nat':
-      return { kind: 'probe.nat.ok', toUp: asBool }
-    case 'wifi':
-      return { kind: 'wifi.up', toUp: asBool }
-    default:
-      return null
-  }
-}
-
 // Plain numeric format: integers as-is, otherwise one decimal.
 export const fmtNum = (v: number) => (Number.isInteger(v) ? String(v) : v.toFixed(1))

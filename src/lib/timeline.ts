@@ -49,18 +49,6 @@ export function boolSegments(pts: Pt[], now: number): Seg[] {
   return segs
 }
 
-// Current boolean state, or null when the newest sample is too stale to trust.
-// A single sample carries no cadence to judge freshness against, so its state is
-// reported as known rather than "unknown": otherwise a slow probe such as NAT
-// (~30-min interval) whose first and only result is already minutes old reads as
-// "未知" right after the agent connects, even though it succeeded.
-export function boolCurrent(pts: Pt[], now: number): boolean | null {
-  if (!pts.length) return null
-  const last = pts[pts.length - 1]
-  if (pts.length >= 2 && now - last.t > boolStaleMs(pts)) return null
-  return last.v >= 0.5
-}
-
 // Time-weighted availability: the mean of each point's value weighted by how
 // long it was held. For raw boolean samples (v ∈ {0,1}) this equals the
 // fraction of time up; for rollup buckets (v = the bucket's average of 0/1

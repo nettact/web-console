@@ -3,124 +3,60 @@ import { ref, computed, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import {
   api,
-  type Agent,
   type AgentGroup,
   type MonitorGroup,
-  type MonitorStatusRow,
   type ProbeTarget,
-  type Sample,
+  type TargetStatusRow,
+  type TargetAgentStatusRow,
 } from '../api'
-import MonitorStateBadge, { type MonitorState } from '../components/status/MonitorStateBadge.vue'
+import MonitorStateBadge from '../components/status/MonitorStateBadge.vue'
 import ConfirmDialog from '../components/ConfirmDialog.vue'
-import { familyOf, statusSource } from '../lib/metricMeta'
+import { targetStatus, targetIndex } from '../targetStatus'
+import { useMetricMeta } from '../composables/useMetricMeta'
+import { useIncidentLabels } from '../composables/useIncidentLabels'
 import { typeLabel, targetLabel } from '../lib/targetLabels'
+import { fmtNum } from '../lib/metricMeta'
+import { toDateLocale } from '../i18n'
 
-const { t: tr } = useI18n()
+const { t: tr, locale } = useI18n()
+const { metricLabel, unitLabel } = useMetricMeta()
+const { comparatorSymbol, comparatorLabel } = useIncidentLabels()
 
 const SITE = 'site_default'
 const groups = ref<MonitorGroup[]>([])
 const targets = ref<ProbeTarget[]>([])
 const agentGroups = ref<AgentGroup[]>([])
-const agents = ref<Agent[]>([])
 const error = ref('')
 const busy = ref(false)
-// Per-monitor agent status rows (permission/target/unsupported blocks). Blocked
-// monitors emit no metric, so this is the only place their state is visible.
-const statusByMonitor = ref<Map<string, MonitorStatusRow[]>>(new Map())
-// agent_id -> monitor_id -> latest up/down derived from the monitor's status series.
-const upByAgent = ref<Map<string, Map<string, boolean>>>(new Map())
+
+// Authoritative current status per target — the only source of current health.
+const statusOf = (id: string | undefined): TargetStatusRow | undefined =>
+  id ? targetIndex.value.get(id) : undefined
+
+// Expandable per-agent detail rows (issue AC-11 drill-down).
+const expanded = ref<Set<string>>(new Set())
+function toggleDetail(id: string | undefined) {
+  if (!id) return
+  const next = new Set(expanded.value)
+  if (next.has(id)) next.delete(id)
+  else next.add(id)
+  expanded.value = next
+}
 
 async function load() {
   try {
-    ;[groups.value, targets.value, agentGroups.value, agents.value] = await Promise.all([
+    ;[groups.value, targets.value, agentGroups.value] = await Promise.all([
       api.monitorGroups(SITE),
       api.listTargets(SITE),
       api.agentGroups(SITE),
-      api.agents().catch(() => [] as Agent[]),
     ])
     targets.value.forEach((t) => {
       if (!t.params) t.params = {}
     })
-    await Promise.all([loadStatuses(), loadLatest()])
   } catch (e) {
     error.value = String((e as Error).message || e)
   }
 }
-
-async function loadStatuses() {
-  const ids = targets.value.map((t) => t.id).filter((id): id is string => !!id)
-  const pairs = await Promise.all(
-    ids.map((id) =>
-      api
-        .targetAgentStatus(id)
-        .then((rows) => [id, rows] as [string, MonitorStatusRow[]])
-        .catch(() => [id, [] as MonitorStatusRow[]] as [string, MonitorStatusRow[]]),
-    ),
-  )
-  statusByMonitor.value = new Map(pairs)
-}
-
-async function loadLatest() {
-  const pairs = await Promise.all(
-    agents.value.map((a) =>
-      api
-        .latest(a.id)
-        .then((samples) => [a.id, samples] as [string, Sample[]])
-        .catch(() => [a.id, [] as Sample[]] as [string, Sample[]]),
-    ),
-  )
-  const m = new Map<string, Map<string, boolean>>()
-  for (const [id, samples] of pairs) {
-    const per = new Map<string, boolean>()
-    for (const s of samples) {
-      if (!s.monitor_id) continue
-      const src = statusSource(familyOf(s.kind))
-      if (!src || src.kind !== s.kind) continue
-      per.set(s.monitor_id, src.toUp(s.value) >= 0.5)
-    }
-    m.set(id, per)
-  }
-  upByAgent.value = m
-}
-
-// Composed per-row state chips: for each agent assigned the monitor, a non-active
-// operational status wins; an active agent falls back to its latest status metric.
-// agent_offline is counted independently and rendered as an extra chip.
-const CHIP_ORDER: MonitorState[] = ['permission_blocked', 'unsupported', 'target_blocked', 'probe_failed', 'active']
-interface RowChips {
-  chips: { state: MonitorState; count: number; agents: string[] }[]
-  offline: string[]
-}
-const rowStatusById = computed<Map<string, RowChips>>(() => {
-  const out = new Map<string, RowChips>()
-  for (const t of targets.value) {
-    if (!t.id) continue
-    const rows = statusByMonitor.value.get(t.id) || []
-    if (!rows.length) continue
-    const byState = new Map<MonitorState, string[]>()
-    const offline: string[] = []
-    for (const r of rows) {
-      const name = r.agent_name || r.agent_id
-      const a = agents.value.find((x) => x.id === r.agent_id)
-      if (a && a.status !== 'online') offline.push(name)
-      let state: MonitorState
-      if (r.status !== 'active') state = r.status
-      else if (t.kind !== 'host' && upByAgent.value.get(r.agent_id)?.get(t.id) === false) state = 'probe_failed'
-      else state = 'active'
-      if (!byState.has(state)) byState.set(state, [])
-      byState.get(state)!.push(name)
-    }
-    out.set(t.id, {
-      chips: CHIP_ORDER.filter((s) => byState.has(s)).map((s) => ({
-        state: s,
-        count: byState.get(s)!.length,
-        agents: byState.get(s)!,
-      })),
-      offline,
-    })
-  }
-  return out
-})
 
 // Targets owned by a group (static membership via group_id).
 function targetsOf(g: MonitorGroup): ProbeTarget[] {
@@ -134,6 +70,25 @@ function scopeLabel(g: MonitorGroup): string {
 }
 function mergeLabel(g: MonitorGroup): string {
   return g.merge_enabled ? tr('monitoring.mergeOn') : tr('monitoring.mergeOff')
+}
+
+// ---- status formatting helpers ----
+const fmtTime = (s: string | null | undefined) =>
+  s ? new Date(s).toLocaleString(toDateLocale(locale.value), { hour12: false }) : '—'
+
+// Condition context is derived on the client from stable machine values
+// (metric_kind + comparator + threshold) — the server never sends display text.
+function lastValueLabel(a: TargetAgentStatusRow): string {
+  if (a.last_value == null || !a.last_metric_kind) return '—'
+  const unit = a.last_unit ? unitLabel(a.last_unit) : ''
+  return `${fmtNum(a.last_value)}${unit ? ' ' + unit : ''}`
+}
+// Distinct current-generation incident deep links for an abnormal target.
+function incidentLinks(row: TargetStatusRow) {
+  return row.incident_ids.map((id) => ({ id, to: { path: '/incidents', query: { incident: id } } }))
+}
+function agentTo(agentId: string) {
+  return { path: '/target-status', query: { view: 'agent', agent: agentId } }
 }
 
 // ---- delete target (full-reconcile save without it) ----
@@ -203,6 +158,7 @@ async function purgeSystem() {
   }
 }
 
+const hasSnapshot = computed(() => targetStatus.loaded)
 onMounted(load)
 </script>
 
@@ -217,6 +173,15 @@ onMounted(load)
       <router-link to="/monitoring/new" class="btn btn-primary">{{ tr('monitoring.newMonitor') }}</router-link>
     </div>
     <p v-if="error" class="err">{{ error }}</p>
+
+    <!-- Authoritative-status freshness / failure banner. -->
+    <p v-if="targetStatus.error && !hasSnapshot" class="err" role="alert">{{ tr('targetStatus.errorBanner') }}</p>
+    <p v-else-if="targetStatus.stale" class="status-banner stale" role="status">
+      {{ tr('targetStatus.staleBanner', { time: fmtTime(targetStatus.generatedAt) }) }}
+    </p>
+    <p v-else-if="hasSnapshot" class="status-banner ok">
+      {{ tr('targetStatus.updatedAt', { time: fmtTime(targetStatus.generatedAt) }) }}
+    </p>
 
     <section v-for="g in groups" :key="g.id" class="panel group-panel">
       <div class="panel-head group-head">
@@ -261,44 +226,99 @@ onMounted(load)
             </tr>
           </thead>
           <tbody>
-            <tr v-for="t in targetsOf(g)" :key="t.id">
-              <td>{{ t.name || tr('monitoring.unnamed') }}</td>
-              <td>{{ typeLabel(t, tr) }}</td>
-              <td class="mono">
-                {{ targetLabel(t, tr) }}<span v-if="t.kind === 'tcp' && t.params?.port">:{{ t.params.port }}</span>
-              </td>
-              <td class="status">
-                <template v-if="t.id && rowStatusById.get(t.id)">
-                  <span
-                    v-for="c in rowStatusById.get(t.id)!.chips"
-                    :key="c.state"
-                    class="chip"
-                    :title="c.agents.join(', ')"
-                  >
-                    <MonitorStateBadge :state="c.state" />
-                    <span v-if="c.count > 1" class="blk-count">×{{ c.count }}</span>
-                  </span>
-                  <span
-                    v-if="rowStatusById.get(t.id)!.offline.length"
-                    class="chip"
-                    :title="rowStatusById.get(t.id)!.offline.join(', ')"
-                  >
-                    <span class="pill offline">{{ tr('monitorState.agent_offline') }}</span>
-                    <span v-if="rowStatusById.get(t.id)!.offline.length > 1" class="blk-count"
-                      >×{{ rowStatusById.get(t.id)!.offline.length }}</span
+            <template v-for="t in targetsOf(g)" :key="t.id">
+              <tr>
+                <td>{{ t.name || tr('monitoring.unnamed') }}</td>
+                <td>{{ typeLabel(t, tr) }}</td>
+                <td class="mono">
+                  {{ targetLabel(t, tr) }}<span v-if="t.kind === 'tcp' && t.params?.port">:{{ t.params.port }}</span>
+                </td>
+                <td class="status">
+                  <template v-if="statusOf(t.id)">
+                    <button
+                      class="status-toggle"
+                      :aria-expanded="expanded.has(t.id!)"
+                      :aria-label="tr('targetStatus.toggleDetailAria', { name: t.name || t.target })"
+                      @click="toggleDetail(t.id)"
                     >
-                  </span>
-                </template>
-                <span v-else class="dim">—</span>
-              </td>
-              <td class="center"><span :class="['dot', t.enabled ? 'on' : 'off']"></span></td>
-              <td class="actions">
-                <router-link :to="`/monitoring/${t.id}/edit`" class="link-btn">{{ tr('monitoring.editMonitor') }}</router-link>
-                <button class="link-btn danger" :disabled="busy" @click="pendingDeleteTarget = t">
-                  {{ tr('common.delete') }}
-                </button>
-              </td>
-            </tr>
+                      <span class="caret" :class="{ open: expanded.has(t.id!) }">▸</span>
+                      <MonitorStateBadge dim="display" :state="statusOf(t.id)!.display_state" />
+                    </button>
+                    <span
+                      v-if="statusOf(t.id)!.affected_agents > 0"
+                      class="affected"
+                    >{{ tr('targetStatus.affected', { affected: statusOf(t.id)!.affected_agents, total: statusOf(t.id)!.applicable_agents }) }}</span>
+                    <span
+                      v-if="statusOf(t.id)!.display_state === 'breaching'"
+                      class="breach-hint"
+                    >{{ tr('targetStatus.breachingHint') }}</span>
+                    <span
+                      v-for="link in incidentLinks(statusOf(t.id)!)"
+                      :key="link.id"
+                      class="nav-chip"
+                    >
+                      <router-link :to="link.to">{{ tr('targetStatus.incidentLink') }}</router-link>
+                    </span>
+                  </template>
+                  <span v-else class="dim">—</span>
+                </td>
+                <td class="center"><span :class="['dot', t.enabled ? 'on' : 'off']"></span></td>
+                <td class="actions">
+                  <router-link :to="`/monitoring/${t.id}/edit`" class="link-btn">{{ tr('monitoring.editMonitor') }}</router-link>
+                  <button class="link-btn danger" :disabled="busy" @click="pendingDeleteTarget = t">
+                    {{ tr('common.delete') }}
+                  </button>
+                </td>
+              </tr>
+              <!-- Per-agent authoritative detail (execution / probe / rule + context). -->
+              <tr v-if="t.id && expanded.has(t.id) && statusOf(t.id)" class="detail-row">
+                <td colspan="6">
+                  <div v-if="!statusOf(t.id)!.agents.length" class="hint pad">
+                    {{ tr('targetStatus.noApplicableAgents') }}
+                  </div>
+                  <div v-else class="agent-detail">
+                    <div v-for="a in statusOf(t.id)!.agents" :key="a.agent_id" class="agent-line">
+                      <div class="agent-head">
+                        <span class="agent-name mono">
+                          <span class="dot-inline" :class="a.agent_online ? 'on' : 'off'"></span>{{ a.agent_name || a.agent_id }}
+                        </span>
+                        <MonitorStateBadge dim="execution" :state="a.execution_state" />
+                        <MonitorStateBadge v-if="a.probe_state !== 'not_applicable'" dim="probe" :state="a.probe_state" />
+                        <MonitorStateBadge v-if="a.rule_state !== 'normal'" dim="rule" :state="a.rule_state" />
+                        <router-link class="agent-link" :to="agentTo(a.agent_id)">{{ tr('targetStatus.viewAgent') }}</router-link>
+                      </div>
+                      <div class="agent-facts">
+                        <span class="fact-item">{{ tr('targetStatus.reasonLabel') }}: {{ tr('targetStatus.reason.' + a.reason_code) }}</span>
+                        <span v-if="a.last_metric_kind" class="fact-item">
+                          {{ tr('targetStatus.lastValue') }}: {{ lastValueLabel(a) }}
+                          <template v-if="a.last_observed_at"> · {{ tr('targetStatus.observedAt', { time: fmtTime(a.last_observed_at) }) }}</template>
+                        </span>
+                        <span v-if="a.execution_state === 'pending' && a.pending_since" class="fact-item">
+                          {{ tr('targetStatus.pendingSince', { time: fmtTime(a.pending_since) }) }}
+                        </span>
+                        <span v-if="a.missing_permissions.length" class="fact-item">
+                          {{ tr('targetStatus.missingPerms', { n: a.missing_permissions.length }) }}
+                        </span>
+                      </div>
+                      <ul v-if="a.active_conditions.length" class="cond-list">
+                        <li v-for="c in a.active_conditions" :key="c.condition_id">
+                          <span class="cond-rule">{{ c.rule_name }}</span>
+                          <span class="cond-expr mono">
+                            {{ metricLabel(c.metric_kind) }}
+                            <span :aria-label="comparatorLabel(c.comparator)">{{ comparatorSymbol(c.comparator) }}</span>
+                            {{ fmtNum(c.threshold) }}<template v-if="c.unit"> {{ unitLabel(c.unit) }}</template>
+                            <template v-if="c.last_value != null"> · {{ tr('targetStatus.condValue', { v: fmtNum(c.last_value) }) }}</template>
+                          </span>
+                          <router-link v-if="c.incident_id" class="cond-link" :to="{ path: '/incidents', query: { incident: c.incident_id } }">
+                            {{ tr('targetStatus.incidentLink') }}
+                          </router-link>
+                        </li>
+                      </ul>
+                    </div>
+                  </div>
+                </td>
+              </tr>
+            </template>
           </tbody>
         </table>
       </div>
@@ -377,6 +397,22 @@ onMounted(load)
 .add-in-group {
   margin-left: auto;
 }
+.status-banner {
+  font-size: 12.5px;
+  padding: 7px 12px;
+  border-radius: var(--radius-sm);
+  margin-bottom: 14px;
+}
+.status-banner.ok {
+  color: var(--text-muted);
+  background: var(--overlay-subtle);
+  border: 1px solid var(--border);
+}
+.status-banner.stale {
+  color: var(--danger);
+  background: var(--danger-soft);
+  border: 1px solid rgba(248, 113, 113, 0.3);
+}
 .group-facts {
   display: flex;
   flex-wrap: wrap;
@@ -427,32 +463,130 @@ onMounted(load)
 .status {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
   flex-wrap: wrap;
 }
 .status .dim {
   color: var(--text-muted);
 }
-.chip {
+.status-toggle {
   display: inline-flex;
   align-items: center;
-  gap: 3px;
+  gap: 6px;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  padding: 0;
+  font: inherit;
+  color: inherit;
 }
-.pill {
-  font-size: 12px;
-  padding: 2px 9px;
-  border-radius: 999px;
-  border: 1px solid var(--border-strong);
-  color: var(--text-dim);
-  white-space: nowrap;
+.status-toggle:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+  border-radius: 4px;
 }
-.pill.offline {
-  border-style: dashed;
+.caret {
+  display: inline-block;
+  font-size: 10px;
+  color: var(--text-muted);
+  transition: transform 0.15s;
 }
-.blk-count {
+.caret.open {
+  transform: rotate(90deg);
+}
+.affected {
   font-size: 11.5px;
   color: var(--text-muted);
   font-variant-numeric: tabular-nums;
+}
+.breach-hint {
+  font-size: 11.5px;
+  color: var(--text-dim);
+}
+.nav-chip a {
+  font-size: 11.5px;
+}
+.detail-row > td {
+  background: var(--overlay-subtle);
+  padding: 12px 18px;
+}
+.agent-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.agent-line {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-bottom: 10px;
+  border-bottom: 1px dashed var(--border);
+}
+.agent-line:last-child {
+  border-bottom: none;
+  padding-bottom: 0;
+}
+.agent-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.agent-name {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12.5px;
+  color: var(--text-dim);
+}
+.dot-inline {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+.dot-inline.on {
+  background: var(--success);
+}
+.dot-inline.off {
+  background: var(--border-strong);
+}
+.agent-link,
+.cond-link {
+  font-size: 11.5px;
+  margin-left: auto;
+}
+.agent-facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 16px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+.cond-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.cond-list li {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  flex-wrap: wrap;
+  font-size: 12px;
+}
+.cond-rule {
+  color: var(--text-dim);
+  font-weight: 600;
+}
+.cond-expr {
+  color: var(--text-muted);
+}
+.pad {
+  padding: 8px 2px;
 }
 .actions {
   display: flex;

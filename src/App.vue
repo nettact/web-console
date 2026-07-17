@@ -4,6 +4,7 @@ import { useRouter, useRoute, RouterLink, RouterView } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { auth, logout } from './auth'
 import { initNotifications, stopNotifications } from './notifications'
+import { initTargetStatus, stopTargetStatus } from './targetStatus'
 import LangSwitch from './components/LangSwitch.vue'
 import ThemeSwitch from './components/ThemeSwitch.vue'
 import NotificationBell from './components/NotificationBell.vue'
@@ -18,12 +19,18 @@ async function doLogout() {
   router.push('/login')
 }
 
-// Open the issue stream once the user is authenticated; tear it down on logout.
+// Open the issue + target-status streams once the user is authenticated; tear
+// them down on logout.
 watch(
   () => auth.user,
   (u) => {
-    if (u) initNotifications()
-    else stopNotifications()
+    if (u) {
+      initNotifications()
+      initTargetStatus()
+    } else {
+      stopNotifications()
+      stopTargetStatus()
+    }
   },
   { immediate: true },
 )

@@ -7,7 +7,7 @@
 import type { Sample } from '../api'
 import type { Tone } from '../lib/metricMeta'
 import { NAT_CODE_KINDS, TCP_ERROR_KIND, natCodeLabel, natTone, tcpErrorTone, fmtNum } from '../lib/metricMeta'
-import { availability, boolCurrent, countRestarts, toPoints, uptimeOnline } from '../lib/timeline'
+import { availability, countRestarts, toPoints, uptimeOnline } from '../lib/timeline'
 import { fmtByUnit, isByteUnit } from '../lib/format'
 import { useMetricMeta } from './useMetricMeta'
 import { useI18n } from 'vue-i18n'
@@ -96,17 +96,23 @@ export function useMetricCards() {
     }
 
     if (m.unit === 'bool') {
-      const cur = boolCurrent(pts, now)
+      // Current health is server-authoritative (the target-status batch), never
+      // inferred from these samples. This card is purely historical: the
+      // last-observed raw value with its timestamp, plus range uptime/outages. No
+      // current-health tone and no "normal/interrupted" current-state labelling.
+      const last = pts[pts.length - 1]
       let downs = 0
       for (let i = 1; i < pts.length; i++) if (pts[i - 1].v >= 0.5 && pts[i].v < 0.5) downs++
-      const tone: Tone = cur === null ? 'unknown' : cur ? 'good' : 'bad'
       return {
         label: m.label,
         color: m.color,
-        tone,
-        value: cur === null ? t('metrics.cardUnknownExpired') : cur ? t('metrics.cardNormal') : t('metrics.cardInterrupted'),
+        value: last.v >= 0.5 ? t('metrics.cardBoolUp') : t('metrics.cardBoolDown'),
         small: true,
-        foot: t('metrics.cardAvailFoot', { rate: (availability(pts, now) * 100).toFixed(1), downs }),
+        foot: t('metrics.cardBoolFoot', {
+          time: fmtTime(new Date(last.t).toISOString()),
+          rate: (availability(pts, now) * 100).toFixed(1),
+          downs,
+        }),
       }
     }
 

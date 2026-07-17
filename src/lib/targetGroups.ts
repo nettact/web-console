@@ -62,3 +62,32 @@ export function groupTargets(
 export function groupLabel(g: TargetGroup): string {
   return g.name || g.target
 }
+
+// The boolean status series a family's HISTORICAL state band samples, and how to
+// normalize a raw sample to 0/1 up for StatusBand / availability math. This is a
+// historical-visualization concern only (drawing the retained state band and its
+// availability%): current target health is never inferred here — that comes
+// exclusively from the authoritative target-status batch (see targetStatus.ts).
+export interface BandSeries {
+  kind: string
+  toUp: (v: number) => number
+}
+const asBool = (v: number) => (v >= 0.5 ? 1 : 0)
+export function bandSeriesFor(family: string): BandSeries | null {
+  switch (family) {
+    case 'probe.icmp':
+      return { kind: 'probe.icmp.loss_pct', toUp: (v) => (v < 100 ? 1 : 0) }
+    case 'probe.dns':
+      return { kind: 'probe.dns.ok', toUp: asBool }
+    case 'probe.http':
+      return { kind: 'probe.http.ok', toUp: asBool }
+    case 'probe.tcp':
+      return { kind: 'probe.tcp.ok', toUp: asBool }
+    case 'probe.nat':
+      return { kind: 'probe.nat.ok', toUp: asBool }
+    case 'wifi':
+      return { kind: 'wifi.up', toUp: asBool }
+    default:
+      return null
+  }
+}

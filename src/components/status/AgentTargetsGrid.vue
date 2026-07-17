@@ -1,28 +1,23 @@
 <script setup lang="ts">
-// By-agent overview: one card per probe target this agent monitors, showing the
-// current up/down state, availability, outage count and a mini status band. Each
-// card only fetches its target's primary status series (cheap); clicking a card
-// drills into the full TargetDetail.
+// By-agent overview: one card per probe target this agent monitors. The current
+// state (badge + accent) comes from the authoritative target-status batch for
+// this (target, agent) pair; the availability%, outage count and mini state band
+// stay metric-based (historical). Clicking a card drills into TargetDetail.
 import { ref, computed, watch, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { api, type Sample, type MonitorStatusRow } from '../../api'
+import { api, type Sample, type TargetAgentStatusRow } from '../../api'
 import StatusBand from '../StatusBand.vue'
-import MonitorStateBadge, { type MonitorState } from './MonitorStateBadge.vue'
-import { natCodeLabel, natTone, statusSource, type StatusSource } from '../../lib/metricMeta'
-import { groupLabel, type TargetGroup } from '../../lib/targetGroups'
-import { availability, boolCurrent, toPoints } from '../../lib/timeline'
+import MonitorStateBadge from './MonitorStateBadge.vue'
+import { natCodeLabel } from '../../lib/metricMeta'
+import { groupLabel, bandSeriesFor, type BandSeries, type TargetGroup } from '../../lib/targetGroups'
+import { agentHeadlineTone } from '../../lib/targetStatus'
+import { targetIndex } from '../../targetStatus'
+import { availability, toPoints } from '../../lib/timeline'
 
 const props = defineProps<{
   agentId: string
   groups: TargetGroup[]
   rangeSec: number
-  // Per-monitor operational block state for THIS agent (permission/target/unsupported),
-  // keyed by monitor_id. A blocked monitor emits no metric, so this is the only
-  // signal of its state; it overrides the metric-derived pill when present.
-  blocked?: Record<string, MonitorStatusRow>
-  // Whether this agent is currently offline — rendered as an extra chip beside the
-  // per-target state (offline never erases a permission/target block).
-  offline?: boolean
   // A monitor group to visually highlight and scroll to (issue deep-link landing).
   highlightKey?: string
 }>()
@@ -30,28 +25,25 @@ const emit = defineEmits<{ select: [TargetGroup] }>()
 
 const { t } = useI18n()
 
-// The non-active operational state for a group's monitor, if any — drives the
-// MonitorStateBadge that replaces the metric pill for blocked monitors.
-function blockState(g: TargetGroup): MonitorState | null {
-  if (!g.monitorId) return null
-  const row = props.blocked?.[g.monitorId]
-  if (!row || row.status === 'active') return null
-  return row.status as MonitorState
+// The authoritative per-agent status for a group's monitor on THIS agent.
+function agentRow(g: TargetGroup): TargetAgentStatusRow | undefined {
+  if (!g.monitorId) return undefined
+  return targetIndex.value.get(g.monitorId)?.agents.find((a) => a.agent_id === props.agentId)
 }
 
 const samplesByKey = ref<Record<string, Sample[]>>({})
-// NAT groups also carry the categorical NAT type (probe.nat.type), shown in the
-// pill in place of a plain up/down — a card's real answer is "what NAT type",
-// while its availability/band still track binding reachability (probe.nat.ok).
+// NAT groups also carry the categorical NAT type (probe.nat.type), shown as a
+// caption — a NAT card's real answer is "what NAT type" while its band/availability
+// track binding reachability (probe.nat.ok).
 const natTypeByKey = ref<Record<string, Sample[]>>({})
 let seq = 0
 
 const groups = computed<TargetGroup[]>(() => props.groups)
 
-// The status series each card samples, and how to normalize it to 0/1 up.
-function sourceFor(g: TargetGroup): StatusSource | null {
-  const src = statusSource(g.family)
-  if (src && g.metrics.some((m) => m.kind === src.kind)) return src
+// The historical status series each card's band samples (never current-health).
+function bandFor(g: TargetGroup): BandSeries | null {
+  const b = bandSeriesFor(g.family)
+  if (b && g.metrics.some((m) => m.kind === b.kind)) return b
   return null
 }
 const hasNatType = (g: TargetGroup) => g.family === 'probe.nat' && g.metrics.some((m) => m.kind === 'probe.nat.type')
@@ -71,8 +63,8 @@ async function loadStatuses() {
   const cur = ++seq
   const gs = groups.value
   const jobs = gs.map(async (g) => {
-    const src = sourceFor(g)
-    const ok = src ? await fetchKind(g, src.kind) : []
+    const b = bandFor(g)
+    const ok = b ? await fetchKind(g, b.kind) : []
     const natType = hasNatType(g) ? await fetchKind(g, 'probe.nat.type') : []
     return [g.key, ok, natType] as [string, Sample[], Sample[]]
   })
@@ -89,8 +81,8 @@ async function loadStatuses() {
 }
 
 // The latest determinate NAT type code, falling back past a transient "unknown"
-// (0) to the most recent real result — mirrors the NAT stat card so the grid and
-// the drilldown never disagree. Returns null when there is no determinate result.
+// (0) to the most recent real result. Returns null when there is no determinate
+// result.
 function latestNatCode(samples: Sample[]): number | null {
   const pts = toPoints(samples)
   for (let i = pts.length - 1; i >= 0; i--) if (Math.round(pts[i].v) > 0) return pts[i].v
@@ -100,8 +92,9 @@ function latestNatCode(samples: Sample[]): number | null {
 interface Card {
   group: TargetGroup
   toUp?: (v: number) => number
-  tone: 'good' | 'bad' | 'unknown'
-  status: string
+  tone: 'good' | 'bad' | 'warn' | 'unknown'
+  row?: TargetAgentStatusRow
+  natType: string | null
   avail: string | null
   outages: number
   samples: Sample[]
@@ -109,31 +102,26 @@ interface Card {
 
 const cards = computed<Card[]>(() =>
   groups.value.map((g) => {
-    const src = sourceFor(g)
+    const b = bandFor(g)
     const samples = samplesByKey.value[g.key] ?? []
     const now = Date.now()
-    const pts = src ? toPoints(samples).map((p) => ({ t: p.t, v: src.toUp(p.v) })) : []
-    const cur = pts.length ? boolCurrent(pts, now) : null
+    const pts = b ? toPoints(samples).map((p) => ({ t: p.t, v: b.toUp(p.v) })) : []
     let outages = 0
     for (let i = 1; i < pts.length; i++) if (pts[i - 1].v >= 0.5 && pts[i].v < 0.5) outages++
 
-    let tone: 'good' | 'bad' | 'unknown'
-    let status: string
-    if (hasNatType(g)) {
-      // NAT: the pill answers "what NAT type" (Full Cone / Symmetric / …) rather
-      // than a generic 正常. Availability/band below still reflect reachability.
-      const code = latestNatCode(natTypeByKey.value[g.key] ?? [])
-      tone = code === null ? 'unknown' : natTone('probe.nat.type', code)
-      status = code === null ? t('targetStatus.statusUnknown') : natCodeLabel('probe.nat.type', code)
-    } else {
-      tone = cur === null ? 'unknown' : cur ? 'good' : 'bad'
-      status = cur === null ? t('targetStatus.statusUnknown') : cur ? t('targetStatus.statusNormal') : t('targetStatus.statusInterrupted')
-    }
+    const row = agentRow(g)
+    const natType = hasNatType(g)
+      ? (() => {
+          const code = latestNatCode(natTypeByKey.value[g.key] ?? [])
+          return code === null ? null : natCodeLabel('probe.nat.type', code)
+        })()
+      : null
     return {
       group: g,
-      toUp: src?.toUp,
-      tone,
-      status,
+      toUp: b?.toUp,
+      tone: row ? agentHeadlineTone(row) : 'unknown',
+      row,
+      natType,
       avail: pts.length ? (availability(pts, now) * 100).toFixed(1) : null,
       outages,
       samples,
@@ -151,14 +139,18 @@ onMounted(loadStatuses)
     <button v-for="c in cards" :key="c.group.key" class="tcard" :class="[`is-${c.tone}`, { highlight: highlightKey && c.group.key === highlightKey }]" @click="emit('select', c.group)">
       <div class="head">
         <span class="fam">{{ c.group.familyLabel }}</span>
-        <MonitorStateBadge v-if="blockState(c.group)" :state="blockState(c.group)!" :offline="offline" />
-        <span v-else class="badges">
-          <span class="pill" :class="`is-${c.tone}`">{{ c.status }}</span>
-          <span v-if="offline" class="pill is-unknown offline">{{ t('monitorState.agent_offline') }}</span>
+        <span class="badges">
+          <template v-if="c.row">
+            <MonitorStateBadge dim="execution" :state="c.row.execution_state" />
+            <MonitorStateBadge v-if="c.row.probe_state !== 'not_applicable'" dim="probe" :state="c.row.probe_state" />
+            <MonitorStateBadge v-if="c.row.rule_state !== 'normal'" dim="rule" :state="c.row.rule_state" />
+          </template>
+          <span v-else class="pill is-unknown">{{ t('targetStatus.unavailable') }}</span>
         </span>
       </div>
       <div class="target mono">{{ groupLabel(c.group) || t('metrics.localTarget') }}</div>
       <div v-if="c.group.name && c.group.target" class="sub-target mono">{{ c.group.target }}</div>
+      <div v-if="c.natType" class="nat-type">{{ t('dashboard.natType') }}: {{ c.natType }}</div>
       <StatusBand :samples="c.samples" :to-up="c.toUp" />
       <div class="foot">
         <span v-if="c.avail !== null">{{ t('targetStatus.thAvailability') }} {{ c.avail }}%</span>
@@ -203,6 +195,9 @@ onMounted(loadStatuses)
 .tcard.is-bad::before {
   background: var(--danger);
 }
+.tcard.is-warn::before {
+  background: var(--warn, #fbbf24);
+}
 .tcard.is-unknown::before {
   background: var(--text-dim);
 }
@@ -221,14 +216,13 @@ onMounted(loadStatuses)
   align-items: center;
   gap: 6px;
   flex-wrap: wrap;
-}
-.pill.offline {
-  border-style: dashed;
+  justify-content: flex-end;
 }
 .head {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 8px;
   margin-bottom: 8px;
 }
 .fam {
@@ -242,22 +236,9 @@ onMounted(loadStatuses)
   font-size: 12px;
   padding: 2px 9px;
   border-radius: 999px;
-  border: 1px solid transparent;
-  white-space: nowrap;
-}
-.pill.is-good {
-  color: #6ee7b7;
-  border-color: rgba(52, 211, 153, 0.4);
-  background: rgba(52, 211, 153, 0.1);
-}
-.pill.is-bad {
-  color: #fca5a5;
-  border-color: rgba(248, 113, 113, 0.4);
-  background: rgba(248, 113, 113, 0.1);
-}
-.pill.is-unknown {
+  border: 1px solid var(--border-strong);
   color: var(--text-dim);
-  border-color: var(--border-strong);
+  white-space: nowrap;
 }
 .target {
   font-size: 14px;
@@ -269,6 +250,11 @@ onMounted(loadStatuses)
   color: var(--text-muted);
   margin: -8px 0 12px;
   word-break: break-all;
+}
+.nat-type {
+  font-size: 11.5px;
+  color: var(--text-dim);
+  margin: -6px 0 10px;
 }
 .foot {
   display: flex;

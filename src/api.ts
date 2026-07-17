@@ -120,7 +120,9 @@ export interface IssuesResponse {
 }
 
 // Per-agent status of one monitor: whether it is actually collecting, or blocked
-// by permission / target selector / lack of platform support.
+// by permission / target selector / lack of platform support. Retained only for
+// the per-Agent execution-capability endpoint used by agent-detail views; current
+// target health comes exclusively from the authoritative site batch below.
 export interface MonitorStatusRow {
   agent_id: string
   agent_name?: string
@@ -135,6 +137,129 @@ export interface MonitorStatusRow {
   policy_hash?: string
   config_version: number
   updated_at: string
+}
+
+// ---- Authoritative target status (STATUS-001) ----
+// One server-generated current status per target, aggregated read-time from
+// configuration, execution eligibility, Agent liveness, fresh probe results,
+// current rule-condition satisfaction, and firing alert/incident links. These
+// are the ONLY source of current target health in the console — the browser
+// never re-infers up/down from metric samples.
+
+// Whether a target×Agent pair is actually executing, or why it is not.
+export type ExecutionState =
+  | 'disabled'
+  | 'unassigned'
+  | 'pending'
+  | 'collecting'
+  | 'permission_blocked'
+  | 'target_blocked'
+  | 'unsupported'
+  | 'agent_offline'
+// The freshness/result verdict of the latest current-generation probe sample.
+export type ProbeState = 'no_data' | 'healthy' | 'failed' | 'stale' | 'not_applicable'
+// Whether any current rule condition is breaching / firing for the pair.
+export type RuleState = 'normal' | 'breaching' | 'alerting'
+// The target-level rollup shown as the headline state (display priority order).
+export type DisplayState =
+  | 'disabled'
+  | 'unassigned'
+  | 'alerting'
+  | 'breaching'
+  | 'partial_failure'
+  | 'probe_failed'
+  | 'blocked'
+  | 'agent_offline'
+  | 'pending'
+  | 'stale'
+  | 'no_data'
+  | 'healthy'
+// Stable per-agent reason summary (localized in the frontend only).
+export type ReasonCode =
+  | 'target_disabled'
+  | 'no_applicable_agents'
+  | 'agent_offline'
+  | 'permission_blocked'
+  | 'target_blocked'
+  | 'unsupported'
+  | 'awaiting_status_report'
+  | 'alert_firing'
+  | 'rule_breaching'
+  | 'probe_failed'
+  | 'probe_stale'
+  | 'probe_no_data'
+  | 'not_applicable'
+  | 'ok'
+export type WorstSeverity = 'info' | 'warn' | 'error' | 'critical'
+
+// One currently-satisfied rule condition on a target×Agent pair. The display
+// label is derived by the frontend from metric_kind + comparator; the server
+// never invents display text. alert_id/incident_id are present only when the
+// condition's rule has a firing alert (rule_state = alerting).
+export interface ActiveCondition {
+  condition_id: string
+  rule_id: string
+  rule_name: string
+  severity: string
+  metric_kind: string
+  comparator: string // gt | gte | lt | lte | eq
+  threshold: number
+  last_value?: number
+  unit?: string
+  first_breach_at?: string
+  alert_id?: string
+  incident_id?: string
+}
+// One target's status as seen from one applicable Agent. The three dimensions are
+// independent: a pair may be execution_state=pending with probe_state=no_data.
+export interface TargetAgentStatusRow {
+  agent_id: string
+  agent_name: string
+  agent_online: boolean
+  execution_state: ExecutionState
+  probe_state: ProbeState
+  rule_state: RuleState
+  reason_code: ReasonCode
+  // Per-agent freshness window (reported effective schedule when confirmed, else
+  // the desired-config fallback); omitted for host targets.
+  stale_after_seconds?: number
+  // Present iff execution_state = pending.
+  pending_since?: string
+  missing_permissions: string[]
+  matched_selector: string
+  block_reason: string
+  // Latest current-generation sample facts (omitted when none exists).
+  last_value?: number
+  last_metric_kind?: string
+  last_unit?: string
+  last_observed_at?: string
+  active_conditions: ActiveCondition[]
+}
+// One target's aggregated current status across every applicable Agent.
+export interface TargetStatusRow {
+  target_id: string
+  group_id: string
+  name: string
+  kind: string
+  target: string
+  enabled: boolean
+  display_state: DisplayState
+  applicable_agents: number
+  affected_agents: number
+  // Present only for alerting/breaching targets.
+  worst_severity?: WorstSeverity
+  last_observed_at?: string
+  active_condition_count: number
+  rule_ids: string[]
+  alert_ids: string[]
+  incident_ids: string[]
+  agents: TargetAgentStatusRow[]
+}
+// GET /sites/{id}/target-statuses: one deterministic batch for the whole site.
+export interface SiteTargetStatuses {
+  generated_at: string
+  site_id: string
+  targets: TargetStatusRow[]
 }
 
 // A warning returned by a set-targets save: a saved monitor that some agents in
@@ -298,6 +423,9 @@ export interface AlertEvidence {
   threshold: number
   value: number
   observed_at: string
+  // Read-time overlay (STATUS-001): whether this evidence's condition is STILL
+  // currently satisfied on a firing alert. False ⇒ recovered historical evidence.
+  currently_abnormal: boolean
 }
 // An alert instance: one firing of a group rule on one Agent, keyed (rule,
 // agent), carrying the frozen evidence of every contributing condition. The
@@ -331,9 +459,13 @@ export interface TimelineEntry {
   ref?: string
 }
 // GET /incidents/{id}: one incident with its member alert instances (evidence).
+// `abnormal_target_count` is computed read-time from CURRENT condition state — the
+// number of distinct targets still abnormal on this incident's firing alerts — and
+// is deliberately decoupled from the immutable evidence count.
 export interface IncidentDetail {
   incident: Incident
   members: Alert[]
+  abnormal_target_count: number
 }
 export interface IncidentPage {
   items: Incident[]
@@ -736,12 +868,13 @@ export const api = {
     req<unknown>('POST', '/api/v1/issues/mark-read', ids && ids.length ? { ids } : {}),
   issueUnreadCount: () => req<{ unread_count: number }>('GET', '/api/v1/issues/unread-count'),
   agentIssues: (id: string) => req<Issue[]>('GET', `/api/v1/agents/${encodeURIComponent(id)}/issues`),
-  // Per-agent monitor state (collecting vs blocked), keyed the two ways it's read:
-  // all monitors on one agent, or one target across the agents that run it.
+  // Per-agent monitor state (collecting vs blocked) for one agent's detail view.
   agentMonitorStatus: (id: string) =>
     req<MonitorStatusRow[]>('GET', `/api/v1/agents/${encodeURIComponent(id)}/monitor-status`),
-  targetAgentStatus: (targetID: string) =>
-    req<MonitorStatusRow[]>('GET', `/api/v1/targets/${encodeURIComponent(targetID)}/agent-status`),
+  // Authoritative current status for every target of a site, in one deterministic
+  // batch. The single source of current target health across the console.
+  targetStatuses: (siteID: string) =>
+    req<SiteTargetStatuses>('GET', `/api/v1/sites/${encodeURIComponent(siteID)}/target-statuses`),
   listTokens: () => req<EnrollmentToken[]>('GET', '/api/v1/enrollment-tokens'),
   createToken: (note: string) =>
     req<{ token: string; expires_in_minutes: number }>('POST', '/api/v1/enrollment-tokens', { note }),
