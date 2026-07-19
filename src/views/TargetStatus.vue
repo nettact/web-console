@@ -1,378 +1,495 @@
 <script setup lang="ts">
-// Monitoring Target Status. Two dimensions, chosen by a segmented control:
-//  • By agent  — an overview grid of one agent's probe targets; click a card to
-//    drill into the full single-target detail.
-//  • By target — the same target compared across every agent that probes it.
-// All agents' probe series are fetched once on mount and drive the selectors,
-// the grid, and the "who probes X" lookup. View/agent/target are mirrored to
-// the query string so refresh and back work. (Interface state lives on the Host
-// Metrics page — it's the host's own hardware, not a user-created monitor.)
-import { ref, computed, watch, onMounted } from 'vue'
+import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
-import { api, type Agent, type SeriesInfo } from '../api'
-import RangePicker from '../components/RangePicker.vue'
-import AgentTargetsGrid from '../components/status/AgentTargetsGrid.vue'
-import TargetDetail from '../components/status/TargetDetail.vue'
-import TargetAcrossAgents from '../components/status/TargetAcrossAgents.vue'
-import { useMetricMeta } from '../composables/useMetricMeta'
-import { HIDDEN_KINDS, familyOf, isTargetStatusKind } from '../lib/metricMeta'
-import { groupLabel, groupTargets, type Prober, type TargetGroup } from '../lib/targetGroups'
-import { targetStatus, targetIndex } from '../targetStatus'
+import { api, type AgentGroup, type MonitorGroup, type TargetStatusRow } from '../api'
+import TargetStatusGroup from '../components/status/TargetStatusGroup.vue'
+import { targetStatus } from '../targetStatus'
+import {
+  DISPLAY_STATE_ORDER,
+  buildStatusGroups,
+  countStatuses,
+  isStatusFilter,
+  type StatusBucket,
+  type StatusFilter,
+} from '../lib/targetStatusPage'
+import { toDateLocale } from '../i18n'
+import { loadTargetStatusExpansion, saveTargetStatusExpansion } from '../lib/targetStatusExpansion'
 
 const SITE = 'site_default'
 
 const route = useRoute()
 const router = useRouter()
-const { t } = useI18n()
-const { familyLabel } = useMetricMeta()
+const { t, locale } = useI18n()
 
-const agents = ref<Agent[]>([])
-const seriesByAgent = ref<Map<string, SeriesInfo[]>>(new Map())
-// monitor_id -> the monitor's user-given display name (from the target config).
-const monitorNames = ref<Map<string, string>>(new Map())
-const error = ref('')
+const groups = ref<MonitorGroup[]>([])
+const agentGroups = ref<AgentGroup[]>([])
+const metaError = ref('')
 const ready = ref(false)
 
-const view = ref<'agent' | 'target'>('agent')
-const agentId = ref('')
-const targetKey = ref('') // agent view: drilldown target; target view: selected target
-const rangeSec = ref(6 * 3600)
+const search = ref('')
+const groupFilter = ref('')
+const statusFilter = ref<StatusFilter>('all')
+const storedExpansion = loadTargetStatusExpansion()
+const selectedTargetId = ref(storedExpansion?.expandedTargetId ?? '')
+const selectedAgentId = ref('')
+const expandedGroups = ref<Set<string>>(new Set(storedExpansion?.expandedGroupIds ?? []))
+let initialExpansionApplied = storedExpansion !== null
+let initialRouteQueryApplied = false
+// A URL target should reveal its group once when the user first enters that
+// deep link. It must not be re-applied by every target-status batch refresh.
+let pendingRouteTargetReveal = ''
+let applyingRoute = false
 
-// Agent ids that appear anywhere in the authoritative target-status batch (so a
-// blocked/pending monitor with no series still surfaces its agent + state).
-const agentIdsInStore = computed(() => {
-  const s = new Set<string>()
-  for (const row of targetStatus.targets) for (const a of row.agents) s.add(a.agent_id)
-  return s
-})
+const queryText = (value: unknown): string => typeof value === 'string' ? value : ''
 
-// An agent is worth listing if it records probe series OR appears in the batch (a
-// blocked/pending monitor produces no series but must still appear so its state
-// is visible and issue deep links land).
-const agentsWithTargets = computed(() =>
-  agents.value.filter(
-    (a) => (seriesByAgent.value.get(a.id)?.length ?? 0) > 0 || agentIdsInStore.value.has(a.id),
-  ),
-)
-
-// Build the by-agent target groups: the series-derived groups (for charts), plus a
-// synthetic group for each applicable probe target in the batch that emitted no
-// series yet (a blocked/pending/never-run monitor). Host anchors are shown on the
-// Monitoring page, not here (this page owns probe.* targets).
-function buildGroups(id: string): TargetGroup[] {
-  const groups = groupTargets(seriesByAgent.value.get(id) ?? [], familyLabel, monitorNames.value)
-  const have = new Set(groups.map((g) => g.key))
-  for (const row of targetStatus.targets) {
-    if (row.kind === 'host') continue
-    if (!row.agents.some((a) => a.agent_id === id)) continue
-    const key = `mon:${row.target_id}`
-    if (have.has(key)) continue
-    have.add(key)
-    groups.push({
-      key,
-      family: `probe.${row.kind}`,
-      familyLabel: familyLabel(`probe.${row.kind}.ok`),
-      target: row.target || '',
-      monitorId: row.target_id,
-      name: row.name || monitorNames.value.get(row.target_id) || undefined,
-      metrics: [],
-    })
-  }
-  return groups.sort(
-    (a, b) => a.familyLabel.localeCompare(b.familyLabel) || (a.name || a.target).localeCompare(b.name || b.target),
-  )
-}
-
-const agentGroups = computed(() => buildGroups(agentId.value))
-// Only groups that actually recorded metrics can be drilled into (a blocked
-// no-series monitor has nothing to chart); a deep link to one instead highlights
-// its card in the grid.
-const detailGroup = computed(() => agentGroups.value.find((g) => g.key === targetKey.value && g.metrics.length) || null)
-
-// Union of every monitor / system target across all agents (for the by-target
-// selector) — including blocked monitors that emitted no series.
-const allTargetGroups = computed<TargetGroup[]>(() => {
-  const m = new Map<string, TargetGroup>()
-  for (const a of agents.value) {
-    for (const g of buildGroups(a.id)) {
-      const ex = m.get(g.key)
-      if (!ex) m.set(g.key, { ...g, metrics: [...g.metrics] })
-      else for (const s of g.metrics) if (!ex.metrics.some((x) => x.kind === s.kind)) ex.metrics.push(s)
+function applyRouteQuery(): void {
+  applyingRoute = true
+  search.value = queryText(route.query.q)
+  groupFilter.value = queryText(route.query.group)
+  const rawStatus = queryText(route.query.status)
+  statusFilter.value = isStatusFilter(rawStatus) ? rawStatus : 'all'
+  const targetFromRoute = queryText(route.query.target)
+  const routeHasTarget = Object.prototype.hasOwnProperty.call(route.query, 'target')
+  const firstRouteApplication = !initialRouteQueryApplied
+  if (initialRouteQueryApplied || routeHasTarget) {
+    if (targetFromRoute && ((firstRouteApplication && routeHasTarget) || targetFromRoute !== selectedTargetId.value)) {
+      pendingRouteTargetReveal = targetFromRoute
     }
+    selectedTargetId.value = targetFromRoute
   }
-  return [...m.values()].sort(
-    (a, b) => a.familyLabel.localeCompare(b.familyLabel) || groupLabel(a).localeCompare(groupLabel(b)),
-  )
+  selectedAgentId.value = queryText(route.query.agent)
+  initialRouteQueryApplied = true
+  applyingRoute = false
+}
+
+applyRouteQuery()
+
+const filters = computed(() => ({
+  search: search.value,
+  groupId: groupFilter.value,
+  status: statusFilter.value,
+  agentId: selectedAgentId.value,
+}))
+
+const statusGroups = computed(() => buildStatusGroups(groups.value, targetStatus.targets, agentGroups.value, filters.value))
+const summary = computed(() => countStatuses(targetStatus.targets))
+const donutStyle = computed(() => {
+  if (!summary.value.total) return { background: 'var(--surface-2)' }
+  const abnormalEnd = summary.value.abnormal / summary.value.total * 100
+  const attentionEnd = abnormalEnd + summary.value.attention / summary.value.total * 100
+  const healthyEnd = attentionEnd + summary.value.healthy / summary.value.total * 100
+  return {
+    background: `conic-gradient(var(--danger) 0 ${abnormalEnd}%, var(--warning) ${abnormalEnd}% ${attentionEnd}%, var(--success) ${attentionEnd}% ${healthyEnd}%, var(--text-muted) ${healthyEnd}% 100%)`,
+  }
+})
+const selectedTarget = computed(() => targetStatus.targets.find((row) => row.target_id === selectedTargetId.value))
+const selectedAgent = computed(() => {
+  if (!selectedAgentId.value) return undefined
+  const inTarget = selectedTarget.value?.agents.find((agent) => agent.agent_id === selectedAgentId.value)
+  if (inTarget) return inTarget
+  for (const row of targetStatus.targets) {
+    const agent = row.agents.find((item) => item.agent_id === selectedAgentId.value)
+    if (agent) return agent
+  }
+  return undefined
+})
+const hasActiveFilter = computed(() => !!search.value.trim() || !!groupFilter.value || statusFilter.value !== 'all' || !!selectedAgentId.value)
+const visibleTargetCount = computed(() => statusGroups.value.reduce((sum, group) => sum + group.targets.length, 0))
+
+const bucketCards: Array<{ bucket: StatusBucket; tone: string }> = [
+  { bucket: 'abnormal', tone: 'bad' },
+  { bucket: 'attention', tone: 'warn' },
+  { bucket: 'healthy', tone: 'good' },
+  { bucket: 'inactive', tone: 'neutral' },
+]
+
+function fmtSnapshot(value: string): string {
+  if (!value) return '—'
+  return new Date(value).toLocaleString(toDateLocale(locale.value), { hour12: false })
+}
+
+function toggleGroup(id: string): void {
+  const next = new Set(expandedGroups.value)
+  if (next.has(id)) next.delete(id)
+  else next.add(id)
+  expandedGroups.value = next
+}
+
+async function toggleTarget(row: TargetStatusRow): Promise<void> {
+  if (selectedTargetId.value === row.target_id) {
+    selectedTargetId.value = ''
+    return
+  }
+  selectedTargetId.value = row.target_id
+  const next = new Set(expandedGroups.value)
+  next.add(row.group_id)
+  expandedGroups.value = next
+  await nextTick()
+  document.getElementById(`target-status-${row.target_id}`)?.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
+}
+
+function setBucket(bucket: StatusBucket): void {
+  statusFilter.value = statusFilter.value === bucket ? 'all' : bucket
+}
+
+function clearFilters(): void {
+  search.value = ''
+  groupFilter.value = ''
+  statusFilter.value = 'all'
+  selectedAgentId.value = ''
+  selectedTargetId.value = ''
+}
+
+function clearFocus(): void {
+  selectedAgentId.value = ''
+  selectedTargetId.value = ''
+}
+
+function validateDeepLink(): void {
+  if (!ready.value || !targetStatus.loaded) return
+  const validGroupIDs = new Set([...groups.value.map((group) => group.id), ...targetStatus.targets.map((row) => row.group_id)])
+  if (groupFilter.value && !validGroupIDs.has(groupFilter.value)) groupFilter.value = ''
+
+  if (selectedTargetId.value && !selectedTarget.value) {
+    if (pendingRouteTargetReveal === selectedTargetId.value) pendingRouteTargetReveal = ''
+    selectedTargetId.value = ''
+  }
+  if (selectedAgentId.value && !selectedAgent.value) selectedAgentId.value = ''
+
+  const next = new Set([...expandedGroups.value].filter((id) => validGroupIDs.has(id)))
+  if (pendingRouteTargetReveal && selectedTarget.value?.target_id === pendingRouteTargetReveal) {
+    next.add(selectedTarget.value.group_id)
+    pendingRouteTargetReveal = ''
+  }
+  if (next.size !== expandedGroups.value.size || [...next].some((id) => !expandedGroups.value.has(id))) {
+    expandedGroups.value = next
+  }
+}
+
+function applyDefaultExpansion(): void {
+  if (!ready.value || !targetStatus.loaded || initialExpansionApplied || !statusGroups.value.length) return
+  const next = new Set<string>()
+  for (const group of statusGroups.value) if (group.counts.abnormal > 0) next.add(group.id)
+  if (!next.size) next.add(statusGroups.value[0].id)
+  if (selectedTarget.value) next.add(selectedTarget.value.group_id)
+  if (groupFilter.value) next.add(groupFilter.value)
+  expandedGroups.value = next
+  initialExpansionApplied = true
+}
+
+function querySnapshot(): Record<string, string> {
+  const query: Record<string, string> = {}
+  if (search.value.trim()) query.q = search.value.trim()
+  if (groupFilter.value) query.group = groupFilter.value
+  if (statusFilter.value !== 'all') query.status = statusFilter.value
+  if (selectedTargetId.value) query.target = selectedTargetId.value
+  if (selectedAgentId.value) query.agent = selectedAgentId.value
+  return query
+}
+
+function sameQuery(a: Record<string, unknown>, b: Record<string, string>): boolean {
+  const current = Object.fromEntries(Object.entries(a).filter(([, value]) => typeof value === 'string' && value !== '')) as Record<string, string>
+  const keys = new Set([...Object.keys(current), ...Object.keys(b)])
+  for (const key of keys) if (current[key] !== b[key]) return false
+  return true
+}
+
+watch(() => route.query, () => {
+  // Ignore the destination route update while this page is being unmounted;
+  // navigating to history/configuration must not erase the remembered target.
+  if (route.path !== '/target-status') return
+  applyRouteQuery()
+  validateDeepLink()
+}, { deep: true })
+
+watch([expandedGroups, selectedTargetId], () => {
+  saveTargetStatusExpansion({
+    expandedGroupIds: [...expandedGroups.value],
+    expandedTargetId: selectedTargetId.value,
+  })
 })
 
-const targetOptgroups = computed(() => {
-  const m = new Map<string, TargetGroup[]>()
-  for (const g of allTargetGroups.value) {
-    if (!m.has(g.familyLabel)) m.set(g.familyLabel, [])
-    m.get(g.familyLabel)!.push(g)
-  }
-  return [...m.entries()].map(([label, items]) => ({ label, items }))
+watch([search, groupFilter, statusFilter, selectedTargetId, selectedAgentId], () => {
+  if (!ready.value || applyingRoute) return
+  const query = querySnapshot()
+  if (!sameQuery(route.query, query)) router.replace({ query })
 })
 
-const selectedTargetGroup = computed(() => allTargetGroups.value.find((g) => g.key === targetKey.value) || null)
+watch([statusGroups, selectedTarget], () => {
+  validateDeepLink()
+  applyDefaultExpansion()
+}, { deep: true })
 
-// Agents whose series belong to the selected group (matched by monitor_id for
-// user-created monitors, by (family, target) for system series), plus agents that
-// the batch reports as applicable to the monitor even without series (blocked /
-// pending) — so their current state still shows in the cross-agent summary.
-const probers = computed<Prober[]>(() => {
-  const g = selectedTargetGroup.value
-  if (!g) return []
-  const storeAgentIds = g.monitorId
-    ? new Set((targetIndex.value.get(g.monitorId)?.agents ?? []).map((a) => a.agent_id))
-    : new Set<string>()
-  const out: Prober[] = []
-  for (const a of agents.value) {
-    const series = (seriesByAgent.value.get(a.id) ?? []).filter((s) =>
-      g.monitorId ? s.monitor_id === g.monitorId : !s.monitor_id && familyOf(s.kind) === g.family && s.target === g.target,
-    )
-    if (series.length || storeAgentIds.has(a.id)) out.push({ agent: a, series })
+watch([search, groupFilter, statusFilter], () => {
+  if (!ready.value || !selectedTargetId.value) return
+  const visible = statusGroups.value.some((group) => group.targets.some((row) => row.target_id === selectedTargetId.value))
+  if (!visible) {
+    selectedTargetId.value = ''
+    selectedAgentId.value = ''
   }
-  return out
 })
 
-function setView(v: 'agent' | 'target') {
-  if (view.value === v) return
-  view.value = v
-  targetKey.value = v === 'target' ? (allTargetGroups.value[0]?.key ?? '') : ''
-}
-function onAgentChange() {
-  targetKey.value = '' // leave any drilldown when switching agents
-}
-function selectTarget(g: TargetGroup) {
-  targetKey.value = g.key
-}
-function backToGrid() {
-  targetKey.value = ''
-}
-
-async function loadAll() {
+async function loadMetadata(): Promise<void> {
+  metaError.value = ''
   try {
-    // Monitor names come from the target config; series only carry the id.
-    const [agentList, targets] = await Promise.all([
-      api.agents(),
-      api.listTargets(SITE).catch(() => []),
+    ;[groups.value, agentGroups.value] = await Promise.all([
+      api.monitorGroups(SITE),
+      api.agentGroups(SITE),
     ])
-    agents.value = agentList
-    const names = new Map<string, string>()
-    for (const pt of targets) if (pt.id && pt.name) names.set(pt.id, pt.name)
-    monitorNames.value = names
-    const lists = await Promise.all(
-      agents.value.map((a) =>
-        api
-          .listSeries(a.id)
-          .then((ser) => [a.id, ser.filter((s) => !HIDDEN_KINDS.has(s.kind) && isTargetStatusKind(s.kind))] as [string, SeriesInfo[]])
-          .catch(() => [a.id, []] as [string, SeriesInfo[]]),
-      ),
-    )
-    seriesByAgent.value = new Map(lists)
-    hydrateFromQuery()
+  } catch (error) {
+    metaError.value = String((error as Error).message || error)
+  } finally {
     ready.value = true
-  } catch (e) {
-    error.value = String((e as Error).message || e)
-    ready.value = true
+    validateDeepLink()
+    applyDefaultExpansion()
   }
 }
 
-// Restore state from the query string, falling back to sensible defaults.
-function hydrateFromQuery() {
-  const q = route.query
-  view.value = q.view === 'target' ? 'target' : 'agent'
-  if (view.value === 'agent') {
-    const wanted = typeof q.agent === 'string' ? q.agent : ''
-    agentId.value = agentsWithTargets.value.some((a) => a.id === wanted) ? wanted : agentsWithTargets.value[0]?.id ?? ''
-    targetKey.value = typeof q.target === 'string' && agentGroups.value.some((g) => g.key === q.target) ? q.target : ''
-  } else {
-    const wanted = typeof q.target === 'string' ? q.target : ''
-    targetKey.value = allTargetGroups.value.some((g) => g.key === wanted) ? wanted : allTargetGroups.value[0]?.key ?? ''
-  }
-}
-
-// Mirror state into the query (replace, so it doesn't stack history entries).
-watch([view, agentId, targetKey], () => {
-  if (!ready.value) return
-  const q: Record<string, string> = { view: view.value }
-  if (view.value === 'agent') {
-    if (agentId.value) q.agent = agentId.value
-    if (targetKey.value) q.target = targetKey.value
-  } else if (targetKey.value) q.target = targetKey.value
-  router.replace({ query: q })
-})
-
-onMounted(loadAll)
+onMounted(loadMetadata)
 </script>
 
 <template>
-  <main class="page">
-    <div class="page-head">
-      <h2>{{ t('targetStatus.title') }}</h2>
-      <p class="sub">{{ t('targetStatus.sub') }}</p>
+  <main class="page target-status-page">
+    <div class="page-head status-head">
+      <div>
+        <h2>{{ t('targetStatus.title') }}</h2>
+        <p class="sub">{{ t('targetStatus.sub') }}</p>
+      </div>
+      <div class="snapshot" :class="{ stale: targetStatus.stale, error: !!targetStatus.error && !targetStatus.loaded }">
+        <span class="snapshot-dot" :class="targetStatus.error && !targetStatus.loaded ? 'error' : targetStatus.stale ? 'stale' : 'live'"></span>
+        <span v-if="targetStatus.loaded">{{ t('targetStatus.updatedAt', { time: fmtSnapshot(targetStatus.generatedAt) }) }}</span>
+        <span v-else-if="targetStatus.error">{{ t('targetStatus.errorBanner') }}</span>
+        <span v-else>{{ t('targetStatus.loading') }}</span>
+      </div>
     </div>
 
-    <p v-if="error" class="err">{{ error }}</p>
+    <p v-if="metaError" class="err" role="alert">{{ t('targetStatus.groupLoadError') }} {{ metaError }}</p>
     <p v-if="targetStatus.error && !targetStatus.loaded" class="err" role="alert">{{ t('targetStatus.errorBanner') }}</p>
     <p v-else-if="targetStatus.stale" class="status-banner stale" role="status">
-      {{ t('targetStatus.staleBanner', { time: targetStatus.generatedAt ? new Date(targetStatus.generatedAt).toLocaleString() : '' }) }}
+      {{ t('targetStatus.staleBanner', { time: fmtSnapshot(targetStatus.generatedAt) }) }}
     </p>
 
-    <div v-if="ready && !agentsWithTargets.length" class="card empty">
-      <h3>{{ t('common.noAgents') }}</h3>
-      <p class="hint">{{ t('targetStatus.noAgentHint') }}</p>
+    <div v-if="selectedTarget || selectedAgent" class="focus-banner">
+      <span>{{ t('targetStatus.focusedOn') }}</span>
+      <strong v-if="selectedTarget">{{ selectedTarget.name || selectedTarget.target }}</strong>
+      <span v-if="selectedTarget && selectedAgent">/</span>
+      <strong v-if="selectedAgent">{{ selectedAgent.agent_name || selectedAgent.agent_id }}</strong>
+      <button type="button" @click="clearFocus">{{ t('targetStatus.clearFocus') }}</button>
     </div>
 
-    <template v-else-if="ready">
-      <div class="card toolbar">
-        <div class="fg">
-          <span>&nbsp;</span>
-          <div class="segmented">
-            <button :class="{ active: view === 'agent' }" @click="setView('agent')">{{ t('targetStatus.viewByAgent') }}</button>
-            <button :class="{ active: view === 'target' }" @click="setView('target')">{{ t('targetStatus.viewByTarget') }}</button>
-          </div>
-        </div>
-
-        <label class="fg grow" v-if="view === 'agent'">
-          <span>{{ t('targetStatus.agentLabel') }}</span>
-          <select v-model="agentId" @change="onAgentChange">
-            <option v-for="a in agentsWithTargets" :key="a.id" :value="a.id">{{ a.hostname || a.id }} ({{ a.platform }})</option>
-          </select>
-        </label>
-
-        <label class="fg grow" v-else>
-          <span>{{ t('targetStatus.targetLabel') }}</span>
-          <select v-model="targetKey" :disabled="!allTargetGroups.length">
-            <optgroup v-for="og in targetOptgroups" :key="og.label" :label="og.label">
-              <option v-for="g in og.items" :key="g.key" :value="g.key">
-                {{ groupLabel(g) || t('metrics.localTarget') }}<template v-if="g.name && g.target"> · {{ g.target }}</template>
-              </option>
-            </optgroup>
-          </select>
-        </label>
-
-        <div class="fg">
-          <span>{{ t('metrics.timeRange') }}</span>
-          <RangePicker v-model="rangeSec" />
+    <section v-if="targetStatus.loaded" class="summary-grid" :aria-label="t('targetStatus.summaryAria')">
+      <div class="summary-card overview-card">
+        <div class="donut" :style="donutStyle" aria-hidden="true"><span>{{ summary.total }}</span></div>
+        <div>
+          <span>{{ t('targetStatus.siteSummary') }}</span>
+          <strong>{{ t('targetStatus.groupCount', { n: groups.length }) }}</strong>
+          <small>{{ t('targetStatus.totalTargetsAndAgents', { targets: summary.total, agents: new Set(targetStatus.targets.flatMap((row) => row.agents.map((agent) => agent.agent_id))).size }) }}</small>
         </div>
       </div>
+      <button
+        v-for="card in bucketCards"
+        :key="card.bucket"
+        type="button"
+        class="summary-card bucket-card"
+        :class="[card.tone, { active: statusFilter === card.bucket }]"
+        :aria-pressed="statusFilter === card.bucket"
+        @click="setBucket(card.bucket)"
+      >
+        <span>{{ t(`targetStatus.bucket.${card.bucket}`) }}</span>
+        <strong>{{ summary[card.bucket] }}</strong>
+        <small>{{ t(`targetStatus.bucketHint.${card.bucket}`) }}</small>
+      </button>
+    </section>
 
-      <!-- By agent: overview grid, or single-monitor drilldown -->
-      <template v-if="view === 'agent'">
-        <TargetDetail
-          v-if="detailGroup"
-          :agent-id="agentId"
-          :family-label="detailGroup.familyLabel"
-          :target="detailGroup.target"
-          :monitor-id="detailGroup.monitorId"
-          :name="detailGroup.name"
-          :metrics="detailGroup.metrics"
-          :range-sec="rangeSec"
-          show-back
-          @back="backToGrid"
-        />
-        <AgentTargetsGrid
-          v-else
-          :agent-id="agentId"
-          :groups="agentGroups"
-          :range-sec="rangeSec"
-          :highlight-key="targetKey"
-          @select="selectTarget"
-        />
-      </template>
+    <section v-if="targetStatus.loaded" class="filter-bar" :aria-label="t('targetStatus.filtersAria')">
+      <label class="search-control">
+        <span aria-hidden="true">⌕</span>
+        <input v-model="search" type="search" :placeholder="t('targetStatus.searchPlaceholder')" />
+      </label>
+      <label>
+        <span class="sr-only">{{ t('targetStatus.groupFilter') }}</span>
+        <select v-model="groupFilter">
+          <option value="">{{ t('targetStatus.allGroups') }}</option>
+          <option v-for="group in groups" :key="group.id" :value="group.id">{{ group.name }}</option>
+        </select>
+      </label>
+      <label>
+        <span class="sr-only">{{ t('targetStatus.statusFilter') }}</span>
+        <select v-model="statusFilter">
+          <option value="all">{{ t('targetStatus.allStates') }}</option>
+          <optgroup :label="t('targetStatus.summaryCategories')">
+            <option v-for="card in bucketCards" :key="card.bucket" :value="card.bucket">{{ t(`targetStatus.bucket.${card.bucket}`) }}</option>
+          </optgroup>
+          <optgroup :label="t('targetStatus.detailedStates')">
+            <option v-for="state in DISPLAY_STATE_ORDER" :key="state" :value="state">{{ t(`targetStatus.display.${state}`) }}</option>
+          </optgroup>
+        </select>
+      </label>
+      <button type="button" class="btn btn-ghost reset-filter" :disabled="!hasActiveFilter" @click="clearFilters">
+        {{ t('targetStatus.resetFilters') }}
+      </button>
+    </section>
 
-      <!-- By target: cross-agent comparison -->
-      <template v-else>
-        <p v-if="!allTargetGroups.length" class="hint pad">{{ t('targetStatus.noTargetsGlobal') }}</p>
-        <TargetAcrossAgents
-          v-else-if="selectedTargetGroup"
-          :key="selectedTargetGroup.key"
-          :family="selectedTargetGroup.family"
-          :family-label="selectedTargetGroup.familyLabel"
-          :target="selectedTargetGroup.target"
-          :monitor-id="selectedTargetGroup.monitorId"
-          :name="selectedTargetGroup.name"
-          :probers="probers"
-          :range-sec="rangeSec"
-        />
-      </template>
+    <div v-if="!ready || (!targetStatus.loaded && !targetStatus.error)" class="card loading-card">
+      {{ t('targetStatus.loading') }}
+    </div>
+
+    <template v-else-if="targetStatus.loaded && !metaError">
+      <p v-if="hasActiveFilter" class="filter-result">
+        {{ t('targetStatus.filterResult', { targets: visibleTargetCount, groups: statusGroups.length }) }}
+      </p>
+
+      <TargetStatusGroup
+        v-for="view in statusGroups"
+        :id="`target-status-group-${view.id}`"
+        :key="view.id"
+        :view="view"
+        :expanded="expandedGroups.has(view.id)"
+        :selected-target-id="selectedTargetId"
+        :selected-agent-id="selectedAgentId"
+        @toggle-group="toggleGroup(view.id)"
+        @toggle-target="toggleTarget"
+      />
+
+      <div v-if="!statusGroups.length" class="card empty-state">
+        <h3>{{ hasActiveFilter ? t('targetStatus.noFilterResults') : t('targetStatus.noGroups') }}</h3>
+        <p>{{ hasActiveFilter ? t('targetStatus.noFilterResultsHint') : t('targetStatus.noGroupsHint') }}</p>
+        <button v-if="hasActiveFilter" type="button" class="btn" @click="clearFilters">{{ t('targetStatus.resetFilters') }}</button>
+        <router-link v-else class="btn btn-primary" to="/monitoring/groups/new">{{ t('targetStatus.createGroup') }}</router-link>
+      </div>
     </template>
   </main>
 </template>
 
 <style scoped>
-.toolbar {
+.target-status-page { max-width: 1240px; }
+.status-head { align-items: flex-start; }
+.status-head > div:first-child { min-width: 0; flex: 1; }
+.status-head .sub { margin-top: 7px; }
+.snapshot {
   display: flex;
-  align-items: flex-end;
-  gap: 16px;
-  flex-wrap: wrap;
-  padding: 16px 18px;
-  margin-bottom: 20px;
+  align-items: center;
+  gap: 7px;
+  padding: 8px 11px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text-dim);
+  background: var(--surface);
+  font-size: 11px;
 }
-.fg {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-.fg > span {
+.snapshot.stale { color: var(--warning); border-color: rgba(251, 191, 36, 0.3); }
+.snapshot-dot { width: 7px; height: 7px; border-radius: 50%; }
+.snapshot-dot.live { background: var(--success); }
+.snapshot-dot.stale { background: var(--warning); }
+.snapshot-dot.error { background: var(--danger); }
+.status-banner,
+.focus-banner {
+  margin-bottom: 14px;
+  padding: 8px 12px;
+  border-radius: var(--radius-sm);
   font-size: 12px;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  color: var(--text-muted);
 }
-.fg.grow {
-  flex: 1;
-  min-width: 220px;
+.status-banner.stale { color: var(--warning); border: 1px solid rgba(251, 191, 36, 0.3); background: var(--warning-soft); }
+.focus-banner {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-dim);
+  border: 1px solid rgba(56, 189, 248, 0.28);
+  background: var(--primary-soft);
 }
-.fg.grow select {
-  width: 100%;
+.focus-banner button { margin-left: auto; padding: 0; border: 0; color: var(--primary); background: none; cursor: pointer; }
+.summary-grid {
+  display: grid;
+  grid-template-columns: 1.2fr repeat(4, minmax(120px, 1fr));
+  gap: 11px;
+  margin-bottom: 14px;
 }
-.segmented {
-  display: inline-flex;
-  padding: 3px;
-  gap: 2px;
-  background: var(--input-bg);
+.summary-card {
+  min-height: 92px;
+  padding: 14px 15px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: inherit;
+  background: linear-gradient(155deg, var(--surface-2), var(--surface));
+  box-shadow: var(--shadow-soft);
+  text-align: left;
+}
+.overview-card { display: flex; align-items: center; gap: 16px; }
+.overview-card > div:last-child,
+.bucket-card { display: flex; flex-direction: column; }
+.summary-card span { color: var(--text-muted); font-size: 10.5px; }
+.summary-card strong { margin-top: 7px; font-size: 24px; line-height: 1.1; }
+.overview-card strong { font-size: 19px; }
+.summary-card small { margin-top: 6px; color: var(--text-muted); font-size: 9.5px; }
+.bucket-card { cursor: pointer; }
+.bucket-card.bad strong { color: var(--danger); }
+.bucket-card.warn strong { color: var(--warning); }
+.bucket-card.good strong { color: var(--success); }
+.bucket-card.neutral strong { color: var(--text-dim); }
+.bucket-card.active { border-color: currentColor; box-shadow: 0 0 0 2px var(--primary-soft); }
+.donut {
+  width: 58px;
+  height: 58px;
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: var(--surface-2);
+  position: relative;
+}
+.donut::after { content: ''; position: absolute; inset: 10px; border-radius: 50%; background: var(--surface-solid); }
+.donut span { position: relative; z-index: 1; color: var(--text); font-size: 15px; font-weight: 700; }
+.filter-bar {
+  display: grid;
+  grid-template-columns: minmax(260px, 1fr) 210px 210px auto;
+  gap: 10px;
+  padding: 12px;
+  margin-bottom: 15px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+.filter-bar select { width: 100%; height: 39px; }
+.search-control {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding-left: 11px;
   border: 1px solid var(--border-strong);
   border-radius: var(--radius-sm);
+  background: var(--input-bg);
 }
-.segmented button {
-  border: none;
-  background: transparent;
-  color: var(--text-dim);
-  font: inherit;
-  font-size: 13px;
-  padding: 6px 12px;
-  border-radius: 6px;
-  cursor: pointer;
-  transition: all 0.15s;
+.search-control:focus-within { border-color: var(--primary); box-shadow: 0 0 0 3px var(--primary-soft); }
+.search-control > span { color: var(--text-muted); }
+.search-control input { width: 100%; height: 37px; padding-left: 0; border: 0; box-shadow: none; background: transparent; }
+.reset-filter { min-height: 39px; }
+.filter-result { margin: -3px 2px 11px; color: var(--text-muted); font-size: 11px; }
+.loading-card,
+.empty-state { padding: 44px 20px; color: var(--text-muted); text-align: center; }
+.empty-state h3 { margin: 0; color: var(--text); }
+.empty-state p { margin: 8px 0 16px; }
+.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
+
+@media (max-width: 920px) {
+  .summary-grid { grid-template-columns: repeat(4, 1fr); }
+  .overview-card { grid-column: 1 / -1; }
+  .filter-bar { grid-template-columns: 1fr 1fr; }
+  .search-control { grid-column: 1 / -1; }
 }
-.segmented button:hover {
-  color: var(--text);
-}
-.segmented button.active {
-  color: #04121c;
-  background: linear-gradient(180deg, #59c7fb, var(--primary-strong));
-  font-weight: 600;
-}
-.empty {
-  text-align: center;
-  padding: 48px 20px;
-}
-.status-banner {
-  font-size: 12.5px;
-  padding: 7px 12px;
-  border-radius: var(--radius-sm);
-  margin-bottom: 16px;
-}
-.status-banner.stale {
-  color: var(--danger);
-  background: var(--danger-soft);
-  border: 1px solid rgba(248, 113, 113, 0.3);
-}
-.pad {
-  padding: 8px 2px;
+
+@media (max-width: 620px) {
+  .target-status-page { padding-left: 14px; padding-right: 14px; }
+  .status-head { gap: 10px; }
+  .snapshot { flex-basis: 100%; width: max-content; }
+  .summary-grid { grid-template-columns: 1fr 1fr; gap: 8px; }
+  .overview-card { display: none; }
+  .summary-card { min-height: 78px; padding: 11px; }
+  .summary-card strong { font-size: 20px; }
+  .filter-bar { grid-template-columns: 1fr 1fr; }
+  .search-control { grid-column: 1 / -1; }
+  .reset-filter { grid-column: 1 / -1; padding: 7px 10px; }
+  .focus-banner { flex-wrap: wrap; }
 }
 </style>

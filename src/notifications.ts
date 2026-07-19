@@ -26,14 +26,13 @@ const lastState = new Map<string, 'active' | 'resolved'>()
 let primed = false
 
 // Deep-link a notification to the most relevant page: a monitor issue points at
-// the agent's target status AND the specific monitor (so it lands on the blocked
-// monitor's card, which is now shown even when it emitted no series); anything
-// else at the agent list.
+// the monitor-group status page, focused on the stable target and Agent IDs;
+// anything else lands on the Agent list.
 export function issueLink(iss: Issue): RouteLocationRaw {
   if (iss.monitor_name && iss.ref_id) {
     return {
       path: '/target-status',
-      query: { view: 'agent', agent: iss.agent_id, target: `mon:${iss.ref_id}` },
+      query: { target: iss.ref_id, agent: iss.agent_id },
     }
   }
   return { path: '/agents', query: { agent: iss.agent_id } }

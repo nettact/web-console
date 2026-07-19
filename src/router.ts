@@ -4,6 +4,7 @@ import Login from './views/Login.vue'
 import Dashboard from './views/Dashboard.vue'
 import Processes from './views/Processes.vue'
 import TargetStatus from './views/TargetStatus.vue'
+import TargetStatusHistory from './views/TargetStatusHistory.vue'
 import HostMetrics from './views/HostMetrics.vue'
 import Monitoring from './views/Monitoring.vue'
 import MonitorForm from './views/MonitorForm.vue'
@@ -19,6 +20,7 @@ const router = createRouter({
     { path: '/', component: Dashboard },
     { path: '/processes', component: Processes },
     { path: '/target-status', component: TargetStatus },
+    { path: '/target-status/:targetId/agents/:agentId/history', component: TargetStatusHistory },
     { path: '/host-metrics', component: HostMetrics },
     { path: '/monitoring', component: Monitoring },
     { path: '/monitoring/groups/new', component: MonitorGroupForm },

@@ -47,8 +47,10 @@ const nav = [
   { to: '/settings', label: 'nav.settings' },
 ]
 
+const navItemActive = (to: string) => route.path === to || (to !== '/' && route.path.startsWith(`${to}/`))
+
 const sectionTitle = computed(() => {
-  const key = nav.find((n) => n.to === route.path)?.label ?? 'nav.overview'
+  const key = nav.find((n) => navItemActive(n.to))?.label ?? 'nav.overview'
   return t(key)
 })
 const initials = computed(() => (auth.user?.username ?? '?').slice(0, 1).toUpperCase())
@@ -71,7 +73,7 @@ const initials = computed(() => (auth.user?.username ?? '?').slice(0, 1).toUpper
       </div>
 
       <nav class="nav">
-        <RouterLink v-for="n in nav" :key="n.to" :to="n.to" class="nav-link">
+        <RouterLink v-for="n in nav" :key="n.to" :to="n.to" class="nav-link" :class="{ 'is-active': navItemActive(n.to) }">
           <span class="nav-ico" aria-hidden="true">
             <!-- 总览 -->
             <svg v-if="n.to === '/'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"
@@ -254,15 +256,15 @@ const initials = computed(() => (auth.user?.username ?? '?').slice(0, 1).toUpper
   width: 20px;
   height: 20px;
 }
-.nav-link.router-link-exact-active {
+.nav-link.is-active {
   color: var(--text);
   background: linear-gradient(90deg, var(--primary-soft), rgba(56, 189, 248, 0.02));
 }
-.nav-link.router-link-exact-active .nav-ico {
+.nav-link.is-active .nav-ico {
   color: var(--primary);
   opacity: 1;
 }
-.nav-link.router-link-exact-active::before {
+.nav-link.is-active::before {
   content: "";
   position: absolute;
   left: -14px;
@@ -367,7 +369,7 @@ const initials = computed(() => (auth.user?.username ?? '?').slice(0, 1).toUpper
     justify-content: center;
     padding: 11px 0;
   }
-  .nav-link.router-link-exact-active::before {
+  .nav-link.is-active::before {
     left: -14px;
   }
   .sidebar-foot {

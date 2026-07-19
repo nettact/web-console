@@ -5,6 +5,7 @@
 // State is text + colour, never colour alone; the pill carries an aria-label so
 // screen readers announce the dimension and state.
 import { computed } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { DISPLAY_TONE, EXECUTION_TONE, PROBE_TONE, RULE_TONE, type Tone } from '../../lib/targetStatus'
 
 const props = defineProps<{
@@ -18,12 +19,14 @@ const TONE_MAPS: Record<typeof props.dim, Record<string, Tone>> = {
   probe: PROBE_TONE,
   rule: RULE_TONE,
 }
+const { t, te } = useI18n()
 const tone = computed<Tone>(() => TONE_MAPS[props.dim][props.state] ?? 'unknown')
 const labelKey = computed(() => `targetStatus.${props.dim}.${props.state}`)
+const label = computed(() => te(labelKey.value) ? t(labelKey.value) : props.state)
 </script>
 
 <template>
-  <span class="pill" :class="`is-${tone}`" :aria-label="$t(labelKey)">{{ $t(labelKey) }}</span>
+  <span class="pill" :class="`is-${tone}`" :aria-label="label">{{ label }}</span>
 </template>
 
 <style scoped>

@@ -36,6 +36,7 @@ const props = defineProps<{
   name?: string // the monitor's display name
   probers: Prober[]
   rangeSec: number
+  restrictToProbers?: boolean
 }>()
 
 const { t } = useI18n()
@@ -166,7 +167,11 @@ const summary = computed<SummaryRow[]>(() => {
   const b = band.value
   const pn = primaryNumeric.value
   const pnUnit = pn ? kindUnit.value.get(pn) || '' : ''
-  const rows = storeRow.value?.agents.map((a) => ({ id: a.agent_id, agent: a.agent_name || a.agent_id, online: a.agent_online, row: a as TargetAgentStatusRow | undefined }))
+  const allowedAgents = new Set(props.probers.map((p) => p.agent.id))
+  const currentAgents = props.restrictToProbers
+    ? storeRow.value?.agents.filter((agent) => allowedAgents.has(agent.agent_id))
+    : storeRow.value?.agents
+  const rows = currentAgents?.map((a) => ({ id: a.agent_id, agent: a.agent_name || a.agent_id, online: a.agent_online, row: a as TargetAgentStatusRow | undefined }))
     ?? props.probers.map((p) => ({ id: p.agent.id, agent: agentName(p.agent), online: p.agent.status === 'online', row: undefined }))
   return rows.map((base) => {
     let avail: number | null = null
@@ -253,7 +258,11 @@ function reload() {
   loadAlerts()
 }
 
-watch(() => [props.monitorId, props.target, props.probers.map((p) => p.agent.id).join(',')], reload)
+watch([
+  () => props.monitorId,
+  () => props.target,
+  () => props.probers.map((p) => p.agent.id).join(','),
+], reload)
 watch(() => props.rangeSec, loadData)
 onMounted(reload)
 </script>

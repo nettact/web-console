@@ -88,7 +88,7 @@ function incidentLinks(row: TargetStatusRow) {
   return row.incident_ids.map((id) => ({ id, to: { path: '/incidents', query: { incident: id } } }))
 }
 function agentTo(agentId: string) {
-  return { path: '/target-status', query: { view: 'agent', agent: agentId } }
+  return { path: '/target-status', query: { agent: agentId } }
 }
 
 // ---- delete target (full-reconcile save without it) ----
@@ -288,7 +288,7 @@ onMounted(load)
                         <router-link class="agent-link" :to="agentTo(a.agent_id)">{{ tr('targetStatus.viewAgent') }}</router-link>
                       </div>
                       <div class="agent-facts">
-                        <span class="fact-item">{{ tr('targetStatus.reasonLabel') }}: {{ tr('targetStatus.reason.' + a.reason_code) }}</span>
+                        <span class="fact-item">{{ tr('targetStatus.statusLabel') }}: {{ tr('targetStatus.reason.' + a.reason_code) }}</span>
                         <span v-if="a.last_metric_kind" class="fact-item">
                           {{ tr('targetStatus.lastValue') }}: {{ lastValueLabel(a) }}
                           <template v-if="a.last_observed_at"> · {{ tr('targetStatus.observedAt', { time: fmtTime(a.last_observed_at) }) }}</template>

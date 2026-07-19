@@ -713,6 +713,10 @@ export interface StatusEvent {
   changed_at: string
 }
 
+export type AgentAlertScope =
+  | { monitor: string; target?: never }
+  | { target: string; monitor?: never }
+
 export interface StorageStats {
   series: number
   samples: number
@@ -924,7 +928,7 @@ export const api = {
   alerts: () => req<Alert[]>('GET', '/api/v1/alerts'),
   // Alarm history (firing + resolved) for one agent, newest first — scoped to
   // a user-created monitor OR to a target string (host alerts).
-  agentAlerts: (id: string, scope: { target?: string; monitor?: string }, limit = 10) => {
+  agentAlerts: (id: string, scope: AgentAlertScope, limit = 10) => {
     const p = new URLSearchParams({ limit: String(limit) })
     if (scope.monitor) p.set('monitor', scope.monitor)
     else if (scope.target) p.set('target', scope.target)
