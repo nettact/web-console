@@ -16,7 +16,11 @@ const props = defineProps<{
 // that raw window so P95 is calculated from real probe observations rather than
 // percentiles of minute averages.
 const WINDOW_SECONDS = 2 * 3600
-const SAMPLE_LIMIT = 2000
+// The server truncates oldest-first (ORDER BY ts LIMIT), so the cap must cover
+// the whole window at the fastest supported probe interval (1s); the +1 covers
+// the inclusive `ts >= now - 7200` predicate admitting 7201 integer timestamps.
+// A lower cap would silently drop the NEWEST samples and skew "latest" and P95.
+const SAMPLE_LIMIT = WINDOW_SECONDS + 1
 
 const latencyKinds: Record<string, string> = {
   icmp: 'probe.icmp.rtt_ms',

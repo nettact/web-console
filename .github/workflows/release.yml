@@ -1,0 +1,74 @@
+# Release pipeline for web-console.
+#
+# Trigger: pushing a semver tag (v0.1.0, v0.1.0-rc.1). Builds + tests the SPA, then
+# publishes the dist as a GitHub Release asset that server-lite's release pipeline
+# (and developers via server-lite/ci/fetch-webui.sh) download and embed.
+
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing tag to (re)release, e.g. v0.1.0
+        required: true
+
+concurrency:
+  group: release-${{ inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  release:
+    name: Build · test · publish dist
+    runs-on: ubuntu-latest
+    environment: release          # manual-approval gate (configure reviewers on this env)
+    permissions:
+      contents: write             # create the GitHub Release
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref_name }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: npm ci
+        run: npm ci
+
+      - name: Typecheck + build (vue-tsc --noEmit && vite build)
+        run: npm run build
+
+      - name: Unit tests (vitest)
+        run: npm test
+
+      - name: Package dist + checksums
+        run: |
+          set -euo pipefail
+          TAG="${{ inputs.tag || github.ref_name }}"
+          tar czf "web-console-dist-${TAG}.tar.gz" -C dist .
+          sha256sum "web-console-dist-${TAG}.tar.gz" > SHA256SUMS
+          cat SHA256SUMS
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ inputs.tag || github.ref_name }}
+          generate_release_notes: true
+          fail_on_unmatched_files: true
+          prerelease: ${{ contains(inputs.tag || github.ref_name, '-') }}
+          files: |
+            web-console-dist-${{ inputs.tag || github.ref_name }}.tar.gz
+            SHA256SUMS
+          body: |
+            ## web-console ${{ inputs.tag || github.ref_name }}
+
+            Built SPA bundle for embedding into server-lite
+            (`server-lite/internal/webui/dist` via `ci/fetch-webui.sh`).
+            Verify with `sha256sum -c SHA256SUMS`.

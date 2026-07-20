@@ -37,10 +37,10 @@ describe('target-status Agent performance facts', () => {
 
     expect(apiMock.metrics).toHaveBeenCalledTimes(2)
     expect(apiMock.metrics).toHaveBeenCalledWith('agent-1', 'probe.icmp.rtt_ms', {
-      monitor: 'target-1', limit: 2000, sinceSeconds: 7200,
+      monitor: 'target-1', limit: 7201, sinceSeconds: 7200,
     })
     expect(apiMock.metrics).toHaveBeenCalledWith('agent-1', 'probe.icmp.loss_pct', {
-      monitor: 'target-1', limit: 2000, sinceSeconds: 7200,
+      monitor: 'target-1', limit: 7201, sinceSeconds: 7200,
     })
     expect(wrapper.get('[data-test="latency"] strong').text()).toBe('35 ms')
     expect(wrapper.get('[data-test="loss"] strong').text()).toBe('2.5%')
