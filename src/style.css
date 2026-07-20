@@ -364,6 +364,7 @@ a {
 }
 .btn-danger:hover {
   filter: brightness(1.06);
+  background: linear-gradient(180deg, #fb7c7c, #e5484d);
 }
 .btn-ghost {
   background: transparent;

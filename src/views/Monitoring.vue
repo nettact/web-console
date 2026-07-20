@@ -128,36 +128,6 @@ async function confirmDeleteGroup() {
   }
 }
 
-// ---- history purge (unchanged behavior) ----
-const purgeMonId = ref('')
-const purgeTgt = ref('')
-const purgeMsg = ref('')
-async function purgeMonitor() {
-  const t = targets.value.find((x) => x.id === purgeMonId.value)
-  if (!t?.id) return
-  if (!confirm(tr('monitoring.confirmClearHistory', { name: t.name || t.target }))) return
-  purgeMsg.value = ''
-  try {
-    const r = await api.purgeMonitor(SITE, t.id)
-    purgeMsg.value = tr('monitoring.purgedMsg', { count: r.purged_series })
-    purgeMonId.value = ''
-  } catch (e) {
-    error.value = String((e as Error).message || e)
-  }
-}
-async function purgeSystem() {
-  if (!purgeTgt.value) return
-  if (!confirm(tr('monitoring.confirmClearHistory', { name: purgeTgt.value }))) return
-  purgeMsg.value = ''
-  try {
-    const r = await api.purgeTarget(SITE, purgeTgt.value)
-    purgeMsg.value = tr('monitoring.purgedMsg', { count: r.purged_series })
-    purgeTgt.value = ''
-  } catch (e) {
-    error.value = String((e as Error).message || e)
-  }
-}
-
 const hasSnapshot = computed(() => targetStatus.loaded)
 onMounted(load)
 </script>
@@ -326,31 +296,6 @@ onMounted(load)
         {{ g.is_default ? tr('monitoring.defaultGroupEmpty') : tr('monitoring.groupEmpty') }}
         <router-link :to="`/monitoring/new?group=${g.id}`">{{ tr('monitoring.addToGroup') }}</router-link>
       </p>
-    </section>
-
-    <section class="panel danger-zone">
-      <div class="panel-head">
-        <h3>{{ tr('monitoring.clearHistory') }}</h3>
-        <span class="tag-danger">{{ tr('monitoring.dangerOp') }}</span>
-      </div>
-      <div class="panel-body">
-        <p class="hint">{{ tr('monitoring.clearHistoryHint') }}</p>
-        <div class="row">
-          <select v-model="purgeMonId" class="purge-in">
-            <option value="" disabled>{{ tr('monitoring.purgePickMonitor') }}</option>
-            <option v-for="t in targets.filter((x) => x.id)" :key="t.id" :value="t.id">
-              {{ t.name || tr('monitoring.unnamed') }} · {{ targetLabel(t, tr) }}
-            </option>
-          </select>
-          <button class="btn btn-danger" :disabled="!purgeMonId" @click="purgeMonitor">{{ tr('monitoring.clearTargetHistory') }}</button>
-          <span v-if="purgeMsg" class="ok">{{ purgeMsg }}</span>
-        </div>
-        <p class="hint sys-hint">{{ tr('monitoring.purgeSystemHint') }}</p>
-        <div class="row">
-          <input v-model="purgeTgt" :placeholder="tr('monitoring.purgePlaceholder')" class="purge-in" />
-          <button class="btn btn-danger" :disabled="!purgeTgt" @click="purgeSystem">{{ tr('monitoring.clearSystemHistory') }}</button>
-        </div>
-      </div>
     </section>
 
     <ConfirmDialog
@@ -609,27 +554,7 @@ onMounted(load)
   padding: 14px 18px;
   font-size: 13px;
 }
-.purge-in {
-  min-width: 280px;
-  flex: 1;
-}
-.sys-hint {
-  margin-top: 14px;
-}
 .panel-body {
   padding: 14px 18px;
-}
-.danger-zone {
-  border-color: rgba(248, 113, 113, 0.28);
-}
-.tag-danger {
-  margin-left: auto;
-  padding: 2px 10px;
-  border-radius: var(--radius-pill);
-  font-size: 11.5px;
-  font-weight: 600;
-  color: var(--danger);
-  background: var(--danger-soft);
-  border: 1px solid rgba(248, 113, 113, 0.3);
 }
 </style>

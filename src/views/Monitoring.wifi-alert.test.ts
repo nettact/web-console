@@ -9,7 +9,6 @@ import Monitoring from './Monitoring.vue'
 
 const apiMock = vi.hoisted(() => ({
   listTargets: vi.fn(), monitorGroups: vi.fn(), agentGroups: vi.fn(), setTargets: vi.fn(),
-  purgeMonitor: vi.fn(), purgeTarget: vi.fn(),
 }))
 
 vi.mock('../api', () => ({ api: apiMock }))

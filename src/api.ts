@@ -733,6 +733,101 @@ export interface SeriesInfo {
   monitor_id?: string
 }
 
+// ---- history data cleanup (DATA-001) ----
+
+export type CleanupStatus = 'live' | 'deleted' | 'system'
+
+export interface CleanupSeries {
+  kind: string
+  target: string
+  layer: string
+  unit: string
+  generations: number
+  earliest_ts: number
+  latest_ts: number
+  est_samples: number
+}
+export interface CleanupGroup {
+  monitor_id: string
+  monitor_name: string
+  status: CleanupStatus
+  series: CleanupSeries[]
+}
+export interface CleanupAgent {
+  agent_id: string
+  agent_name: string
+  agent_present: boolean
+  groups: CleanupGroup[]
+}
+export interface CleanupInventory {
+  agents: CleanupAgent[]
+  orphans: { series: number; monitors: number; est_samples: number }
+}
+export interface CleanupItemKey {
+  agent_id: string
+  monitor_id: string
+  kind: string
+  target: string
+}
+export interface CleanupSelection {
+  mode: 'selection' | 'orphans' | 'all'
+  items: CleanupItemKey[]
+  from_ts: number
+  to_ts: number
+  allow_live: boolean
+}
+export interface CleanupPreviewItem extends CleanupItemKey {
+  label: string
+  status: CleanupStatus
+  series: number
+  samples: number
+  rollup_1m: number
+  rollup_1h: number
+  rollup_1d: number
+  blocked: boolean
+  blocked_reason?: string
+}
+export interface CleanupPreview {
+  items: CleanupPreviewItem[]
+  totals: { series: number; samples: number; rollups: number }
+  not_cascaded: string[]
+}
+export interface CleanupJobItem {
+  idx: number
+  agent_id: string
+  monitor_id: string
+  kind: string
+  target: string
+  label: string
+  state: 'pending' | 'done' | 'failed'
+  detail: string
+}
+export interface CleanupJob {
+  id: string
+  state: 'queued' | 'running' | 'done' | 'failed' | 'interrupted'
+  mode: string
+  from_ts: number
+  to_ts: number
+  total_items: number
+  done_items: number
+  failed_items: number
+  deleted: { samples: number; rollups: number; series: number }
+  error: string
+  items: CleanupJobItem[]
+  created_at: string | null
+  started_at: string | null
+  finished_at: string | null
+}
+export interface CleanupJobSummary {
+  id: string
+  state: CleanupJob['state']
+  mode: string
+  total_items: number
+  done_items: number
+  failed_items: number
+  created_at: string | null
+}
+
 // Collection-level Wi-Fi verdict for an agent (from the latest InterfaceSnapshot).
 export interface WiFiCollection {
   state: string // "ok" | "unreadable" | "" (never reported)
@@ -887,13 +982,17 @@ export const api = {
   // warnings for monitors some in-scope agents can't run (permission/unsupported).
   setTargets: (siteID: string, targets: ProbeTarget[]) =>
     req<SaveTargetsResult>('PUT', `/api/v1/sites/${encodeURIComponent(siteID)}/targets`, { targets }),
-  // History purges: per user-created monitor (across all agents), or by target
-  // string for SYSTEM series only (e.g. a removed interface) — the string form
-  // never touches monitor data.
-  purgeMonitor: (siteID: string, monitorID: string) =>
-    req<{ purged_series: number }>('POST', `/api/v1/sites/${encodeURIComponent(siteID)}/purge-target`, { monitor_id: monitorID }),
-  purgeTarget: (siteID: string, target: string) =>
-    req<{ purged_series: number }>('POST', `/api/v1/sites/${encodeURIComponent(siteID)}/purge-target`, { target }),
+  // History data cleanup: controlled series inventory, dry-run preview, and async
+  // delete jobs (whole series or a time range; one-click orphan cleanup).
+  cleanupSeries: (siteID: string) =>
+    req<CleanupInventory>('GET', `/api/v1/sites/${encodeURIComponent(siteID)}/cleanup/series`),
+  cleanupPreview: (siteID: string, body: CleanupSelection) =>
+    req<CleanupPreview>('POST', `/api/v1/sites/${encodeURIComponent(siteID)}/cleanup/preview`, body),
+  createCleanupJob: (siteID: string, body: CleanupSelection & { client_token: string }) =>
+    req<{ job_id: string }>('POST', `/api/v1/sites/${encodeURIComponent(siteID)}/cleanup/jobs`, body),
+  cleanupJob: (id: string) => req<CleanupJob>('GET', `/api/v1/cleanup/jobs/${encodeURIComponent(id)}`),
+  cleanupJobs: (siteID: string, limit = 5) =>
+    req<CleanupJobSummary[]>('GET', `/api/v1/sites/${encodeURIComponent(siteID)}/cleanup/jobs?limit=${limit}`),
   // Agent groups scope monitoring targets to a subset of agents.
   agentGroups: (siteID: string) =>
     req<AgentGroup[]>('GET', `/api/v1/sites/${encodeURIComponent(siteID)}/agent-groups`),
