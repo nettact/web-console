@@ -1,8 +1,9 @@
 # Release pipeline for web-console.
 #
 # Trigger: pushing a semver tag (v0.1.0, v0.1.0-rc.1). Builds + tests the SPA, then
-# publishes the dist as a GitHub Release asset that server-lite's release pipeline
-# (and developers via server-lite/ci/fetch-webui.sh) download and embed.
+# publishes the dist as a GitHub Release asset that nettact-lite (standalone,
+# Docker, and the desktop's embedded server) downloads AT RUNTIME. This repo must
+# stay public so the anonymous runtime download works.
 
 name: Release
 
@@ -69,6 +70,6 @@ jobs:
           body: |
             ## web-console ${{ inputs.tag || github.ref_name }}
 
-            Built SPA bundle for embedding into server-lite
-            (`server-lite/internal/webui/dist` via `ci/fetch-webui.sh`).
-            Verify with `sha256sum -c SHA256SUMS`.
+            Built SPA bundle, downloaded at runtime by nettact-lite / the desktop app
+            into their configured webui directory (verified against SHA256SUMS).
+            Verify manually with `sha256sum -c SHA256SUMS`.
