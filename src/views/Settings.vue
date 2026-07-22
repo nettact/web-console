@@ -33,9 +33,62 @@ const webhook = reactive({ name: '', url: '', lang: 'zh' })
 const email = reactive({ name: '', host: '', port: '587', from: '', to: '', username: '', password: '', lang: 'zh' })
 const system = reactive({ name: '', lang: 'zh' })
 
-// 控制台地址：通知里深链回本事故详情页的基础 URL（如 http://localhost:8080）。
+// 控制台地址：通知里深链回本事故详情页的基础 URL（如 http://localhost:12450）。
 const consoleUrl = ref('')
 const consoleSaved = ref(false)
+
+// 监听地址（SETTINGS-001）：仅本机 / 局域网两种模式 + 端口，保存到 listen_addr。
+// desktop 保存后立即重启内嵌 server；standalone 下次启动生效（显示待生效徽标）。
+const listen = reactive({ mode: 'loopback' as 'loopback' | 'all', port: 12450 })
+const listenError = ref('')
+const listenSaved = ref<'' | 'pending' | 'restarting'>('')
+const listenNewUrl = ref('')
+const listenStatus = computed(() => serverInfo.value?.listen ?? null)
+
+function parseListenAddr(addr: string): { mode: 'loopback' | 'all'; port: number } | null {
+  const i = addr.lastIndexOf(':')
+  if (i < 0) return null
+  const host = addr.slice(0, i)
+  const port = parseInt(addr.slice(i + 1), 10)
+  if (!Number.isFinite(port)) return null
+  return { mode: host === '0.0.0.0' ? 'all' : 'loopback', port }
+}
+
+function populateListen() {
+  const ls = listenStatus.value
+  if (!ls) return
+  const parsed = parseListenAddr(ls.pending_addr || ls.effective_addr)
+  if (parsed) {
+    listen.mode = parsed.mode
+    listen.port = parsed.port
+  }
+}
+
+async function saveListen() {
+  listenError.value = ''
+  listenSaved.value = ''
+  listenNewUrl.value = ''
+  if (!Number.isInteger(listen.port) || listen.port < 1 || listen.port > 65535) {
+    listenError.value = t('settings.listen.portRangeErr')
+    return
+  }
+  const host = listen.mode === 'all' ? '0.0.0.0' : '127.0.0.1'
+  try {
+    const resp = await api.updateSettings({ listen_addr: `${host}:${listen.port}` })
+    if (resp.listen_effect === 'restarting') {
+      // 当前 origin 即将失效——在重启前的窗口内给出新地址（desktop 恒为回环）。
+      listenNewUrl.value = `http://127.0.0.1:${listen.port}`
+      listenSaved.value = 'restarting'
+    } else if (resp.listen_effect === 'pending') {
+      listenSaved.value = 'pending'
+      await load()
+    } else {
+      listenSaved.value = 'pending'
+    }
+  } catch (e) {
+    listenError.value = String((e as Error).message || e)
+  }
+}
 
 // Incident-evidence (INCIDENT-002) and path-diagnostic (DIAG-001) tuning, backed
 // by the flat settings API. Bounds mirror the server's validated ranges; time and
@@ -130,6 +183,7 @@ async function load() {
     // a value but saves empty). Entering the console also auto-sets it (see auth).
     consoleUrl.value = settings['console_base_url'] || window.location.origin
     populateDiag(settings)
+    populateListen()
   } catch (e) {
     error.value = String((e as Error).message || e)
   }
@@ -218,10 +272,55 @@ onMounted(load)
       <div class="panel-body">
         <p class="hint">{{ t('settings.consoleUrlHint') }}</p>
         <div class="row field-row">
-          <input v-model="consoleUrl" placeholder="http://localhost:8080" class="wide" />
+          <input v-model="consoleUrl" placeholder="http://localhost:12450" class="wide" />
           <button class="btn btn-primary" @click="saveConsoleUrl">{{ t('common.save') }}</button>
           <span v-if="consoleSaved" class="hint saved">✓ {{ t('common.saved') }}</span>
         </div>
+      </div>
+    </section>
+
+    <section class="panel" v-if="listenStatus">
+      <div class="panel-head"><h3>{{ t('settings.listen.title') }}</h3></div>
+      <div class="panel-body">
+        <p class="hint">{{ t('settings.listen.hint') }}</p>
+        <p class="hint listen-status">
+          {{ t('settings.listen.effective') }}: <span class="mono">{{ listenStatus.effective_addr }}</span>
+          <span v-if="listenStatus.pending_addr" class="badge pending-badge">
+            {{ listenStatus.pending_addr }} — {{ t('settings.listen.pendingBadge') }}
+          </span>
+        </p>
+        <p v-if="listenStatus.fallback_from" class="warn-box">
+          {{ t('settings.listen.fallbackWarn', { addr: listenStatus.fallback_from }) }}
+        </p>
+        <p v-if="listenStatus.overrides_flag" class="hint">{{ t('settings.listen.overridesFlag') }}</p>
+        <div class="listen-modes">
+          <label class="toggle-row">
+            <input type="radio" value="loopback" v-model="listen.mode" />
+            <span>{{ t('settings.listen.loopback') }}</span>
+          </label>
+          <label class="toggle-row">
+            <input type="radio" value="all" v-model="listen.mode" />
+            <span>{{ t('settings.listen.all') }}</span>
+          </label>
+        </div>
+        <div v-if="listen.mode === 'all'" class="warn-box">
+          {{ t('settings.listen.lanWarning') }}
+          <template v-if="listenStatus.desktop"> {{ t('settings.listen.lanWarningDesktop') }}</template>
+        </div>
+        <div class="row field-row">
+          <label class="knob-label">{{ t('settings.listen.port') }}</label>
+          <input type="number" v-model.number="listen.port" min="1" max="65535" step="1" class="port-in" />
+          <button class="btn btn-primary" @click="saveListen">{{ t('common.save') }}</button>
+        </div>
+        <p v-if="listen.port < 1024 && serverInfo && serverInfo.os !== 'windows'" class="hint">
+          {{ t('settings.listen.lowPortHint') }}
+        </p>
+        <p v-if="listenSaved === 'pending'" class="hint saved">✓ {{ t('settings.listen.pendingSaved') }}</p>
+        <p v-if="listenSaved === 'restarting'" class="hint saved">
+          ✓ {{ t('settings.listen.restarting') }}
+          <a :href="listenNewUrl" class="mono">{{ listenNewUrl }}</a>
+        </p>
+        <p v-if="listenError" class="err inline">{{ listenError }}</p>
       </div>
     </section>
 
@@ -541,5 +640,43 @@ input.tiny-name {
 }
 .saved {
   color: var(--success);
+}
+.listen-modes {
+  display: flex;
+  gap: 24px;
+  margin: 12px 0 4px;
+}
+input.port-in {
+  min-width: 110px;
+  width: 110px;
+}
+.listen-modes .toggle-row {
+  margin: 0;
+}
+.listen-status .mono {
+  font-weight: 600;
+}
+.pending-badge {
+  margin-left: 10px;
+  padding: 1px 9px;
+  border-radius: var(--radius-pill);
+  font-size: 12px;
+  color: var(--warning, #d97706);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+}
+.warn-box {
+  margin: 10px 0 4px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  font-size: 13px;
+  line-height: 1.5;
+  color: #92400e;
+  background: rgba(251, 191, 36, 0.12);
+  border: 1px solid rgba(251, 191, 36, 0.4);
+}
+:root.dark .warn-box,
+.dark .warn-box {
+  color: #fbbf24;
 }
 </style>

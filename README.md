@@ -6,7 +6,7 @@ NetTact Web 控制台 —— Vue 3 + Vite + TypeScript + ECharts（PWA，架构 
 
 ```
 npm install
-npm run dev      # Vite :5173，代理 /api → http://localhost:8080
+npm run dev      # Vite :5173，代理 /api → http://localhost:12450
 ```
 
 构建产物 `dist/` 会在 server-lite 构建时拷入其二进制（`go:embed`，M4）。

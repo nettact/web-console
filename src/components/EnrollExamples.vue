@@ -14,7 +14,7 @@ const tab = ref<Tab>('powershell')
 
 // A real token when one was just generated, else a clear placeholder.
 const tok = computed(() => props.token || '<enrollment-token>')
-const url = computed(() => props.serverUrl || 'https://nettact.example:8080')
+const url = computed(() => props.serverUrl || 'https://nettact.example:12450')
 
 const powershell = computed(
   () =>

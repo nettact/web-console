@@ -5,9 +5,18 @@ export interface User {
   id: string
   username: string
 }
+export interface ListenStatus {
+  effective_addr: string
+  source: 'default' | 'flag' | 'db'
+  desktop: boolean
+  pending_addr?: string
+  fallback_from?: string
+  overrides_flag: boolean
+}
 export interface ServerInfo {
   os: string
   native_notify: boolean
+  listen?: ListenStatus
 }
 export interface Quota {
   used: number
@@ -1004,7 +1013,8 @@ export const api = {
   listDevices: (siteID: string) => req<Device[]>('GET', `/api/v1/sites/${encodeURIComponent(siteID)}/devices`),
   // Global server settings (flat key/value map, e.g. console_base_url).
   settings: () => req<Record<string, string>>('GET', '/api/v1/settings'),
-  updateSettings: (patch: Record<string, string>) => req<unknown>('PUT', '/api/v1/settings', patch),
+  updateSettings: (patch: Record<string, string>) =>
+    req<{ ok: boolean; listen_effect?: 'restarting' | 'pending' }>('PUT', '/api/v1/settings', patch),
   dashboardLayout: () => req<unknown>('GET', '/api/v1/dashboard-layout'),
   updateDashboardLayout: (layout: unknown) => req<unknown>('PUT', '/api/v1/dashboard-layout', layout),
   incidents: (page = 1, pageSize = 15) =>
