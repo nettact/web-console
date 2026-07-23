@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onActivated, onDeactivated, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { api, type AgentGroup, type MonitorGroup, type TargetStatusRow } from '../api'
@@ -15,6 +15,11 @@ import {
 } from '../lib/targetStatusPage'
 import { toDateLocale } from '../i18n'
 import { loadTargetStatusExpansion, saveTargetStatusExpansion } from '../lib/targetStatusExpansion'
+
+// A stable name so <KeepAlive :include> in App.vue caches this view: switching
+// away and back must not remount/refetch (which would flash the loading card
+// and collapse the list height, losing the user's scroll position).
+defineOptions({ name: 'TargetStatus' })
 
 const SITE = 'site_default'
 
@@ -247,6 +252,18 @@ async function loadMetadata(): Promise<void> {
 }
 
 onMounted(loadMetadata)
+
+// The document (window) is the scroll container. Because this view is kept alive,
+// its DOM survives navigation at full height, so we just stash the offset on the
+// way out and restore it on return — vue-router gives no savedPosition for the
+// push navigations triggered by clicking a sidebar link.
+let savedScrollY = 0
+onDeactivated(() => {
+  savedScrollY = window.scrollY
+})
+onActivated(() => {
+  nextTick(() => window.scrollTo(0, savedScrollY))
+})
 </script>
 
 <template>

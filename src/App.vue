@@ -210,7 +210,11 @@ async function dismissBanner(): Promise<void> {
       </div>
 
       <div class="content">
-        <RouterView />
+        <RouterView v-slot="{ Component }">
+          <KeepAlive :include="['TargetStatus']">
+            <component :is="Component" />
+          </KeepAlive>
+        </RouterView>
       </div>
     </div>
   </div>
