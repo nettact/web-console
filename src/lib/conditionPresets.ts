@@ -128,6 +128,26 @@ export function presetByKey(t: ProbeTarget, key: string): Preset | undefined {
   return presetsForTarget(t).find((p) => p.key === key)
 }
 
+// The "unavailable / down" preset key per probe kind — the condition an outage
+// alarm uses. NAT's outage is a probe failure (not a NAT-type change), so it maps
+// to 'probefail'; gateway shares ICMP's 'down'.
+const UNAVAILABLE_KEY: Record<string, string> = {
+  icmp: 'down',
+  gateway: 'down',
+  http: 'down',
+  tcp: 'down',
+  dns: 'fail',
+  nat: 'probefail',
+}
+
+// unavailablePreset returns the fixed "target is down/unreachable" condition for a
+// target, or undefined if its kind has no such notion (e.g. host). Used to build
+// the onboarding wizard's per-group outage alarm.
+export function unavailablePreset(t: ProbeTarget): Preset | undefined {
+  const key = UNAVAILABLE_KEY[t.kind]
+  return key ? presetByKey(t, key) : undefined
+}
+
 // Comparators the server accepts, with an i18n label key (comparator.*).
 export const COMPARATORS = ['gt', 'gte', 'lt', 'lte', 'eq'] as const
 // Severity levels, with an i18n label key (mform.sev_*).

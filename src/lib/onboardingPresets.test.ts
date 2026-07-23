@@ -1,7 +1,9 @@
 import { describe, it, expect, vi } from 'vitest'
 import {
   REGIONS,
+  STUN_SERVERS,
   buildSelection,
+  defaultStunServer,
   detectRegion,
   natPresetFor,
   presetExists,
@@ -9,6 +11,7 @@ import {
   isRegionID,
   type RegionID,
 } from './onboardingPresets'
+import { unavailablePreset } from './conditionPresets'
 import type { ProbeTarget } from '../api'
 
 const KINDS = new Set(['icmp', 'http', 'dns', 'gateway', 'nat'])
@@ -20,8 +23,8 @@ function mockTimeZone(tz: string): void {
 }
 
 describe('catalog invariants', () => {
-  it('has the nine expected regions', () => {
-    expect(REGIONS.map((r) => r.id)).toEqual(['cn', 'hmt', 'apac', 'eu', 'na', 'sa', 'me', 'af', 'global'])
+  it('has the eight expected regions (global is a bucket, not a region)', () => {
+    expect(REGIONS.map((r) => r.id)).toEqual(['cn', 'hmt', 'apac', 'eu', 'na', 'sa', 'me', 'af'])
   })
 
   it('every preset uses a valid kind and non-empty target/nameKey', () => {
@@ -41,6 +44,15 @@ describe('catalog invariants', () => {
     }
   })
 
+  it('no region carries the shared anycast anchors (they live in the global bucket)', () => {
+    for (const region of REGIONS) {
+      for (const p of region.presets) {
+        expect(p.target).not.toBe('1.1.1.1')
+        expect(p.target).not.toBe('8.8.8.8')
+      }
+    }
+  })
+
   it('mainland China never recommends Google/Cloudflare-family targets', () => {
     const cn = REGIONS.find((r) => r.id === 'cn')!
     const blocked = ['1.1.1.1', '8.8.8.8', 'google', 'cloudflare']
@@ -51,42 +63,94 @@ describe('catalog invariants', () => {
       expect(p.params?.resolver_server ?? '').not.toContain('8.8.8.8')
     }
   })
+
+  it('the HK/Macau/Taiwan DNS probe resolves a real domain (not www.hinet.net)', () => {
+    const hmt = REGIONS.find((r) => r.id === 'hmt')!
+    const dns = hmt.presets.find((p) => p.kind === 'dns')!
+    expect(dns.target).not.toBe('www.hinet.net')
+    expect(dns.target).toBe('www.pchome.com.tw')
+  })
 })
 
-describe('natPresetFor', () => {
-  it('uses a mainland STUN server when cn is selected', () => {
-    expect(natPresetFor(['cn', 'apac']).target).toBe('stun.miwifi.com')
+describe('NAT STUN server selection', () => {
+  it('uses a mainland STUN server only when cn is selected', () => {
+    expect(defaultStunServer(['cn', 'apac'])).toBe('stun.miwifi.com')
+    expect(natPresetFor(['cn']).target).toBe('stun.miwifi.com')
   })
-  it('uses a global STUN server otherwise', () => {
-    expect(natPresetFor(['eu']).target).toBe('stun.hot-chilli.net')
-    expect(natPresetFor([]).target).toBe('stun.hot-chilli.net')
+  it('uses a global STUN server otherwise (miwifi is mainland-only)', () => {
+    expect(defaultStunServer(['eu'])).toBe('stun.hot-chilli.net')
+    expect(defaultStunServer([])).toBe('stun.hot-chilli.net')
+  })
+  it('offers both defaults among the selectable servers', () => {
+    expect(STUN_SERVERS).toContain('stun.miwifi.com')
+    expect(STUN_SERVERS).toContain('stun.hot-chilli.net')
+  })
+})
+
+describe('unavailablePreset (per-group outage alarm condition)', () => {
+  const mk = (kind: string, target = 'x'): ProbeTarget => ({ group_id: 'g', kind, target, enabled: true })
+  it('maps icmp/gateway to the 100% loss down condition', () => {
+    for (const kind of ['icmp', 'gateway']) {
+      const p = unavailablePreset(mk(kind))!
+      expect(p.metric).toBe('probe.icmp.loss_pct')
+      expect(p.comparator).toBe('gte')
+      expect(p.fixed).toBe(100)
+    }
+  })
+  it('maps http/tcp/dns to their ok<1 failure condition', () => {
+    expect(unavailablePreset(mk('http'))!.metric).toBe('probe.http.ok')
+    expect(unavailablePreset(mk('tcp'))!.metric).toBe('probe.tcp.ok')
+    expect(unavailablePreset(mk('dns'))!.metric).toBe('probe.dns.ok')
+    expect(unavailablePreset(mk('dns'))!.comparator).toBe('lt')
+  })
+  it('maps nat to a probe failure (not a NAT-type change)', () => {
+    const p = unavailablePreset(mk('nat'))!
+    expect(p.metric).toBe('probe.nat.ok')
+    expect(p.fixed).toBe(1)
   })
 })
 
 describe('buildSelection', () => {
-  it('always includes the local gateway and nat presets first', () => {
+  it('always leads with the local then global buckets', () => {
     const sel = buildSelection([])
-    expect(sel[0].kind).toBe('gateway')
-    expect(sel[1].kind).toBe('nat')
+    expect(sel.map((g) => g.key)).toEqual(['local', 'global'])
+    expect(sel[0].presets.map((p) => p.kind)).toEqual(['gateway', 'nat'])
+    const globalTargets = sel[1].presets.map((p) => p.target)
+    expect(globalTargets).toContain('1.1.1.1')
+    expect(globalTargets).toContain('8.8.8.8')
   })
 
-  it('de-duplicates shared anchors across regions', () => {
+  it('adds one bucket per selected region, in catalog order', () => {
+    const sel = buildSelection(['eu', 'cn'])
+    expect(sel.map((g) => g.key)).toEqual(['local', 'global', 'cn', 'eu'])
+  })
+
+  it('puts region-specific targets in their own bucket', () => {
     const sel = buildSelection(['apac', 'eu'])
-    const icmp1111 = sel.filter((p) => p.kind === 'icmp' && p.target === '1.1.1.1')
-    expect(icmp1111.length).toBe(1)
+    const apac = sel.find((g) => g.key === 'apac')!
+    const eu = sel.find((g) => g.key === 'eu')!
+    expect(apac.presets.map((p) => p.target)).toContain('https://derp3e.tailscale.com/generate_204') // Singapore
+    expect(eu.presets.map((p) => p.target)).toContain('https://derp4f.tailscale.com/generate_204') // Frankfurt
   })
 
-  it('keeps region-specific targets from each selected region', () => {
-    const sel = buildSelection(['apac', 'eu'])
-    const targets = sel.map((p) => p.target)
-    expect(targets).toContain('https://www.yahoo.co.jp') // apac
-    expect(targets).toContain('https://www.heise.de') // eu
+  it('offers each DERP city as a checked primary plus an unchecked backup', () => {
+    const apac = buildSelection(['apac']).find((g) => g.key === 'apac')!
+    const primary = apac.presets.find((p) => p.key === 'derp_tokyo')!
+    const backup = apac.presets.find((p) => p.key === 'derp_tokyo_b')!
+    expect(primary.checked).toBe(true)
+    expect(primary.backup).toBeFalsy()
+    expect(primary.target).toBe('https://derp7e.tailscale.com/generate_204')
+    expect(backup.checked).toBe(false)
+    expect(backup.backup).toBe(true)
+    expect(backup.target).toBe('https://derp7f.tailscale.com/generate_204')
   })
 
-  it('includes only one gateway and one nat regardless of region count', () => {
+  it('never repeats the anycast anchors across region buckets', () => {
     const sel = buildSelection(['cn', 'apac', 'eu', 'na'])
-    expect(sel.filter((p) => p.kind === 'gateway').length).toBe(1)
-    expect(sel.filter((p) => p.kind === 'nat').length).toBe(1)
+    const anchorCount = sel
+      .flatMap((g) => g.presets)
+      .filter((p) => p.target === '1.1.1.1' || p.target === '8.8.8.8').length
+    expect(anchorCount).toBe(2) // both live once, in the global bucket
   })
 })
 
@@ -139,8 +203,9 @@ describe('presetToTarget', () => {
 })
 
 describe('isRegionID', () => {
-  it('recognizes catalog ids and rejects others', () => {
+  it('recognizes catalog ids and rejects others (including the removed global)', () => {
     expect(isRegionID('cn')).toBe(true)
+    expect(isRegionID('global')).toBe(false)
     expect(isRegionID('nope')).toBe(false)
   })
 })
@@ -169,11 +234,15 @@ describe('detectRegion', () => {
     })
   }
 
-  it('falls back to language when timezone is unknown', () => {
+  it('returns null for an unknown zone and non-zh language', () => {
+    mockTimeZone('')
+    vi.stubGlobal('navigator', { language: 'en-US' })
+    expect(detectRegion()).toBeNull()
+  })
+
+  it('falls back to cn for zh language when timezone is unknown', () => {
     mockTimeZone('')
     vi.stubGlobal('navigator', { language: 'zh-CN' })
     expect(detectRegion()).toBe('cn')
-    vi.stubGlobal('navigator', { language: 'en-US' })
-    expect(detectRegion()).toBe('global')
   })
 })

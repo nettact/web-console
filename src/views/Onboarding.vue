@@ -8,18 +8,22 @@
 import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
-import { api, type MonitorGroup, type ProbeTarget, type ServerInfo } from '../api'
+import { api, type MonitorGroup, type ProbeTarget, type RuleConditionInput, type ServerInfo } from '../api'
 import { onboarding, loadOnboarding, saveOnboarding } from '../onboarding'
 import {
   REGIONS,
+  STUN_SERVERS,
   buildSelection,
+  defaultStunServer,
   detectRegion,
   isRegionID,
   presetExists,
   presetToTarget,
   type RegionID,
   type RegionPreset,
+  type SelectionGroup,
 } from '../lib/onboardingPresets'
+import { unavailablePreset } from '../lib/conditionPresets'
 import EnrollExamples from '../components/EnrollExamples.vue'
 
 const SITE = 'site_default'
@@ -35,12 +39,13 @@ const steps = computed<Step[]>(() => ['welcome', 'region', 'targets', ...(deskto
 
 const step = ref<Step>('welcome')
 const stepIndex = computed(() => Math.max(0, steps.value.indexOf(step.value)))
-const recommended = ref<RegionID>('global')
+const recommended = ref<RegionID | null>(null)
 const selectedRegions = ref<Set<RegionID>>(new Set())
 const ready = ref(false)
 
-// Regions with the detected one pinned to the top (and badged "recommended").
+// Regions with the detected one (if any) pinned to the top and badged "recommended".
 const orderedRegions = computed(() => {
+  if (!recommended.value) return [...REGIONS]
   const rec = REGIONS.filter((r) => r.id === recommended.value)
   const rest = REGIONS.filter((r) => r.id !== recommended.value)
   return [...rec, ...rest]
@@ -57,8 +62,9 @@ onMounted(async () => {
 
   const s = onboarding.state
   if (!s) {
-    // Never started: seed in_progress with the detected region pre-selected.
-    selectedRegions.value = new Set([recommended.value])
+    // Never started: seed in_progress with the detected region pre-selected (if
+    // any — local + global groups are always offered regardless).
+    selectedRegions.value = recommended.value ? new Set([recommended.value]) : new Set()
     step.value = 'welcome'
     await persist('welcome')
   } else if (s.status === 'done') {
@@ -143,52 +149,45 @@ const defaultGroupId = computed(() => groups.value.find((g) => g.is_default)?.id
 const targetsLoaded = ref(false)
 const targetsError = ref('')
 const applying = ref(false)
-// key → checked, for presets that don't already exist.
+// preset key → checked, for presets that don't already exist.
 const checks = ref<Record<string, boolean>>({})
 
-// The recommended set for the current region selection, grouped for display.
-const selection = computed(() => buildSelection(selectedRegionList()))
+// NAT STUN server: defaults by region (stun.miwifi.com only when cn is selected,
+// since it is mainland-only) but the user can override it in the targets step.
+const stunTouched = ref(false)
+const stunServer = ref('')
+const effectiveStun = computed(() => (stunTouched.value ? stunServer.value : defaultStunServer(selectedRegionList())))
+function onStunChange(v: string): void {
+  stunServer.value = v
+  stunTouched.value = true
+}
+
+// The monitor-group buckets for the current region selection (local + global +
+// one per selected region), each mapping to its own monitor group.
+const selection = computed<SelectionGroup[]>(() => buildSelection(selectedRegionList()))
 
 interface DisplayPreset {
   preset: RegionPreset
   exists: boolean
 }
 interface DisplayGroup {
-  labelKey: string
+  nameKey: string
   items: DisplayPreset[]
 }
 
-// Group the flat, de-duplicated selection back into "local network" + per-region
-// sections for display. A preset appears under the first region that contributed
-// it (dedupe already removed the rest).
-const displayGroups = computed<DisplayGroup[]>(() => {
-  const sel = selection.value
-  const byKey = new Map(sel.map((p) => [p.key, p]))
-  const used = new Set<string>()
-  const out: DisplayGroup[] = []
-
-  const local = sel.filter((p) => p.kind === 'gateway' || p.kind === 'nat')
-  if (local.length) {
-    local.forEach((p) => used.add(p.key))
-    out.push({ labelKey: 'setup.localGroup', items: local.map(toDisplay) })
-  }
-  for (const id of selectedRegionList()) {
-    const region = REGIONS.find((r) => r.id === id)
-    if (!region) continue
-    const items: DisplayPreset[] = []
-    for (const p of region.presets) {
-      if (used.has(p.key)) continue
-      if (!byKey.has(p.key)) continue // deduped away by an earlier region
-      used.add(p.key)
-      items.push(toDisplay(p))
-    }
-    if (items.length) out.push({ labelKey: region.labelKey, items })
-  }
-  return out
-})
+// One display section per bucket, in the order buildSelection returns them.
+const displayGroups = computed<DisplayGroup[]>(() =>
+  selection.value.map((g) => ({ nameKey: g.nameKey, items: g.presets.map(toDisplay) })),
+)
 
 function toDisplay(p: RegionPreset): DisplayPreset {
   return { preset: p, exists: presetExists(existingTargets.value, p) }
+}
+
+// presetLabel is the display/monitor name for a preset; backup (failover) presets
+// get a suffix so they don't collide with their primary's name.
+function presetLabel(p: RegionPreset): string {
+  return p.backup ? `${t(p.nameKey)} ${t('setup.derpBackup')}` : t(p.nameKey)
 }
 
 async function loadTargets(): Promise<void> {
@@ -201,19 +200,83 @@ async function loadTargets(): Promise<void> {
   }
   // Seed checkboxes: default-checked for new presets, off/disabled for existing.
   const next: Record<string, boolean> = {}
-  for (const p of selection.value) {
-    next[p.key] = p.checked && !presetExists(existingTargets.value, p)
+  for (const g of selection.value) {
+    for (const p of g.presets) {
+      next[p.key] = p.checked && !presetExists(existingTargets.value, p)
+    }
   }
   checks.value = next
   targetsLoaded.value = true
 }
 
-const anySelected = computed(() =>
-  selection.value.some((p) => checks.value[p.key] && !presetExists(existingTargets.value, p)),
-)
+// A preset is a live "will create" only when checked and not already on the site.
+function isNew(p: RegionPreset): boolean {
+  return !!checks.value[p.key] && !presetExists(existingTargets.value, p)
+}
 
-// applyAndNext creates the checked, not-yet-existing presets as real targets, then
-// advances. setTargets is a full reconcile, so we merge onto the existing list.
+const anySelected = computed(() => selection.value.some((g) => g.presets.some(isNew)))
+
+// Resolve the monitor group id for a bucket, creating the group if needed. The
+// local bucket reuses the site's default group; global/region buckets get their
+// own named group (matched by localized name so a re-run reuses it).
+async function resolveGroupId(bucket: SelectionGroup): Promise<string> {
+  if (bucket.key === 'local') return defaultGroupId.value
+  const name = t(bucket.nameKey)
+  const existing = groups.value.find((g) => g.name === name)
+  if (existing) return existing.id
+  const { id } = await api.createMonitorGroup(SITE, {
+    name,
+    merge_enabled: true,
+    all_agents: true,
+    agent_group_ids: [],
+  })
+  return id
+}
+
+// ensureUnavailableRule adds an "unavailable" (outage) alarm to a monitor group:
+// an OR rule with one down/unreachable condition per target in the group. Skips
+// the group if it already has a rule with this name (idempotent on re-run). The
+// STUN target for a nat probe is stored under the user-chosen server, so its
+// down condition (probe.nat.ok < 1) applies regardless.
+async function ensureUnavailableRule(groupId: string, layer: string): Promise<void> {
+  const name = t('setup.ruleUnavailable')
+  let existing
+  try {
+    existing = await api.groupRules(groupId)
+  } catch {
+    return // best-effort: never block onboarding on rule setup
+  }
+  if (existing.some((r) => r.name === name)) return
+  const conditions: RuleConditionInput[] = []
+  for (const m of existingTargets.value) {
+    if (m.group_id !== groupId || !m.id) continue
+    const p = unavailablePreset(m)
+    if (!p) continue
+    conditions.push({
+      target_id: m.id,
+      metric_kind: p.metric,
+      comparator: p.comparator,
+      threshold: p.fixed ?? 0,
+      fail_threshold: 3,
+      for_seconds: 0,
+    })
+  }
+  if (!conditions.length) return
+  await api.createGroupRule(groupId, {
+    name,
+    op: 'or',
+    layer,
+    severity: 'error',
+    channel_ids: [],
+    enabled: true,
+    conditions,
+  })
+}
+
+// applyAndNext creates the checked, not-yet-existing presets as real targets in
+// their respective monitor groups, adds an unavailable alarm to each group, then
+// advances. Groups are created first (a target's group_id is a foreign key);
+// setTargets is a full reconcile, so we merge the additions onto the existing list.
 async function applyAndNext(): Promise<void> {
   if (!targetsLoaded.value) {
     await goNext()
@@ -222,13 +285,27 @@ async function applyAndNext(): Promise<void> {
   applying.value = true
   targetsError.value = ''
   try {
-    const gid = defaultGroupId.value
-    const toCreate = selection.value.filter((p) => checks.value[p.key] && !presetExists(existingTargets.value, p))
-    if (toCreate.length && gid) {
-      const additions = toCreate.map((p) => presetToTarget(p, gid, t(p.nameKey)))
-      const payload = [...existingTargets.value, ...additions]
-      await api.setTargets(SITE, payload)
-      existingTargets.value = await api.listTargets(SITE)
+    const populated: Array<{ bucket: SelectionGroup; groupId: string }> = []
+    const additions: ProbeTarget[] = []
+    for (const bucket of selection.value) {
+      const fresh = bucket.presets.filter(isNew)
+      if (!fresh.length) continue
+      const gid = await resolveGroupId(bucket)
+      if (!gid) continue
+      populated.push({ bucket, groupId: gid })
+      for (const p of fresh) {
+        // NAT uses the user-selected STUN server rather than the preset default.
+        const preset = p.kind === 'nat' ? { ...p, target: effectiveStun.value } : p
+        additions.push(presetToTarget(preset, gid, presetLabel(preset)))
+      }
+    }
+    if (additions.length) {
+      await api.setTargets(SITE, [...existingTargets.value, ...additions])
+      ;[existingTargets.value, groups.value] = await Promise.all([api.listTargets(SITE), api.monitorGroups(SITE)])
+      // Add an outage alarm to each populated group (targets now have server ids).
+      for (const { bucket, groupId } of populated) {
+        await ensureUnavailableRule(groupId, bucket.key === 'local' ? 'lan' : 'internet')
+      }
     }
     await goNext()
   } catch (e) {
@@ -238,8 +315,8 @@ async function applyAndNext(): Promise<void> {
   }
 }
 
-// When we arrive at the targets step, (re)load the site's targets so dedupe and
-// the default group id are fresh.
+// When we arrive at the targets step, (re)load the site's targets and groups so
+// dedupe and group resolution are fresh.
 async function enterTargets(): Promise<void> {
   step.value = 'targets'
   targetsLoaded.value = false
@@ -323,8 +400,8 @@ async function genToken(): Promise<void> {
         <p class="lead">{{ t('setup.targetsHint') }}</p>
         <p v-if="targetsError" class="err">{{ targetsError }}</p>
         <p v-if="!targetsLoaded && !targetsError" class="muted">{{ t('setup.loading') }}</p>
-        <div v-for="g in displayGroups" :key="g.labelKey" class="tgt-group">
-          <h3>{{ t(g.labelKey) }}</h3>
+        <div v-for="g in displayGroups" :key="g.nameKey" class="tgt-group">
+          <h3>{{ t(g.nameKey) }}</h3>
           <label
             v-for="d in g.items"
             :key="d.preset.key"
@@ -338,8 +415,19 @@ async function genToken(): Promise<void> {
               @change="checks[d.preset.key] = ($event.target as HTMLInputElement).checked"
             />
             <span class="tgt-kind badge">{{ d.preset.kind }}</span>
-            <span class="tgt-name">{{ t(d.preset.nameKey) }}</span>
-            <span class="tgt-target">{{ d.preset.target }}</span>
+            <span class="tgt-name">{{ presetLabel(d.preset) }}</span>
+            <template v-if="d.preset.kind === 'nat' && !d.exists">
+              <span class="tgt-nat-label">{{ t('setup.natServer') }}</span>
+              <select
+                class="tgt-nat-select"
+                :value="effectiveStun"
+                @change="onStunChange(($event.target as HTMLSelectElement).value)"
+                @click.stop
+              >
+                <option v-for="s in STUN_SERVERS" :key="s" :value="s">{{ s }}</option>
+              </select>
+            </template>
+            <span v-else class="tgt-target">{{ d.preset.target }}</span>
             <span v-if="d.exists" class="badge badge-exists">{{ t('setup.alreadyExists') }}</span>
           </label>
         </div>
@@ -563,6 +651,14 @@ async function genToken(): Promise<void> {
   color: var(--text-muted);
   font-size: 12.5px;
   font-family: var(--mono, monospace);
+}
+.tgt-nat-label {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+.tgt-nat-select {
+  font-size: 12.5px;
+  padding: 3px 6px;
 }
 .badge-exists {
   background: var(--border);
