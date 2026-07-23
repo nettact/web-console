@@ -405,12 +405,6 @@ onMounted(load)
   font-family: var(--mono);
   font-size: 12.5px;
 }
-.status {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
-}
 .status .dim {
   color: var(--text-muted);
 }
