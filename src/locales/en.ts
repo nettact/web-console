@@ -160,7 +160,6 @@ export default {
     healthGood: 'Operating normally',
     healthAttention: 'Needs attention',
     healthOffline: 'Agent offline',
-    healthUnknown: 'Waiting for data',
     updatedAt: 'Last report',
     performance: 'Performance',
     monitoring: 'Monitoring',

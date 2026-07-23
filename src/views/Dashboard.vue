@@ -556,35 +556,23 @@ function loadLevel(value: number | null): string {
   return pct < 25 ? t('dashboard.loadLow') : pct < 60 ? t('dashboard.loadNormal') : pct < 85 ? t('dashboard.loadHigh') : t('dashboard.loadCritical')
 }
 
-// Overall network health is derived from the internet-layer public pings (the
-// gateway is now an ordinary monitor shown in the Monitoring / Target Status
-// views, not a bespoke dashboard tile). The numeric loss/RTT grading is gated on
-// authoritative facts: an offline Agent is never "good", and if the batch has no
-// fresh (non-stale, with-data) public ICMP status for this Agent the verdict is
-// "unknown" rather than a green derived from possibly stale metric values.
-const worstPublicLoss = computed(() => {
-  const vals = byKind('probe.icmp.loss_pct').filter((s) => s.target !== 'gateway').map((s) => s.value)
-  return vals.length ? Math.max(...vals) : null
-})
+// worstPublicRtt feeds the at-a-glance latency insight card: the worst last-sample
+// RTT across public ICMP targets (the gateway is its own LAN-layer monitor and is
+// excluded). Deliberately NOT used to grade overall health — far/anycast anchors
+// (1.1.1.1, 8.8.8.8) legitimately sit above any fixed ms threshold even when the
+// link is perfectly fine.
 const worstPublicRtt = computed(() => {
   const vals = byKind('probe.icmp.rtt_ms').filter((s) => s.target !== 'gateway').map((s) => s.value)
   return vals.length ? Math.max(...vals) : null
 })
-// Any public-ICMP monitor with a fresh (healthy/failed) current probe state on
-// the selected Agent, per the authoritative batch.
-const hasFreshPublicIcmp = computed(() =>
-  targetStatus.targets.some(
-    (row) =>
-      row.kind === 'icmp' &&
-      row.agents.some((a) => a.agent_id === selected.value && (a.probe_state === 'healthy' || a.probe_state === 'failed')),
-  ),
-)
+// Overall network health tracks the selected Agent's alert state — the authoritative
+// fault signal — instead of re-thresholding raw RTT/loss (which trips permanently on
+// naturally high-latency/lossy public anchors). An offline Agent is "attention" (its
+// probes stopped); any firing alert on this Agent is "attention"; otherwise "good".
+const agentAlerts = computed(() => alerts.value.filter((a) => a.agent_id === selected.value))
 const networkHealth = computed(() => {
   if (currentAgent.value?.status !== 'online') return { tone: 'bad', label: t('dashboard.healthOffline') }
-  if (!hasFreshPublicIcmp.value) return { tone: 'unknown', label: t('dashboard.healthUnknown') }
-  if ((worstPublicLoss.value ?? 0) >= 2 || (worstPublicRtt.value ?? 0) >= 150) {
-    return { tone: 'warn', label: t('dashboard.healthAttention') }
-  }
+  if (agentAlerts.value.length) return { tone: 'warn', label: t('dashboard.healthAttention') }
   return { tone: 'good', label: t('dashboard.healthGood') }
 })
 

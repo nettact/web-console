@@ -170,7 +170,6 @@ export default {
     healthGood: '运行良好',
     healthAttention: '需要关注',
     healthOffline: 'Agent 离线',
-    healthUnknown: '等待数据',
     updatedAt: '最后上报',
     performance: '性能趋势',
     monitoring: '目标监控',
