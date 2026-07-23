@@ -33,13 +33,39 @@ export interface EventStream {
   close: () => void
 }
 
-export function openEventStream({ onIssues, onTargetStatus, onOpen }: EventStreamHandlers): EventStream {
-  const es = new EventSource('/api/v1/events', { withCredentials: true })
+let sharedSource: EventSource | undefined
+let sharedSourceUsers = 0
 
-  es.addEventListener('open', () => onOpen?.())
+function acquireEventSource(): EventSource {
+  if (!sharedSource) {
+    sharedSource = new EventSource('/api/v1/events', { withCredentials: true })
+  }
+  sharedSourceUsers++
+  return sharedSource
+}
+
+function releaseEventSource(es: EventSource) {
+  if (es !== sharedSource || sharedSourceUsers === 0) return
+  sharedSourceUsers--
+  if (sharedSourceUsers === 0) {
+    sharedSource.close()
+    sharedSource = undefined
+  }
+}
+
+export function openEventStream({ onIssues, onTargetStatus, onOpen }: EventStreamHandlers): EventStream {
+  const es = acquireEventSource()
+
+  const listeners: Array<[string, EventListener]> = []
+  const listen = (type: string, listener: EventListener) => {
+    es.addEventListener(type, listener)
+    listeners.push([type, listener])
+  }
+
+  listen('open', () => onOpen?.())
 
   if (onIssues) {
-    es.addEventListener('issues', (ev) => {
+    listen('issues', (ev) => {
       try {
         const data = JSON.parse((ev as MessageEvent).data) as IssueStreamState
         onIssues({ issues: data.issues ?? [], unread_count: data.unread_count ?? 0 })
@@ -50,7 +76,7 @@ export function openEventStream({ onIssues, onTargetStatus, onOpen }: EventStrea
   }
 
   if (onTargetStatus) {
-    es.addEventListener('target.status.changed', (ev) => {
+    listen('target.status.changed', (ev) => {
       try {
         const data = JSON.parse((ev as MessageEvent).data) as TargetStatusChanged
         onTargetStatus({ site_id: data.site_id ?? '', target_ids: data.target_ids ?? [] })
@@ -60,5 +86,13 @@ export function openEventStream({ onIssues, onTargetStatus, onOpen }: EventStrea
     })
   }
 
-  return { close: () => es.close() }
+  let closed = false
+  return {
+    close: () => {
+      if (closed) return
+      closed = true
+      for (const [type, listener] of listeners) es.removeEventListener(type, listener)
+      releaseEventSource(es)
+    },
+  }
 }

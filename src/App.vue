@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, watch } from 'vue'
 import { useRouter, useRoute, RouterLink, RouterView } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { auth, logout } from './auth'
@@ -19,21 +19,38 @@ async function doLogout() {
   router.push('/login')
 }
 
-// Open the issue + target-status streams once the user is authenticated; tear
-// them down on logout.
+// Keep one multiplexed SSE connection only while this tab is visible. Hidden
+// NetTact tabs must not occupy Chrome's small HTTP/1.1 per-origin connection pool.
+function syncLiveStreams(): void {
+  if (auth.user && document.visibilityState === 'visible') {
+    initNotifications()
+    initTargetStatus()
+  } else {
+    stopNotifications()
+    stopTargetStatus()
+  }
+}
+
 watch(
   () => auth.user,
-  (u) => {
-    if (u) {
-      initNotifications()
-      initTargetStatus()
-    } else {
-      stopNotifications()
-      stopTargetStatus()
-    }
-  },
+  () => syncLiveStreams(),
   { immediate: true },
 )
+
+function onVisibilityChange(): void {
+  syncLiveStreams()
+}
+
+onMounted(() => {
+  document.addEventListener('visibilitychange', onVisibilityChange)
+  syncLiveStreams()
+})
+
+onBeforeUnmount(() => {
+  document.removeEventListener('visibilitychange', onVisibilityChange)
+  stopNotifications()
+  stopTargetStatus()
+})
 
 // `label` is an i18n key resolved at render time so nav + breadcrumb re-translate live.
 const nav = [
