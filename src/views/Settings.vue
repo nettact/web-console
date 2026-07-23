@@ -3,6 +3,7 @@ import { ref, reactive, computed, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRouter } from 'vue-router'
 import { api, type Quota, type Channel, type ServerInfo, type StorageStats } from '../api'
+import WebhookChannelForm from '../components/WebhookChannelForm.vue'
 
 const { t } = useI18n()
 const router = useRouter()
@@ -31,8 +32,10 @@ const LANGS = [
   { value: 'zh', label: '中文' },
   { value: 'en', label: 'English' },
 ]
-const webhook = reactive({ name: '', url: '', lang: 'zh' })
 const email = reactive({ name: '', host: '', port: '587', from: '', to: '', username: '', password: '', lang: 'zh' })
+// Webhook add/edit is delegated to WebhookChannelForm; editingId marks which
+// existing channel row is expanded for editing ('' = none).
+const editingId = ref('')
 const system = reactive({ name: '', lang: 'zh' })
 
 // 控制台地址：通知里深链回本事故详情页的基础 URL（如 http://localhost:12450）。
@@ -199,12 +202,27 @@ async function saveConsoleUrl() {
     error.value = String((e as Error).message || e)
   }
 }
-async function addWebhook() {
-  if (!webhook.url) return
-  await api.createChannel(webhook.name || 'Webhook', 'webhook', { url: webhook.url, lang: webhook.lang })
-  webhook.name = ''
-  webhook.url = ''
+// WebhookChannelForm performs the create/update itself (so it can surface
+// failures inline); the parent only closes the editor and refreshes the list.
+async function onWebhookSaved() {
+  editingId.value = ''
   await load()
+}
+// Apply a channel to every alert rule at once. Confirmed because it edits all rules.
+const applyingId = ref('')
+const applyMsg = ref('')
+async function applyChannelToAll(c: Channel) {
+  if (!confirm(t('settings.applyAll.confirm', { name: c.name || c.type }))) return
+  applyingId.value = c.id
+  applyMsg.value = ''
+  try {
+    const r = await api.applyChannelToAll(c.id)
+    applyMsg.value = t('settings.applyAll.done', { count: r.updated })
+  } catch (e) {
+    error.value = String((e as Error).message || e)
+  } finally {
+    applyingId.value = ''
+  }
 }
 async function addEmail() {
   if (!email.host || !email.from || !email.to) return
@@ -227,6 +245,12 @@ async function renameChannel(c: Channel) {
 async function removeChannel(id: string) {
   await api.deleteChannel(id)
   await load()
+}
+// Config summary shown in the channel table's Config column.
+function channelConfigLabel(c: Channel): string {
+  if (c.type === 'webhook') return `${c.config.method || 'POST'} ${c.config.url || ''}`.trim()
+  if (c.type === 'system') return t('settings.sysNotifyConfig')
+  return `${c.config.from} → ${c.config.to} @ ${c.config.host}`
 }
 onMounted(load)
 </script>
@@ -448,14 +472,8 @@ onMounted(load)
           </button>
         </div>
 
-        <div v-if="addType === 'webhook'" class="row field-row">
-          <b class="ftag">Webhook</b>
-          <input v-model="webhook.name" :placeholder="t('settings.namePlaceholder')" class="tiny-name" />
-          <input v-model="webhook.url" placeholder="https://hooks.example.com/…" class="wide" />
-          <select v-model="webhook.lang" :title="t('settings.langLabel')">
-            <option v-for="l in LANGS" :key="l.value" :value="l.value">{{ l.label }}</option>
-          </select>
-          <button class="btn btn-primary" @click="addWebhook">{{ t('settings.addBtn') }}</button>
+        <div v-if="addType === 'webhook'" class="wh-add">
+          <WebhookChannelForm mode="add" @saved="onWebhookSaved" />
         </div>
 
         <div v-else-if="addType === 'email'" class="row field-row wrap">
@@ -482,19 +500,45 @@ onMounted(load)
           <span class="hint">{{ t('settings.sysNotifyHint') }}</span>
           <button class="btn btn-primary" @click="addSystem">{{ t('settings.addBtn') }}</button>
         </div>
+        <p v-if="applyMsg" class="hint saved">✓ {{ applyMsg }}</p>
       </div>
       <div class="table-wrap">
         <table class="data-table">
           <thead><tr><th>{{ t('settings.thName') }}</th><th>{{ t('settings.thType') }}</th><th>{{ t('settings.thConfig') }}</th><th class="center">{{ t('settings.thEnabled') }}</th><th></th></tr></thead>
           <tbody>
             <tr v-if="!channels.length"><td colspan="5" class="hint">{{ t('settings.noChannels') }}</td></tr>
-            <tr v-for="c in channels" :key="c.id">
-              <td><input v-model="c.name" class="name-in" @blur="renameChannel(c)" /></td>
-              <td><span class="badge neutral">{{ c.type }}</span></td>
-              <td class="mono">{{ c.type === 'webhook' ? c.config.url : c.type === 'system' ? t('settings.sysNotifyConfig') : (c.config.from + ' → ' + c.config.to + ' @ ' + c.config.host) }}</td>
-              <td class="center"><input type="checkbox" :checked="c.enabled" @change="toggleChannel(c)" /></td>
-              <td><button class="link-btn danger" @click="removeChannel(c.id)">{{ t('common.delete') }}</button></td>
-            </tr>
+            <template v-for="c in channels" :key="c.id">
+              <tr>
+                <td><input v-model="c.name" class="name-in" @blur="renameChannel(c)" /></td>
+                <td><span class="badge neutral">{{ c.type }}</span></td>
+                <td class="mono">{{ channelConfigLabel(c) }}</td>
+                <td class="center"><input type="checkbox" :checked="c.enabled" @change="toggleChannel(c)" /></td>
+                <td class="row-actions">
+                  <button
+                    v-if="c.type === 'webhook'" class="link-btn"
+                    @click="editingId = editingId === c.id ? '' : c.id">
+                    {{ editingId === c.id ? t('settings.webhook.cancel') : t('settings.webhook.edit') }}
+                  </button>
+                  <button class="link-btn" :disabled="applyingId === c.id" @click="applyChannelToAll(c)">
+                    {{ t('settings.applyAll.btn') }}
+                  </button>
+                  <button class="link-btn danger" @click="removeChannel(c.id)">{{ t('common.delete') }}</button>
+                </td>
+              </tr>
+              <tr v-if="editingId === c.id" class="wh-edit-row">
+                <td colspan="5">
+                  <WebhookChannelForm
+                    mode="edit"
+                    :channel-id="c.id"
+                    :enabled="c.enabled"
+                    :initial-name="c.name"
+                    :initial-config="c.config"
+                    @saved="onWebhookSaved"
+                    @cancel="editingId = ''"
+                  />
+                </td>
+              </tr>
+            </template>
           </tbody>
         </table>
       </div>
@@ -530,6 +574,18 @@ onMounted(load)
 }
 .panel-body .row {
   margin: 12px 0 0;
+}
+.wh-add {
+  margin: 12px 0 0;
+}
+.wh-edit-row td {
+  background: var(--surface-2);
+  padding: 12px 16px;
+}
+.row-actions {
+  display: flex;
+  gap: 10px;
+  white-space: nowrap;
 }
 .rollup {
   font-size: 22px;

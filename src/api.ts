@@ -727,6 +727,14 @@ export interface Channel {
   config: Record<string, string>
   enabled: boolean
 }
+// Outcome of a webhook test send: the request always returns 200, carrying the
+// delivery result (ok=false on a transport error or a >=300 status).
+export interface ChannelTestResult {
+  ok: boolean
+  status_code: number
+  body: string
+  error?: string
+}
 export interface StatusEvent {
   status: string
   changed_at: string
@@ -1081,4 +1089,10 @@ export const api = {
   updateChannel: (id: string, body: { name: string; enabled: boolean; config?: Record<string, string> }) =>
     req<unknown>('PUT', `/api/v1/channels/${encodeURIComponent(id)}`, body),
   deleteChannel: (id: string) => req<unknown>('DELETE', `/api/v1/channels/${encodeURIComponent(id)}`),
+  // Send a sample incident to a webhook config without saving a channel.
+  testChannel: (type: string, config: Record<string, string>) =>
+    req<ChannelTestResult>('POST', '/api/v1/channels/test', { type, config }),
+  // Add this channel to every alert rule's notify list. Returns rules changed.
+  applyChannelToAll: (id: string) =>
+    req<{ updated: number }>('POST', `/api/v1/channels/${encodeURIComponent(id)}/apply-to-all`),
 }
