@@ -3,6 +3,7 @@ import { computed, onBeforeUnmount, onMounted, watch } from 'vue'
 import { useRouter, useRoute, RouterLink, RouterView } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { auth, logout } from './auth'
+import { showResumeBanner, saveOnboarding } from './onboarding'
 import { initNotifications, stopNotifications } from './notifications'
 import { initTargetStatus, stopTargetStatus } from './targetStatus'
 import LangSwitch from './components/LangSwitch.vue'
@@ -72,10 +73,24 @@ const sectionTitle = computed(() => {
   return t(key)
 })
 const initials = computed(() => (auth.user?.username ?? '?').slice(0, 1).toUpperCase())
+
+// Bare routes (login, onboarding) render full-screen without the app shell.
+const isBare = computed(() => route.meta.bare === true)
+
+function resumeOnboarding(): void {
+  router.push('/onboarding')
+}
+async function dismissBanner(): Promise<void> {
+  try {
+    await saveOnboarding({ banner_dismissed: true })
+  } catch {
+    /* ignore — the banner just reappears next load */
+  }
+}
 </script>
 
 <template>
-  <div v-if="auth.user" class="app-shell">
+  <div v-if="auth.user && !isBare" class="app-shell">
     <aside class="sidebar">
       <div class="logo">
         <span class="logo-mark">
@@ -188,6 +203,12 @@ const initials = computed(() => (auth.user?.username ?? '?').slice(0, 1).toUpper
         </button>
       </header>
 
+      <div v-if="showResumeBanner" class="setup-banner">
+        <span class="setup-banner-text">{{ t('setup.bannerText') }}</span>
+        <button class="btn btn-primary btn-sm" @click="resumeOnboarding">{{ t('setup.bannerResume') }}</button>
+        <button class="banner-close" :aria-label="t('setup.bannerDismiss')" @click="dismissBanner">✕</button>
+      </div>
+
       <div class="content">
         <RouterView />
       </div>
@@ -204,6 +225,38 @@ const initials = computed(() => (auth.user?.username ?? '?').slice(0, 1).toUpper
   display: grid;
   grid-template-columns: 244px 1fr;
   min-height: 100vh;
+}
+
+/* ---------------- resume-onboarding banner ---------------- */
+.setup-banner {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 12px 24px 0;
+  padding: 10px 14px;
+  border: 1px solid var(--primary);
+  border-radius: 10px;
+  background: var(--surface-2, rgba(56, 189, 248, 0.08));
+}
+.setup-banner-text {
+  flex: 1;
+  font-size: 13.5px;
+}
+.setup-banner .btn-sm {
+  padding: 6px 12px;
+  font-size: 13px;
+}
+.banner-close {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1;
+  padding: 4px;
+}
+.banner-close:hover {
+  color: var(--text);
 }
 
 /* ---------------- sidebar ---------------- */

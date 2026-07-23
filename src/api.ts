@@ -351,6 +351,16 @@ export interface ProbeTarget {
   params?: ProbeParams
   enabled: boolean
 }
+// First-run onboarding progress, stored server-side so the wizard is
+// interruptible and re-enterable across reloads/devices. status/step carry the
+// resume point; regions is the set of catalog regions the user picked.
+export interface OnboardingState {
+  version: number
+  status: 'in_progress' | 'done'
+  step: string
+  regions: string[]
+  banner_dismissed: boolean
+}
 // A monitor group: a site-scoped, static owner of targets plus the shared Agent
 // execution scope (all_agents, or the union of referenced agent groups) and the
 // incident-merge policy. Every site has one undeletable default group.
@@ -1017,6 +1027,10 @@ export const api = {
     req<{ ok: boolean; listen_effect?: 'restarting' | 'pending' }>('PUT', '/api/v1/settings', patch),
   dashboardLayout: () => req<unknown>('GET', '/api/v1/dashboard-layout'),
   updateDashboardLayout: (layout: unknown) => req<unknown>('PUT', '/api/v1/dashboard-layout', layout),
+  // First-run onboarding progress. GET returns null until the wizard first runs
+  // (that null is the console's auto-open signal). PUT persists the resume point.
+  onboardingState: () => req<OnboardingState | null>('GET', '/api/v1/onboarding'),
+  updateOnboardingState: (state: OnboardingState) => req<OnboardingState>('PUT', '/api/v1/onboarding', state),
   incidents: (page = 1, pageSize = 15) =>
     req<IncidentPage>('GET', `/api/v1/incidents?page=${page}&page_size=${pageSize}`),
   // One incident with its member alert instances (each carrying frozen evidence).

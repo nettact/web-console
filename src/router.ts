@@ -1,6 +1,8 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import { auth, refresh } from './auth'
+import { onboarding, loadOnboarding } from './onboarding'
 import Login from './views/Login.vue'
+import Onboarding from './views/Onboarding.vue'
 import Dashboard from './views/Dashboard.vue'
 import Processes from './views/Processes.vue'
 import TargetStatus from './views/TargetStatus.vue'
@@ -18,6 +20,7 @@ const router = createRouter({
   history: createWebHistory(),
   routes: [
     { path: '/login', component: Login },
+    { path: '/onboarding', component: Onboarding, meta: { bare: true } },
     { path: '/', component: Dashboard },
     { path: '/processes', component: Processes },
     { path: '/target-status', component: TargetStatus },
@@ -36,13 +39,20 @@ const router = createRouter({
   ],
 })
 
-// Auth guard: everything but /login requires a session.
+// Auth guard: everything but /login requires a session. On genuine first run
+// (onboarding state never saved), auto-open the wizard once; a read failure never
+// blocks console entry.
 router.beforeEach(async (to) => {
   if (!auth.ready) await refresh()
   if (to.path === '/login') {
     return auth.user ? '/' : true
   }
-  return auth.user ? true : '/login'
+  if (!auth.user) return '/login'
+  if (to.path !== '/onboarding') {
+    if (!onboarding.loaded) await loadOnboarding()
+    if (!onboarding.failed && onboarding.state === null) return '/onboarding'
+  }
+  return true
 })
 
 export default router

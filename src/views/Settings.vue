@@ -1,9 +1,11 @@
 <script setup lang="ts">
 import { ref, reactive, computed, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { useRouter } from 'vue-router'
 import { api, type Quota, type Channel, type ServerInfo, type StorageStats } from '../api'
 
 const { t } = useI18n()
+const router = useRouter()
 
 const quota = ref<Quota | null>(null)
 const stats = ref<StorageStats | null>(null)
@@ -275,6 +277,16 @@ onMounted(load)
           <input v-model="consoleUrl" placeholder="http://localhost:12450" class="wide" />
           <button class="btn btn-primary" @click="saveConsoleUrl">{{ t('common.save') }}</button>
           <span v-if="consoleSaved" class="hint saved">✓ {{ t('common.saved') }}</span>
+        </div>
+      </div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-head"><h3>{{ t('setup.settingsTitle') }}</h3></div>
+      <div class="panel-body">
+        <p class="hint">{{ t('setup.settingsHint') }}</p>
+        <div class="row field-row">
+          <button class="btn btn-primary" @click="router.push('/onboarding')">{{ t('setup.settingsReopen') }}</button>
         </div>
       </div>
     </section>
