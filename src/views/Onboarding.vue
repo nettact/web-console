@@ -1,692 +1,729 @@
 <script setup lang="ts">
-// First-run onboarding wizard. A full-screen bare view (rendered outside the app
-// shell, like Login) that walks the user through: welcome → region select →
-// recommended targets → enroll an agent (hidden in desktop mode, which embeds the
-// agent) → done. Every step is skippable and the whole flow is interruptible:
-// progress is persisted server-side (src/onboarding.ts) so it resumes on the next
-// login, on any device, at the saved step.
-import { computed, onMounted, ref } from 'vue'
-import { useRouter } from 'vue-router'
+import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { api, type MonitorGroup, type ProbeTarget, type RuleConditionInput, type ServerInfo } from '../api'
-import { onboarding, loadOnboarding, saveOnboarding } from '../onboarding'
-import {
-  REGIONS,
-  STUN_SERVERS,
-  buildSelection,
-  defaultStunServer,
-  detectRegion,
-  isRegionID,
-  presetExists,
-  presetToTarget,
-  type RegionID,
-  type RegionPreset,
-  type SelectionGroup,
-} from '../lib/onboardingPresets'
-import { unavailablePreset } from '../lib/conditionPresets'
-import EnrollExamples from '../components/EnrollExamples.vue'
+import OnboardingFlow from './OnboardingLegacy.vue'
 
-const SITE = 'site_default'
-const { t } = useI18n()
-const router = useRouter()
+const { locale } = useI18n()
 
-type Step = 'welcome' | 'region' | 'targets' | 'enroll' | 'done'
-
-const serverInfo = ref<ServerInfo | null>(null)
-const desktop = computed(() => serverInfo.value?.listen?.desktop === true)
-// Enroll step is dropped in desktop mode (the desktop app embeds the agent).
-const steps = computed<Step[]>(() => ['welcome', 'region', 'targets', ...(desktop.value ? [] : ['enroll'] as Step[]), 'done'])
-
-const step = ref<Step>('welcome')
-const stepIndex = computed(() => Math.max(0, steps.value.indexOf(step.value)))
-const recommended = ref<RegionID | null>(null)
-const selectedRegions = ref<Set<RegionID>>(new Set())
-const ready = ref(false)
-
-// Regions with the detected one (if any) pinned to the top and badged "recommended".
-const orderedRegions = computed(() => {
-  if (!recommended.value) return [...REGIONS]
-  const rec = REGIONS.filter((r) => r.id === recommended.value)
-  const rest = REGIONS.filter((r) => r.id !== recommended.value)
-  return [...rec, ...rest]
-})
-
-onMounted(async () => {
-  if (!onboarding.loaded) await loadOnboarding()
-  try {
-    serverInfo.value = await api.serverInfo()
-  } catch {
-    serverInfo.value = null
-  }
-  recommended.value = detectRegion()
-
-  const s = onboarding.state
-  if (!s) {
-    // Never started: seed in_progress with the detected region pre-selected (if
-    // any — local + global groups are always offered regardless).
-    selectedRegions.value = recommended.value ? new Set([recommended.value]) : new Set()
-    step.value = 'welcome'
-    await persist('welcome')
-  } else if (s.status === 'done') {
-    // Re-run from Settings: restart at welcome, keep the previously chosen regions
-    // exactly (including an intentionally empty selection).
-    selectedRegions.value = new Set(s.regions.filter(isRegionID))
-    step.value = 'welcome'
-    await persist('welcome')
-  } else {
-    // Resume in-progress: restore the saved regions exactly (an empty set is a
-    // deliberate "local checks only" choice, not an absence of one — do NOT
-    // silently re-add the detected region) and the saved step if still valid.
-    selectedRegions.value = new Set(s.regions.filter(isRegionID))
-    const resumeStep = steps.value.includes(s.step as Step) ? (s.step as Step) : 'welcome'
-    step.value = resumeStep
-    // The targets step's data is normally loaded on entry from the region step;
-    // when we land on it directly (e.g. refresh), load it here too or it stays
-    // stuck on "Loading…" with the Next button disabled.
-    if (resumeStep === 'targets') await loadTargets()
-  }
-  ready.value = true
-})
-
-function selectedRegionList(): RegionID[] {
-  // Preserve catalog order for a stable target list.
-  return REGIONS.map((r) => r.id).filter((id) => selectedRegions.value.has(id))
-}
-
-async function persist(nextStep: Step, patch: Record<string, unknown> = {}): Promise<void> {
-  try {
-    await saveOnboarding({ status: 'in_progress', step: nextStep, regions: selectedRegionList(), ...patch })
-  } catch {
-    // Best-effort: a failed save must not block navigation within the wizard.
-  }
-}
-
-function toggleRegion(id: RegionID): void {
-  const next = new Set(selectedRegions.value)
-  if (next.has(id)) next.delete(id)
-  else next.add(id)
-  selectedRegions.value = next
-}
-
-async function goNext(): Promise<void> {
-  const idx = steps.value.indexOf(step.value)
-  const next = steps.value[idx + 1]
-  if (!next) return
-  step.value = next
-  await persist(next)
-}
-
-async function goBack(): Promise<void> {
-  const idx = steps.value.indexOf(step.value)
-  const prev = steps.value[idx - 1]
-  if (!prev) return
-  step.value = prev
-  await persist(prev)
-}
-
-async function skipAll(): Promise<void> {
-  try {
-    await saveOnboarding({ status: 'done', step: 'done', regions: selectedRegionList() })
-  } catch {
-    /* ignore — leaving is more important than recording it */
-  }
-  router.push('/')
-}
-
-async function finish(): Promise<void> {
-  try {
-    await saveOnboarding({ status: 'done', step: 'done', regions: selectedRegionList() })
-  } catch {
-    /* ignore */
-  }
-  router.push('/')
-}
-
-// ---- targets step ----
-const existingTargets = ref<ProbeTarget[]>([])
-const groups = ref<MonitorGroup[]>([])
-const defaultGroupId = computed(() => groups.value.find((g) => g.is_default)?.id ?? '')
-const targetsLoaded = ref(false)
-const targetsError = ref('')
-const applying = ref(false)
-// preset key → checked, for presets that don't already exist.
-const checks = ref<Record<string, boolean>>({})
-
-// NAT STUN server: defaults by region (stun.miwifi.com only when cn is selected,
-// since it is mainland-only) but the user can override it in the targets step.
-const stunTouched = ref(false)
-const stunServer = ref('')
-const effectiveStun = computed(() => (stunTouched.value ? stunServer.value : defaultStunServer(selectedRegionList())))
-function onStunChange(v: string): void {
-  stunServer.value = v
-  stunTouched.value = true
-}
-
-// The monitor-group buckets for the current region selection (local + global +
-// one per selected region), each mapping to its own monitor group.
-const selection = computed<SelectionGroup[]>(() => buildSelection(selectedRegionList()))
-
-interface DisplayPreset {
-  preset: RegionPreset
-  exists: boolean
-}
-interface DisplayGroup {
-  nameKey: string
-  items: DisplayPreset[]
-}
-
-// One display section per bucket, in the order buildSelection returns them.
-const displayGroups = computed<DisplayGroup[]>(() =>
-  selection.value.map((g) => ({ nameKey: g.nameKey, items: g.presets.map(toDisplay) })),
-)
-
-function toDisplay(p: RegionPreset): DisplayPreset {
-  return { preset: p, exists: presetExists(existingTargets.value, p) }
-}
-
-// presetLabel is the display/monitor name for a preset; backup (failover) presets
-// get a suffix so they don't collide with their primary's name.
-function presetLabel(p: RegionPreset): string {
-  return p.backup ? `${t(p.nameKey)} ${t('setup.derpBackup')}` : t(p.nameKey)
-}
-
-async function loadTargets(): Promise<void> {
-  targetsError.value = ''
-  try {
-    ;[existingTargets.value, groups.value] = await Promise.all([api.listTargets(SITE), api.monitorGroups(SITE)])
-  } catch (e) {
-    targetsError.value = String((e as Error).message || e)
-    return
-  }
-  // Seed checkboxes: default-checked for new presets, off/disabled for existing.
-  const next: Record<string, boolean> = {}
-  for (const g of selection.value) {
-    for (const p of g.presets) {
-      next[p.key] = p.checked && !presetExists(existingTargets.value, p)
-    }
-  }
-  checks.value = next
-  targetsLoaded.value = true
-}
-
-// A preset is a live "will create" only when checked and not already on the site.
-function isNew(p: RegionPreset): boolean {
-  return !!checks.value[p.key] && !presetExists(existingTargets.value, p)
-}
-
-const anySelected = computed(() => selection.value.some((g) => g.presets.some(isNew)))
-
-// Resolve the monitor group id for a bucket, creating the group if needed. The
-// local bucket reuses the site's default group; global/region buckets get their
-// own named group (matched by localized name so a re-run reuses it).
-async function resolveGroupId(bucket: SelectionGroup): Promise<string> {
-  if (bucket.key === 'local') return defaultGroupId.value
-  const name = t(bucket.nameKey)
-  const existing = groups.value.find((g) => g.name === name)
-  if (existing) return existing.id
-  const { id } = await api.createMonitorGroup(SITE, {
-    name,
-    merge_enabled: true,
-    all_agents: true,
-    agent_group_ids: [],
-  })
-  return id
-}
-
-// ensureUnavailableRule adds an "unavailable" (outage) alarm to a monitor group:
-// an OR rule with one down/unreachable condition per target in the group. Skips
-// the group if it already has a rule with this name (idempotent on re-run). The
-// STUN target for a nat probe is stored under the user-chosen server, so its
-// down condition (probe.nat.ok < 1) applies regardless.
-async function ensureUnavailableRule(groupId: string, layer: string): Promise<void> {
-  const name = t('setup.ruleUnavailable')
-  let existing
-  try {
-    existing = await api.groupRules(groupId)
-  } catch {
-    return // best-effort: never block onboarding on rule setup
-  }
-  if (existing.some((r) => r.name === name)) return
-  const conditions: RuleConditionInput[] = []
-  for (const m of existingTargets.value) {
-    if (m.group_id !== groupId || !m.id) continue
-    const p = unavailablePreset(m)
-    if (!p) continue
-    conditions.push({
-      target_id: m.id,
-      metric_kind: p.metric,
-      comparator: p.comparator,
-      threshold: p.fixed ?? 0,
-      fail_threshold: 3,
-      for_seconds: 0,
-    })
-  }
-  if (!conditions.length) return
-  await api.createGroupRule(groupId, {
-    name,
-    op: 'or',
-    layer,
-    severity: 'error',
-    channel_ids: [],
-    enabled: true,
-    conditions,
-  })
-}
-
-// applyAndNext creates the checked, not-yet-existing presets as real targets in
-// their respective monitor groups, adds an unavailable alarm to each group, then
-// advances. Groups are created first (a target's group_id is a foreign key);
-// setTargets is a full reconcile, so we merge the additions onto the existing list.
-async function applyAndNext(): Promise<void> {
-  if (!targetsLoaded.value) {
-    await goNext()
-    return
-  }
-  applying.value = true
-  targetsError.value = ''
-  try {
-    const populated: Array<{ bucket: SelectionGroup; groupId: string }> = []
-    const additions: ProbeTarget[] = []
-    for (const bucket of selection.value) {
-      const fresh = bucket.presets.filter(isNew)
-      if (!fresh.length) continue
-      const gid = await resolveGroupId(bucket)
-      if (!gid) continue
-      populated.push({ bucket, groupId: gid })
-      for (const p of fresh) {
-        // NAT uses the user-selected STUN server rather than the preset default.
-        const preset = p.kind === 'nat' ? { ...p, target: effectiveStun.value } : p
-        additions.push(presetToTarget(preset, gid, presetLabel(preset)))
+const copy = computed(() => {
+  const zh = locale.value.toLowerCase().startsWith('zh')
+  return zh
+    ? {
+        titlePrefix: '看清',
+        titleAccent: '网络',
+        titleSuffix: '的每一次呼吸',
+        subtitle: '从本地网关到全球节点，持续掌握连通性、延迟与网络质量。',
+        online: '在线',
+        gateway: '本地网关',
+        tokyo: '东京',
+        singapore: '新加坡',
+        frankfurt: '法兰克福',
+        signal: '网络信号示意',
       }
-    }
-    if (additions.length) {
-      await api.setTargets(SITE, [...existingTargets.value, ...additions])
-      ;[existingTargets.value, groups.value] = await Promise.all([api.listTargets(SITE), api.monitorGroups(SITE)])
-      // Add an outage alarm to each populated group (targets now have server ids).
-      for (const { bucket, groupId } of populated) {
-        await ensureUnavailableRule(groupId, bucket.key === 'local' ? 'lan' : 'internet')
+    : {
+        titlePrefix: 'See every ',
+        titleAccent: 'heartbeat',
+        titleSuffix: ' of your network',
+        subtitle: 'From your local gateway to global nodes, understand connectivity, latency, and quality at a glance.',
+        online: 'Online',
+        gateway: 'Local gateway',
+        tokyo: 'Tokyo',
+        singapore: 'Singapore',
+        frankfurt: 'Frankfurt',
+        signal: 'Network signal preview',
       }
-    }
-    await goNext()
-  } catch (e) {
-    targetsError.value = String((e as Error).message || e)
-  } finally {
-    applying.value = false
-  }
-}
-
-// When we arrive at the targets step, (re)load the site's targets and groups so
-// dedupe and group resolution are fresh.
-async function enterTargets(): Promise<void> {
-  step.value = 'targets'
-  targetsLoaded.value = false
-  await persist('targets')
-  await loadTargets()
-}
-
-async function goNextFromRegion(): Promise<void> {
-  await enterTargets()
-}
-
-// ---- enroll step ----
-const enrollToken = ref('')
-const enrollError = ref('')
-const serverUrl = window.location.origin
-async function genToken(): Promise<void> {
-  enrollError.value = ''
-  try {
-    const r = await api.createToken('onboarding')
-    enrollToken.value = r.token
-  } catch (e) {
-    enrollError.value = String((e as Error).message || e)
-  }
-}
+})
 </script>
 
 <template>
-  <div class="wrap">
-    <div class="glow"></div>
-    <div class="card wizard" v-if="ready">
-      <header class="wiz-head">
-        <div class="brand">
-          <span class="mark">
-            <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.2"
+  <div class="onboarding-shell">
+    <div class="ambient ambient-one" aria-hidden="true"></div>
+    <div class="ambient ambient-two" aria-hidden="true"></div>
+
+    <aside class="story-pane">
+      <div class="brand">
+        <span class="brand-mark">
+          <svg viewBox="0 0 28 28" width="28" height="28" fill="none" stroke="currentColor" stroke-width="2.4"
+            stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M3.5 14h4l3-8.5 5.5 17 4-11 2 2.5h2.5" />
+          </svg>
+        </span>
+        <span class="brand-name">NetTact</span>
+      </div>
+
+      <div class="story-copy">
+        <h1>{{ copy.titlePrefix }}<span>{{ copy.titleAccent }}</span>{{ copy.titleSuffix }}</h1>
+        <p>{{ copy.subtitle }}</p>
+      </div>
+
+      <div class="network-stage" aria-hidden="true">
+        <div class="graph-plane">
+        <svg class="network-links" viewBox="0 0 720 420" preserveAspectRatio="none">
+          <defs>
+            <linearGradient id="link-gradient" gradientUnits="userSpaceOnUse" x1="0" y1="0" x2="720" y2="420">
+              <stop offset="0" stop-color="#38bdf8" stop-opacity=".16" />
+              <stop offset=".55" stop-color="#38bdf8" stop-opacity=".95" />
+              <stop offset="1" stop-color="#818cf8" stop-opacity=".3" />
+            </linearGradient>
+            <filter id="link-glow" filterUnits="userSpaceOnUse" x="-40" y="-40" width="800" height="500">
+              <feGaussianBlur stdDeviation="2.2" result="blur" />
+              <feMerge><feMergeNode in="blur" /><feMergeNode in="SourceGraphic" /></feMerge>
+            </filter>
+          </defs>
+          <path d="M360 156 C360 128 360 92 360 59" />
+          <path d="M386 174 C445 160 520 130 578 113" />
+          <path d="M384 190 C440 204 487 237 520 265" />
+          <path d="M336 190 C280 204 220 238 186 265" />
+          <circle cx="360" cy="105" r="4" />
+          <circle cx="500" cy="139" r="4" />
+          <circle cx="468" cy="224" r="4" />
+          <circle cx="249" cy="224" r="4" />
+        </svg>
+
+        <div class="hub-node">
+          <span class="hub-radar"></span>
+          <span class="hub-icon">
+            <svg viewBox="0 0 24 24" width="30" height="30" fill="none" stroke="currentColor" stroke-width="1.8"
               stroke-linecap="round" stroke-linejoin="round">
-              <path d="M3 12h3l2.5 7 5-15L18 12h3" />
+              <path d="m4 11 8-7 8 7v9H4z" /><path d="M9 20v-6h6v6" />
             </svg>
           </span>
-          <div class="brand-text">
-            <b>NetTact</b>
-            <small>{{ t('setup.title') }}</small>
-          </div>
+          <strong>{{ copy.gateway }}</strong>
+          <small><i></i>{{ copy.online }}</small>
         </div>
-        <button class="btn btn-ghost skip" @click="skipAll">{{ t('setup.skipAll') }}</button>
-      </header>
 
-      <ol class="dots" :aria-label="t('setup.title')">
-        <li v-for="(s, i) in steps" :key="s" :class="{ active: i === stepIndex, done: i < stepIndex }">
-          <span class="dot"></span>
-          <span class="dot-label">{{ t('setup.step_' + s) }}</span>
-        </li>
-      </ol>
-
-      <!-- welcome -->
-      <section v-if="step === 'welcome'" class="panel step">
-        <h1>{{ t('setup.welcomeTitle') }}</h1>
-        <p class="lead">{{ t('setup.welcomeBody') }}</p>
-      </section>
-
-      <!-- region (multi-select) -->
-      <section v-else-if="step === 'region'" class="panel step">
-        <h1>{{ t('setup.regionTitle') }}</h1>
-        <p class="lead">{{ t('setup.regionHint') }}</p>
-        <div class="region-grid">
-          <label
-            v-for="r in orderedRegions"
-            :key="r.id"
-            class="region-card"
-            :class="{ picked: selectedRegions.has(r.id) }"
-          >
-            <input type="checkbox" :checked="selectedRegions.has(r.id)" @change="toggleRegion(r.id)" />
-            <span class="region-name">{{ t(r.labelKey) }}</span>
-            <span v-if="r.id === recommended" class="badge badge-rec">{{ t('setup.recommended') }}</span>
-          </label>
+        <div class="remote-node node-dns">
+          <b>DNS</b><span>DNS</span><small><i></i>{{ copy.online }} <em>≈ 8 ms</em></small>
         </div>
-      </section>
-
-      <!-- targets -->
-      <section v-else-if="step === 'targets'" class="panel step">
-        <h1>{{ t('setup.targetsTitle') }}</h1>
-        <p class="lead">{{ t('setup.targetsHint') }}</p>
-        <p v-if="targetsError" class="err">{{ targetsError }}</p>
-        <p v-if="!targetsLoaded && !targetsError" class="muted">{{ t('setup.loading') }}</p>
-        <div v-for="g in displayGroups" :key="g.nameKey" class="tgt-group">
-          <h3>{{ t(g.nameKey) }}</h3>
-          <label
-            v-for="d in g.items"
-            :key="d.preset.key"
-            class="tgt-row"
-            :class="{ disabled: d.exists }"
-          >
-            <input
-              type="checkbox"
-              :checked="d.exists ? false : checks[d.preset.key]"
-              :disabled="d.exists"
-              @change="checks[d.preset.key] = ($event.target as HTMLInputElement).checked"
-            />
-            <span class="tgt-kind badge">{{ d.preset.kind }}</span>
-            <span class="tgt-name">{{ presetLabel(d.preset) }}</span>
-            <template v-if="d.preset.kind === 'nat' && !d.exists">
-              <span class="tgt-nat-label">{{ t('setup.natServer') }}</span>
-              <select
-                class="tgt-nat-select"
-                :value="effectiveStun"
-                @change="onStunChange(($event.target as HTMLSelectElement).value)"
-                @click.stop
-              >
-                <option v-for="s in STUN_SERVERS" :key="s" :value="s">{{ s }}</option>
-              </select>
-            </template>
-            <span v-else class="tgt-target">{{ d.preset.target }}</span>
-            <span v-if="d.exists" class="badge badge-exists">{{ t('setup.alreadyExists') }}</span>
-          </label>
+        <div class="remote-node node-tokyo">
+          <b>TYO</b><span>{{ copy.tokyo }}</span><small><i></i>{{ copy.online }} <em>≈ 32 ms</em></small>
         </div>
-      </section>
-
-      <!-- enroll (skipped in desktop mode) -->
-      <section v-else-if="step === 'enroll'" class="panel step">
-        <h1>{{ t('setup.enrollTitle') }}</h1>
-        <p class="lead">{{ t('setup.enrollHint') }}</p>
-        <div class="enroll-actions">
-          <button class="btn btn-primary" @click="genToken">{{ t('setup.genToken') }}</button>
-          <span v-if="enrollToken" class="muted">{{ t('setup.tokenOnce') }}</span>
-          <span v-if="enrollError" class="err">{{ enrollError }}</span>
+        <div class="remote-node node-singapore">
+          <b>SIN</b><span>{{ copy.singapore }}</span><small><i></i>{{ copy.online }} <em>≈ 48 ms</em></small>
         </div>
-        <EnrollExamples class="enroll-examples" :server-url="serverUrl" :token="enrollToken" />
-      </section>
+        <div class="remote-node node-frankfurt">
+          <b>FRA</b><span>{{ copy.frankfurt }}</span><small><i></i>{{ copy.online }} <em>≈ 168 ms</em></small>
+        </div>
+        </div>
 
-      <!-- done -->
-      <section v-else-if="step === 'done'" class="panel step">
-        <h1>{{ t('setup.doneTitle') }}</h1>
-        <p class="lead">{{ t('setup.doneBody') }}</p>
-      </section>
+        <div class="signal-card">
+          <span><i></i>{{ copy.signal }}</span>
+          <svg viewBox="0 0 540 62" preserveAspectRatio="none">
+            <path d="M0 49 C22 49 25 21 44 22 S65 51 86 44 105 28 125 36 144 47 163 18 187 29 212 45 234 42 258 23 281 27 302 48 326 41 351 20 376 28 400 49 423 39 447 17 471 33 499 51 520 38 540 34" />
+          </svg>
+        </div>
+      </div>
+    </aside>
 
-      <footer class="wiz-nav">
-        <button v-if="stepIndex > 0 && step !== 'done'" class="btn btn-ghost" @click="goBack">
-          {{ t('setup.back') }}
-        </button>
-        <span class="spacer"></span>
-        <template v-if="step === 'welcome'">
-          <button class="btn btn-primary" @click="goNext">{{ t('setup.next') }}</button>
-        </template>
-        <template v-else-if="step === 'region'">
-          <button class="btn btn-primary" @click="goNextFromRegion">{{ t('setup.next') }}</button>
-        </template>
-        <template v-else-if="step === 'targets'">
-          <button class="btn btn-primary" :disabled="applying || !targetsLoaded" @click="applyAndNext">
-            {{ applying ? t('setup.applying') : anySelected ? t('setup.applyNext') : t('setup.next') }}
-          </button>
-        </template>
-        <template v-else-if="step === 'enroll'">
-          <button class="btn btn-primary" @click="goNext">{{ t('setup.next') }}</button>
-        </template>
-        <template v-else-if="step === 'done'">
-          <button class="btn btn-primary" @click="finish">{{ t('setup.enterConsole') }}</button>
-        </template>
-      </footer>
-    </div>
+    <section class="flow-pane">
+      <OnboardingFlow />
+    </section>
   </div>
 </template>
 
 <style scoped>
-.wrap {
+.onboarding-shell {
+  color-scheme: dark;
+  --text: #e8eef8;
+  --text-dim: #9aa8bd;
+  --text-muted: #68778d;
+  --surface: rgba(13, 21, 34, 0.8);
+  --surface-solid: #0b1727;
+  --surface-2: rgba(25, 37, 55, 0.64);
+  --surface-hover: rgba(35, 50, 72, 0.72);
+  --border: rgba(148, 199, 232, 0.1);
+  --border-strong: rgba(148, 199, 232, 0.18);
+  --input-bg: rgba(6, 12, 22, 0.72);
+  --input-bg-focus: rgba(6, 12, 22, 0.9);
   position: relative;
   min-height: 100vh;
   display: grid;
-  place-items: center;
-  padding: 24px;
+  grid-template-columns: minmax(520px, 1fr) minmax(640px, 720px);
+  gap: clamp(24px, 2vw, 40px);
+  align-items: center;
+  padding: clamp(20px, 2.2vw, 40px);
+  padding-inline: max(clamp(20px, 2.2vw, 40px), calc((100vw - 1920px) / 2));
+  color: var(--text);
+  background:
+    linear-gradient(rgba(46, 96, 128, 0.035) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(46, 96, 128, 0.035) 1px, transparent 1px),
+    #070b12;
+  background-size: 38px 38px;
   overflow: hidden;
+  isolation: isolate;
 }
-.glow {
+
+.onboarding-shell::before {
+  content: '';
   position: absolute;
+  inset: 0;
+  z-index: -2;
+  background:
+    radial-gradient(700px 520px at 35% 65%, rgba(14, 165, 233, 0.12), transparent 70%),
+    radial-gradient(620px 480px at 82% 12%, rgba(59, 130, 246, 0.12), transparent 68%),
+    linear-gradient(115deg, rgba(7, 11, 18, 0.08), rgba(7, 11, 18, 0.66));
+}
+
+.ambient {
+  position: absolute;
+  z-index: -1;
   width: 520px;
   height: 520px;
   border-radius: 50%;
-  background: radial-gradient(circle, rgba(56, 189, 248, 0.22), transparent 60%);
-  filter: blur(20px);
-  top: -120px;
+  filter: blur(80px);
   pointer-events: none;
+  opacity: 0.22;
 }
-.wizard {
+
+.ambient-one { top: -300px; right: 2%; background: #0ea5e9; }
+.ambient-two { bottom: -340px; left: 20%; background: #4f46e5; opacity: 0.14; }
+
+.story-pane {
   position: relative;
-  width: 680px;
-  max-width: 100%;
+  align-self: stretch;
+  min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: 18px;
-  padding: 28px 30px 24px;
 }
-.wiz-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-}
+
 .brand {
-  display: flex;
+  display: inline-flex;
   align-items: center;
-  gap: 12px;
+  gap: 15px;
+  width: max-content;
 }
-.mark {
+
+.brand-mark {
+  display: grid;
+  place-items: center;
+  width: 54px;
+  height: 54px;
+  color: #55d4ff;
+  border: 2px solid #22d3ee;
+  border-radius: 15px;
+  background: linear-gradient(145deg, rgba(14, 165, 233, 0.14), rgba(37, 99, 235, 0.04));
+  box-shadow: 0 0 28px rgba(56, 189, 248, 0.12), inset 0 0 18px rgba(56, 189, 248, 0.06);
+}
+
+.brand-name {
+  font-size: 31px;
+  font-weight: 720;
+  letter-spacing: -0.035em;
+}
+
+.story-copy {
+  margin-top: clamp(54px, 8vh, 94px);
+  max-width: 760px;
+}
+
+.story-copy h1 {
+  margin: 0;
+  font-size: clamp(42px, 4.15vw, 68px);
+  line-height: 1.12;
+  letter-spacing: -0.055em;
+  font-weight: 720;
+}
+
+.story-copy h1 span {
+  color: transparent;
+  background: linear-gradient(110deg, #2dd4ff 10%, #3b82f6 55%, #818cf8);
+  background-clip: text;
+  -webkit-background-clip: text;
+}
+
+.story-copy p {
+  max-width: 680px;
+  margin: 20px 0 0;
+  color: #a8b5c8;
+  font-size: clamp(16px, 1.25vw, 20px);
+  line-height: 1.75;
+}
+
+.network-stage {
+  position: relative;
+  flex: 1;
+  min-height: 540px;
+  margin-top: 12px;
+}
+
+.network-stage::before {
+  content: '';
+  position: absolute;
+  left: -18%;
+  right: -4%;
+  top: 6%;
+  bottom: 100px;
+  background-image: radial-gradient(circle, rgba(56, 189, 248, 0.2) 0 1px, transparent 1.5px);
+  background-size: 13px 13px;
+  mask-image: radial-gradient(ellipse at 50% 54%, #000 0, rgba(0, 0, 0, 0.72) 40%, transparent 73%);
+  -webkit-mask-image: radial-gradient(ellipse at 50% 54%, #000 0, rgba(0, 0, 0, 0.72) 40%, transparent 73%);
+  opacity: 0.6;
+}
+
+.graph-plane {
+  position: absolute;
+  inset: 0 0 118px;
+  min-width: 0;
+}
+
+.network-links {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+}
+
+.network-links path {
+  fill: none;
+  stroke: #38bdf8;
+  stroke-opacity: 0.82;
+  stroke-width: 2;
+  filter: url(#link-glow);
+}
+
+.network-links circle {
+  fill: #7dd3fc;
+  filter: url(#link-glow);
+  animation: linkPulse 2.8s ease-in-out infinite;
+}
+
+.remote-node {
+  position: absolute;
+  z-index: 2;
+  min-width: 168px;
+  display: grid;
+  grid-template-columns: 42px 1fr;
+  gap: 3px 11px;
+  align-items: center;
+  padding: 13px 14px;
+  border: 1px solid rgba(125, 211, 252, 0.28);
+  border-radius: 13px;
+  background: linear-gradient(145deg, #132337, #0a1422);
+  box-shadow: 0 16px 42px rgba(0, 0, 0, 0.28), 0 0 24px rgba(56, 189, 248, 0.08);
+  backdrop-filter: blur(12px);
+}
+
+.remote-node > b {
+  position: relative;
+  grid-row: span 2;
   display: grid;
   place-items: center;
   width: 42px;
   height: 42px;
-  border-radius: 12px;
-  color: #04121c;
-  background: linear-gradient(150deg, #7dd3fc, var(--primary-strong));
-  box-shadow: 0 10px 26px -8px var(--primary-glow);
+  overflow: hidden;
+  color: #83dcff;
+  border: 1px solid rgba(125, 211, 252, 0.12);
+  border-radius: 10px;
+  background:
+    linear-gradient(145deg, rgba(56, 189, 248, 0.12), rgba(12, 54, 84, 0.3)),
+    #10263b;
+  box-shadow: inset 0 1px rgba(255, 255, 255, 0.035), inset 0 0 18px rgba(56, 189, 248, 0.035);
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 750;
+  letter-spacing: 0.035em;
+  text-shadow: 0 0 12px rgba(56, 189, 248, 0.38);
 }
-.brand-text {
-  display: flex;
-  flex-direction: column;
-  line-height: 1.25;
+
+.remote-node > span {
+  color: #eaf7ff;
+  font-size: 15px;
+  font-weight: 650;
+  white-space: nowrap;
 }
-.brand-text b {
-  font-size: 17px;
-}
-.brand-text small {
-  font-size: 12px;
-  color: var(--text-muted);
-}
-.dots {
-  display: flex;
-  gap: 6px;
-  list-style: none;
-  padding: 0;
-  margin: 0;
-  flex-wrap: wrap;
-}
-.dots li {
+
+.remote-node small,
+.hub-node small {
   display: flex;
   align-items: center;
-  gap: 6px;
-  font-size: 12px;
-  color: var(--text-muted);
-  flex: 1;
-  min-width: 90px;
+  gap: 5px;
+  color: #8696aa;
+  font-size: 10.5px;
+  white-space: nowrap;
 }
-.dots .dot {
-  width: 10px;
-  height: 10px;
+
+.remote-node i,
+.hub-node i,
+.signal-card i {
+  width: 7px;
+  height: 7px;
   border-radius: 50%;
-  background: var(--border);
-  flex-shrink: 0;
+  background: #34d399;
+  box-shadow: 0 0 10px rgba(52, 211, 153, 0.75);
 }
-.dots li.active .dot {
-  background: var(--primary);
-}
-.dots li.done .dot {
-  background: var(--primary-strong);
-}
-.dots li.active .dot-label {
-  color: var(--text);
+
+.remote-node em {
+  margin-left: 5px;
+  padding: 1px 6px;
+  color: #6ee7b7;
+  border: 1px solid rgba(52, 211, 153, 0.28);
+  border-radius: 999px;
+  background: rgba(52, 211, 153, 0.06);
+  font-style: normal;
   font-weight: 600;
 }
-.step {
-  min-height: 260px;
+
+.node-dns,
+.node-tokyo,
+.node-singapore,
+.node-frankfurt {
+  transform: translate(-50%, -50%);
 }
-.step h1 {
-  font-size: 20px;
-  margin: 0 0 6px;
+
+.node-dns { top: 9%; left: 50%; }
+.node-tokyo { top: 27%; left: 88%; }
+.node-singapore { top: 63%; left: 80%; }
+.node-frankfurt { top: 63%; left: 18%; }
+
+.hub-node {
+  position: absolute;
+  z-index: 3;
+  left: 50%;
+  top: 43%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  transform: translate(-50%, -50%);
 }
-.lead {
-  margin: 0 0 14px;
-  color: var(--text-dim);
-  font-size: 13.5px;
-}
-.muted {
-  color: var(--text-muted);
-  font-size: 13px;
-}
-.region-grid {
+
+.hub-icon {
+  position: relative;
+  isolation: isolate;
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
-  gap: 10px;
+  place-items: center;
+  width: 84px;
+  height: 84px;
+  color: #d1f5ff;
+  border: 2px solid #65d9ff;
+  border-radius: 50%;
+  background: radial-gradient(circle at 35% 27%, #1fa9e7 0, #1177b7 30%, #0b4a83 58%, #062540 100%);
+  box-shadow:
+    inset 0 1px 1px rgba(255, 255, 255, 0.24),
+    inset 0 -13px 24px rgba(1, 15, 34, 0.34),
+    0 0 0 7px rgba(56, 189, 248, 0.065),
+    0 0 46px rgba(56, 189, 248, 0.46);
 }
-.region-card {
+
+.hub-icon::before {
+  position: absolute;
+  inset: -13px;
+  z-index: -1;
+  content: '';
+  border: 1px solid rgba(125, 211, 252, 0.16);
+  border-radius: 50%;
+  box-shadow: 0 0 28px rgba(56, 189, 248, 0.12);
+}
+
+.hub-icon::after {
+  position: absolute;
+  inset: 8px;
+  z-index: 0;
+  content: '';
+  border: 1px solid rgba(186, 230, 253, 0.08);
+  border-radius: 50%;
+}
+
+.hub-icon svg {
+  position: relative;
+  z-index: 1;
+  filter: drop-shadow(0 0 7px rgba(125, 211, 252, 0.46));
+}
+
+.hub-radar,
+.hub-radar::after {
+  position: absolute;
+  left: 50%;
+  top: 40px;
+  width: 130px;
+  height: 130px;
+  content: '';
+  border: 1px solid rgba(56, 189, 248, 0.16);
+  border-radius: 50%;
+  transform: translate(-50%, -50%);
+  animation: radar 3.4s ease-out infinite;
+}
+
+.hub-radar::after { top: 50%; animation-delay: 1.7s; }
+.hub-node strong { margin-top: 13px; color: #eaf7ff; font-size: 14px; }
+.hub-node small { margin-top: 3px; }
+
+.signal-card {
+  position: absolute;
+  left: 2%;
+  right: 16%;
+  bottom: 0;
+  z-index: 3;
+  height: 112px;
+  padding: 13px 16px 8px;
+  border: 1px solid rgba(125, 211, 252, 0.2);
+  border-radius: 14px;
+  background: rgba(7, 16, 28, 0.8);
+  box-shadow: 0 16px 46px rgba(0, 0, 0, 0.26);
+  backdrop-filter: blur(12px);
+}
+
+.signal-card > span {
   display: flex;
   align-items: center;
+  gap: 7px;
+  color: #8494a9;
+  font-size: 11px;
+}
+
+.signal-card svg { width: 100%; height: 62px; margin-top: 3px; overflow: visible; }
+.signal-card path {
+  fill: none;
+  stroke: #20c7ff;
+  stroke-width: 1.6;
+  filter: drop-shadow(0 0 5px rgba(32, 199, 255, 0.5));
+}
+
+.flow-pane {
+  width: 100%;
+  height: min(980px, calc(100vh - 40px));
+  min-height: min(700px, calc(100vh - 40px));
+  justify-self: stretch;
+  min-width: 0;
+  align-self: center;
+}
+
+:deep(.wrap) {
+  min-height: 100%;
+  height: 100%;
+  display: block;
+  padding: 0;
+  overflow: visible;
+}
+
+:deep(.glow) { display: none; }
+
+:deep(.wizard.card) {
+  width: 100%;
+  max-width: none;
+  height: 100%;
+  gap: 22px;
+  padding: clamp(26px, 2.4vw, 40px);
+  border: 1px solid rgba(125, 211, 252, 0.35);
+  border-radius: 20px;
+  background:
+    linear-gradient(145deg, rgba(18, 31, 49, 0.92), rgba(8, 17, 29, 0.9)),
+    rgba(10, 18, 30, 0.92);
+  box-shadow: 0 30px 90px rgba(0, 0, 0, 0.38), 0 0 44px rgba(56, 189, 248, 0.06), inset 0 1px rgba(255, 255, 255, 0.04);
+  backdrop-filter: blur(22px);
+  overflow: hidden;
+}
+
+:deep(.wiz-head .mark) { display: none; }
+:deep(.wiz-head .brand) { gap: 0; }
+:deep(.wiz-head .brand-text b) { display: none; }
+:deep(.wiz-head .brand-text small) {
+  color: #e8eef8;
+  font-size: 16px;
+  font-weight: 650;
+}
+:deep(.wiz-head .skip) { color: #7f90a6; }
+
+:deep(.dots) {
+  position: relative;
+  flex-wrap: nowrap;
+  gap: 4px;
+  margin: 6px 0 0;
+}
+
+:deep(.dots::before) {
+  content: '';
+  position: absolute;
+  top: 15px;
+  left: 7%;
+  right: 7%;
+  height: 1px;
+  background: rgba(148, 199, 232, 0.2);
+}
+
+:deep(.dots li) {
+  position: relative;
+  z-index: 1;
+  flex-direction: column;
+  min-width: 0;
   gap: 8px;
-  padding: 12px 14px;
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  cursor: pointer;
-}
-.region-card.picked {
-  border-color: var(--primary);
-  background: var(--surface-2, rgba(56, 189, 248, 0.06));
-}
-.region-name {
-  flex: 1;
-}
-.badge-rec {
-  background: var(--primary);
-  color: #04121c;
-}
-.tgt-group {
-  margin-bottom: 14px;
-}
-.tgt-group h3 {
-  font-size: 13px;
-  color: var(--text-dim);
-  margin: 0 0 6px;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-}
-.tgt-row {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 8px 10px;
-  border-radius: 8px;
-  cursor: pointer;
-}
-.tgt-row:hover {
-  background: var(--surface-2, rgba(148, 163, 184, 0.08));
-}
-.tgt-row.disabled {
-  opacity: 0.55;
-  cursor: default;
-}
-.tgt-kind {
-  text-transform: uppercase;
-  font-size: 10.5px;
-  min-width: 58px;
+  color: #64748b;
   text-align: center;
 }
-.tgt-name {
-  flex: 1;
+
+:deep(.dots .dot) {
+  width: 31px;
+  height: 31px;
+  border: 1px solid rgba(148, 199, 232, 0.28);
+  background: #0d1725;
+  box-shadow: 0 0 0 4px #0d1725;
 }
-.tgt-target {
-  color: var(--text-muted);
-  font-size: 12.5px;
-  font-family: var(--mono, monospace);
+
+:deep(.dots li.active .dot) {
+  border-color: #38bdf8;
+  background: linear-gradient(145deg, #62d5ff, #0ea5e9);
+  box-shadow: 0 0 22px rgba(56, 189, 248, 0.52), 0 0 0 4px #0d1725;
 }
-.tgt-nat-label {
-  color: var(--text-muted);
-  font-size: 12px;
+
+:deep(.dots li.done .dot) {
+  border-color: rgba(52, 211, 153, 0.42);
+  background: #34d399;
 }
-.tgt-nat-select {
-  font-size: 12.5px;
-  padding: 3px 6px;
+
+:deep(.dots .dot-label) {
+  max-width: 80px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: 10.5px;
+  white-space: nowrap;
 }
-.badge-exists {
-  background: var(--border);
-  color: var(--text-muted);
+
+:deep(.step) {
+  flex: 1 1 auto;
+  min-height: 0 !important;
+  margin-right: -10px;
+  padding-right: 10px;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+  padding-top: clamp(18px, 3vh, 42px);
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+  backdrop-filter: none;
+  animation: stepIn 0.32s ease both;
 }
-.enroll-actions {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  margin-bottom: 12px;
-  flex-wrap: wrap;
+
+:deep(.step h1) {
+  margin: 0 0 12px;
+  color: #f1f6fd;
+  font-size: clamp(25px, 2.15vw, 34px);
+  line-height: 1.22;
+  letter-spacing: -0.035em;
 }
-.enroll-examples {
-  display: block;
+
+:deep(.lead) {
+  color: #9aa8bd;
+  font-size: 13.5px;
+  line-height: 1.8;
 }
-.wiz-nav {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  border-top: 1px solid var(--border);
-  padding-top: 16px;
+
+:deep(.welcome-step) {
+  padding-top: clamp(8px, 1.8vh, 24px) !important;
 }
-.spacer {
-  flex: 1;
+
+:deep(.region-grid) { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin-top: 24px; }
+:deep(.region-card) {
+  min-height: 64px;
+  border-color: rgba(148, 199, 232, 0.13);
+  background: rgba(11, 20, 33, 0.54);
+  transition: border-color 0.16s, background 0.16s, transform 0.16s;
 }
-.err {
-  color: var(--danger, #f87171);
-  font-size: 13px;
-  margin: 4px 0;
+:deep(.region-card:hover) { border-color: rgba(125, 211, 252, 0.34); transform: translateY(-1px); }
+:deep(.region-card.picked) {
+  border-color: rgba(56, 189, 248, 0.72);
+  background: linear-gradient(145deg, rgba(56, 189, 248, 0.13), rgba(59, 130, 246, 0.06));
+}
+:deep(.badge-rec) { color: #04121c; }
+
+:deep(.tgt-group h3) { color: #8796aa; font-size: 10.5px; letter-spacing: 0.1em; }
+:deep(.tgt-row) { border-bottom: 1px solid rgba(148, 199, 232, 0.07); }
+:deep(.tgt-row:hover) { background: rgba(56, 189, 248, 0.045); }
+:deep(.tgt-kind) {
+  color: #7dd3fc;
+  border: 1px solid rgba(56, 189, 248, 0.16);
+  background: rgba(56, 189, 248, 0.07);
+}
+
+:deep(.tgt-nat-select) {
+  color: #e8eef8;
+  border-color: rgba(56, 189, 248, 0.45);
+  background-color: #0b1727;
+  color-scheme: dark;
+}
+
+:deep(.tgt-nat-select option) {
+  color: #e8eef8;
+  background-color: #0b1727;
+}
+
+:deep(.wiz-nav) {
+  margin-top: auto;
+  padding-top: 20px;
+  border-color: rgba(148, 199, 232, 0.1);
+}
+
+:deep(.wiz-nav .btn-primary) {
+  min-width: 168px;
+  min-height: 44px;
+  font-weight: 650;
+}
+
+:deep(.welcome-action) {
+  width: 100%;
+  min-height: 48px !important;
+}
+
+@keyframes radar {
+  0% { opacity: 0; transform: translate(-50%, -50%) scale(0.45); }
+  30% { opacity: 0.65; }
+  100% { opacity: 0; transform: translate(-50%, -50%) scale(1.35); }
+}
+
+@keyframes linkPulse {
+  0%, 100% { opacity: 0.4; }
+  50% { opacity: 1; }
+}
+
+@keyframes stepIn {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@media (max-width: 1220px) {
+  .onboarding-shell {
+    grid-template-columns: minmax(340px, 0.8fr) minmax(560px, 1.2fr);
+    gap: 26px;
+    padding: 24px;
+  }
+  .story-copy h1 { font-size: 46px; }
+  .network-stage { width: 114%; transform: scale(0.88); transform-origin: left top; }
+}
+
+@media (max-width: 960px) {
+  .onboarding-shell {
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 18px;
+    padding: 20px;
+    overflow: auto;
+  }
+  .story-pane { flex: 0 0 auto; }
+  .brand-mark { width: 42px; height: 42px; border-radius: 12px; }
+  .brand-mark svg { width: 22px; height: 22px; }
+  .brand-name { font-size: 23px; }
+  .story-copy, .network-stage { display: none; }
+  .flow-pane {
+    width: 100%;
+    max-width: 720px;
+    height: calc(100vh - 100px);
+    min-height: 600px;
+    margin: 0 auto;
+  }
+}
+
+@media (max-width: 620px) {
+  .onboarding-shell { padding: 14px; }
+  .flow-pane { height: calc(100vh - 84px); min-height: 540px; }
+  :deep(.wizard.card) { padding: 22px 18px 18px; border-radius: 16px; }
+  :deep(.dots .dot-label) { display: none; }
+  :deep(.region-grid) { grid-template-columns: 1fr; }
+  :deep(.tgt-row) { flex-wrap: wrap; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .network-links circle, .hub-radar, .hub-radar::after, :deep(.step) { animation: none; }
 }
 </style>
