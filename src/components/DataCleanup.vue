@@ -4,6 +4,10 @@
 // then Clean it; or Delete all data outright. Running targets are cleanable (the
 // explicit selection is the consent); a time-range delete is kept as an advanced
 // option. Deletion runs as an async job whose progress is polled.
+//
+// Embedded as the "Data" tab of Settings (no longer a standalone route), so this is
+// a plain component: no <main class="page"> wrapper and no page title — the Settings
+// tab supplies that context.
 import { computed, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import {
@@ -313,13 +317,8 @@ function unitStatusLabel(s: string): string {
 </script>
 
 <template>
-  <main class="page">
-    <div class="page-head">
-      <div>
-        <h2>{{ t('cleanup.title') }}</h2>
-        <p class="hint">{{ t('cleanup.sub') }}</p>
-      </div>
-    </div>
+  <div class="cleanup">
+    <p class="hint cleanup-intro">{{ t('cleanup.sub') }}</p>
 
     <p v-if="error" class="err">{{ error }}</p>
 
@@ -454,10 +453,13 @@ function unitStatusLabel(s: string): string {
         </div>
       </div>
     </section>
-  </main>
+  </div>
 </template>
 
 <style scoped>
+.cleanup-intro {
+  margin: 0 0 16px;
+}
 .clean-row {
   display: flex;
   gap: 14px;

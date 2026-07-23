@@ -13,7 +13,6 @@ import MonitorForm from './views/MonitorForm.vue'
 import MonitorGroupForm from './views/MonitorGroupForm.vue'
 import Incidents from './views/Incidents.vue'
 import Agents from './views/Agents.vue'
-import DataCleanup from './views/DataCleanup.vue'
 import Settings from './views/Settings.vue'
 
 const router = createRouter({
@@ -34,7 +33,6 @@ const router = createRouter({
     { path: '/monitoring/:id/edit', component: MonitorForm },
     { path: '/incidents', component: Incidents },
     { path: '/agents', component: Agents },
-    { path: '/data-cleanup', component: DataCleanup },
     { path: '/settings', component: Settings },
   ],
 })

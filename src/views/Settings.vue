@@ -4,9 +4,15 @@ import { useI18n } from 'vue-i18n'
 import { useRouter } from 'vue-router'
 import { api, type Quota, type Channel, type ServerInfo, type StorageStats } from '../api'
 import WebhookChannelForm from '../components/WebhookChannelForm.vue'
+import DataCleanup from '../components/DataCleanup.vue'
 
 const { t } = useI18n()
 const router = useRouter()
+
+// Secondary navigation: the page grew too dense for one scroll, so its panels are
+// split across underline tabs (same pattern as Processes.vue). All tab bodies stay
+// mounted (v-show) so their one-shot on-mount loads/state persist across switches.
+const tab = ref<'general' | 'notifications' | 'data'>('general')
 
 const quota = ref<Quota | null>(null)
 const stats = ref<StorageStats | null>(null)
@@ -262,36 +268,43 @@ onMounted(load)
       <p class="sub">{{ t('settings.sub') }}</p>
     </div>
 
-    <div class="stat-grid">
-      <div class="stat" v-if="quota">
-        <div class="label">{{ t('settings.agentQuota') }}</div>
-        <div class="value">{{ quota.used }}<span class="unit">/ {{ quota.max === 0 ? '∞' : quota.max }}</span></div>
-        <div class="foot">{{ t('settings.agentQuotaFoot') }}</div>
-      </div>
-      <template v-if="stats">
-        <div class="stat">
-          <div class="label">Series</div>
-          <div class="value">{{ stats.series }}</div>
-          <div class="foot">{{ t('settings.seriesFoot') }}</div>
-        </div>
-        <div class="stat">
-          <div class="label">{{ t('settings.rawSamples') }}</div>
-          <div class="value">{{ stats.samples }}</div>
-          <div class="foot">{{ t('settings.rawSamplesFoot') }}</div>
-        </div>
-        <div class="stat">
-          <div class="label">{{ t('settings.rollup') }}</div>
-          <div class="value rollup">{{ stats.rollup_1m }}<span class="sep">·</span>{{ stats.rollup_1h }}<span
-              class="sep">·</span>{{ stats.rollup_1d }}</div>
-          <div class="foot">{{ t('settings.rollupFoot') }}</div>
-        </div>
-      </template>
+    <div class="tabs" role="tablist">
+      <button
+        class="tab" role="tab"
+        :class="{ active: tab === 'general' }" :aria-selected="tab === 'general'"
+        @click="tab = 'general'"
+      >
+        {{ t('settings.tabs.general') }}
+      </button>
+      <button
+        class="tab" role="tab"
+        :class="{ active: tab === 'notifications' }" :aria-selected="tab === 'notifications'"
+        @click="tab = 'notifications'"
+      >
+        {{ t('settings.tabs.notifications') }}
+        <span class="count">{{ channels.length }}</span>
+      </button>
+      <button
+        class="tab" role="tab"
+        :class="{ active: tab === 'data' }" :aria-selected="tab === 'data'"
+        @click="tab = 'data'"
+      >
+        {{ t('settings.tabs.data') }}
+      </button>
     </div>
-    <p class="hint storage-note" v-if="stats">
-      {{ t('settings.storageNote') }}
-    </p>
 
     <p v-if="error" class="err">{{ error }}</p>
+
+    <div v-show="tab === 'general'">
+    <section class="panel">
+      <div class="panel-head"><h3>{{ t('setup.settingsTitle') }}</h3></div>
+      <div class="panel-body">
+        <p class="hint">{{ t('setup.settingsHint') }}</p>
+        <div class="row field-row">
+          <button class="btn btn-primary" @click="router.push('/onboarding')">{{ t('setup.settingsReopen') }}</button>
+        </div>
+      </div>
+    </section>
 
     <section class="panel">
       <div class="panel-head"><h3>{{ t('settings.consoleUrl') }}</h3></div>
@@ -301,16 +314,6 @@ onMounted(load)
           <input v-model="consoleUrl" placeholder="http://localhost:12450" class="wide" />
           <button class="btn btn-primary" @click="saveConsoleUrl">{{ t('common.save') }}</button>
           <span v-if="consoleSaved" class="hint saved">✓ {{ t('common.saved') }}</span>
-        </div>
-      </div>
-    </section>
-
-    <section class="panel">
-      <div class="panel-head"><h3>{{ t('setup.settingsTitle') }}</h3></div>
-      <div class="panel-body">
-        <p class="hint">{{ t('setup.settingsHint') }}</p>
-        <div class="row field-row">
-          <button class="btn btn-primary" @click="router.push('/onboarding')">{{ t('setup.settingsReopen') }}</button>
         </div>
       </div>
     </section>
@@ -456,7 +459,9 @@ onMounted(load)
         <span v-if="diagError" class="err inline">{{ diagError }}</span>
       </div>
     </section>
+    </div><!-- /general -->
 
+    <div v-show="tab === 'notifications'">
     <section class="panel">
       <div class="panel-head"><h3>{{ t('settings.channels') }}</h3><span class="count">{{ channels.length }}</span></div>
       <div class="panel-body">
@@ -543,12 +548,77 @@ onMounted(load)
         </table>
       </div>
     </section>
+    </div><!-- /notifications -->
+
+    <div v-show="tab === 'data'">
+      <div class="stat-grid">
+        <div class="stat" v-if="quota">
+          <div class="label">{{ t('settings.agentQuota') }}</div>
+          <div class="value">{{ quota.used }}<span class="unit">/ {{ quota.max === 0 ? '∞' : quota.max }}</span></div>
+          <div class="foot">{{ t('settings.agentQuotaFoot') }}</div>
+        </div>
+        <template v-if="stats">
+          <div class="stat">
+            <div class="label">Series</div>
+            <div class="value">{{ stats.series }}</div>
+            <div class="foot">{{ t('settings.seriesFoot') }}</div>
+          </div>
+          <div class="stat">
+            <div class="label">{{ t('settings.rawSamples') }}</div>
+            <div class="value">{{ stats.samples }}</div>
+            <div class="foot">{{ t('settings.rawSamplesFoot') }}</div>
+          </div>
+          <div class="stat">
+            <div class="label">{{ t('settings.rollup') }}</div>
+            <div class="value rollup">{{ stats.rollup_1m }}<span class="sep">·</span>{{ stats.rollup_1h }}<span
+                class="sep">·</span>{{ stats.rollup_1d }}</div>
+            <div class="foot">{{ t('settings.rollupFoot') }}</div>
+          </div>
+        </template>
+      </div>
+      <p class="hint storage-note" v-if="stats">
+        {{ t('settings.storageNote') }}
+      </p>
+
+      <DataCleanup />
+    </div>
   </main>
 </template>
 
 <style scoped>
 .page {
   max-width: 900px;
+}
+.tabs {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 18px;
+  border-bottom: 1px solid var(--border);
+}
+.tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 16px;
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+}
+.tab:hover {
+  color: var(--text);
+}
+.tab.active {
+  color: var(--primary);
+  border-bottom-color: var(--primary);
+}
+/* Neutralize the panel-head `.count` auto-margin when used as a tab badge. */
+.tabs .count {
+  margin-left: 2px;
 }
 .panel {
   margin-bottom: 20px;

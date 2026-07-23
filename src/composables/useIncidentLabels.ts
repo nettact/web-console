@@ -33,6 +33,10 @@ export function useIncidentLabels() {
     // Traceroute status / stable reason / mode.
     traceStatusLabel: (s: string) => tr(`incidents.trace.status.${s}`, s),
     traceReasonLabel: (r: string) => tr(`incidents.trace.reason.${r}`, r),
+    // Long-form explanation of a terminal failure reason (why the trace couldn't
+    // complete: no admin, DNS failure, timed out, …). Empty when none is defined,
+    // so callers can hide the line rather than showing a raw code.
+    traceReasonDetail: (r: string) => (r && te(`incidents.trace.reasonDetail.${r}`) ? t(`incidents.trace.reasonDetail.${r}`) : ''),
     modeLabel: (m: string) => tr(`incidents.trace.mode.${m}`, m),
 
     // Evidence comparator, as symbol (compact) and as words (accessible).

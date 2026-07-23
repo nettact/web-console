@@ -14,7 +14,11 @@ import { toDateLocale } from '../../i18n'
 const props = defineProps<{ report: TraceReportView }>()
 
 const { t, locale } = useI18n()
-const { traceStatusLabel, traceReasonLabel, modeLabel } = useIncidentLabels()
+const { traceStatusLabel, traceReasonLabel, traceReasonDetail, modeLabel } = useIncidentLabels()
+
+// Long-form "why it couldn't trace" text, shown when the run ended on a terminal
+// failure reason (report.reason is only set for non-success terminal states).
+const reasonDetail = computed(() => (props.report.reason ? traceReasonDetail(props.report.reason) : ''))
 
 const fmtDateTime = (s: string | null) =>
   s ? new Date(s).toLocaleString(toDateLocale(locale.value), { hour12: false }) : '—'
@@ -62,6 +66,8 @@ function attemptAt(hop: TraceReportView['hops'][number], idx: number) {
       </div>
       <code class="rid" :title="report.report_id">{{ report.report_id }}</code>
     </div>
+
+    <p v-if="reasonDetail" class="reason-detail" role="note">{{ reasonDetail }}</p>
 
     <dl class="facts">
       <div><dt>{{ t('incidents.trace.agent') }}</dt><dd>{{ report.agent_name || report.agent_id }}</dd></div>
@@ -163,14 +169,29 @@ function attemptAt(hop: TraceReportView['hops'][number], idx: number) {
   font-size: 12.5px;
 }
 .facts dt {
+  margin: 0;
   color: var(--text-muted);
 }
 .facts dd {
+  /* Reset the browser's default 40px dd indent so each value sits next to its
+     label instead of far to the right. */
+  margin: 0;
   color: var(--text-dim);
   font-variant-numeric: tabular-nums;
 }
 .running-note {
   margin: 4px 0;
+}
+/* Prominent-but-calm explanation of why a trace couldn't complete. */
+.reason-detail {
+  margin: 10px 0 2px;
+  padding: 8px 11px;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--text-dim);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
 }
 .table-wrap {
   overflow-x: auto;

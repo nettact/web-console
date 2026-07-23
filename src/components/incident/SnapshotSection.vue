@@ -212,9 +212,13 @@ const cpuPct = (v?: number) => (v == null ? '—' : `${v.toFixed(0)}%`)
   font-size: 12.5px;
 }
 .facts dt {
+  margin: 0;
   color: var(--text-muted);
 }
 .facts dd {
+  /* Reset the browser's default 40px dd indent so each value sits next to its
+     label instead of far to the right. */
+  margin: 0;
   color: var(--text-dim);
   font-variant-numeric: tabular-nums;
 }

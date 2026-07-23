@@ -62,7 +62,6 @@ const nav = [
   { to: '/incidents', label: 'nav.incidents' },
   { to: '/monitoring', label: 'nav.monitoring' },
   { to: '/agents', label: 'nav.agents' },
-  { to: '/data-cleanup', label: 'nav.dataCleanup' },
   { to: '/settings', label: 'nav.settings' },
 ]
 
@@ -153,14 +152,6 @@ async function dismissBanner(): Promise<void> {
               <rect x="3" y="4" width="18" height="7" rx="2" />
               <rect x="3" y="13" width="18" height="7" rx="2" />
               <path d="M7 7.5h.01M7 16.5h.01" />
-            </svg>
-            <!-- 数据清理 -->
-            <svg v-else-if="n.to === '/data-cleanup'" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-              stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
-              <ellipse cx="12" cy="5" rx="8" ry="3" />
-              <path d="M4 5v6c0 1.66 3.58 3 8 3s8-1.34 8-3V5" />
-              <path d="M4 11v6c0 1.66 3.58 3 8 3" />
-              <path d="M15.5 15.5 21 21M21 15.5 15.5 21" />
             </svg>
             <!-- 设置 -->
             <svg v-else viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"

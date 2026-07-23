@@ -215,41 +215,43 @@ onBeforeUnmount(() => {
               <span class="badge" :class="severityTone(m.severity)">{{ sevLabel(m.severity) }}</span>
               <span class="hint">{{ m.agent_host || m.agent_id }}</span>
             </div>
-            <table class="mini-table">
-              <thead>
-                <tr>
-                  <th>{{ t('incidents.detail.evTarget') }}</th>
-                  <th>{{ t('incidents.detail.evAgent') }}</th>
-                  <th>{{ t('incidents.detail.evMetric') }}</th>
-                  <th>{{ t('incidents.detail.evValue') }}</th>
-                  <th>{{ t('incidents.detail.evThreshold') }}</th>
-                  <th>{{ t('incidents.detail.evObserved') }}</th>
-                  <th>{{ t('incidents.detail.evState') }}</th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr v-if="!m.evidence.length"><td colspan="7" class="hint">{{ t('incidents.detail.noEvidence') }}</td></tr>
-                <tr v-for="ev in m.evidence" :key="ev.id">
-                  <td>
-                    <span class="mono">{{ ev.target_name || ev.target_addr || ev.target_id }}</span>
-                    <span v-if="ev.target_name && ev.target_addr" class="hint mono"> · {{ ev.target_addr }}</span>
-                  </td>
-                  <td class="hint">{{ m.agent_host || m.agent_id }}</td>
-                  <td>{{ metricLabel(ev.metric_kind) }}</td>
-                  <td class="num mono">{{ fmtNum(ev.value) }}</td>
-                  <td class="num mono">
-                    <span :aria-label="comparatorLabel(ev.comparator)">{{ comparatorSymbol(ev.comparator) }}</span>
-                    {{ fmtNum(ev.threshold) }}
-                  </td>
-                  <td class="hint">{{ fmtDateTime(ev.observed_at) }}</td>
-                  <td>
-                    <span class="badge tiny" :class="ev.currently_abnormal ? 'open' : 'neutral'">
-                      {{ ev.currently_abnormal ? t('incidents.detail.evCurrent') : t('incidents.detail.evHistorical') }}
-                    </span>
-                  </td>
-                </tr>
-              </tbody>
-            </table>
+            <div class="table-scroll">
+              <table class="mini-table">
+                <thead>
+                  <tr>
+                    <th>{{ t('incidents.detail.evTarget') }}</th>
+                    <th>{{ t('incidents.detail.evAgent') }}</th>
+                    <th>{{ t('incidents.detail.evMetric') }}</th>
+                    <th>{{ t('incidents.detail.evValue') }}</th>
+                    <th>{{ t('incidents.detail.evThreshold') }}</th>
+                    <th>{{ t('incidents.detail.evObserved') }}</th>
+                    <th>{{ t('incidents.detail.evState') }}</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr v-if="!m.evidence.length"><td colspan="7" class="hint">{{ t('incidents.detail.noEvidence') }}</td></tr>
+                  <tr v-for="ev in m.evidence" :key="ev.id">
+                    <td class="ev-target">
+                      <span class="mono ev-name">{{ ev.target_name || ev.target_addr || ev.target_id }}</span>
+                      <span v-if="ev.target_name && ev.target_addr" class="hint mono ev-addr">{{ ev.target_addr }}</span>
+                    </td>
+                    <td class="hint">{{ m.agent_host || m.agent_id }}</td>
+                    <td>{{ metricLabel(ev.metric_kind) }}</td>
+                    <td class="num mono">{{ fmtNum(ev.value) }}</td>
+                    <td class="num mono">
+                      <span :aria-label="comparatorLabel(ev.comparator)">{{ comparatorSymbol(ev.comparator) }}</span>
+                      {{ fmtNum(ev.threshold) }}
+                    </td>
+                    <td class="hint">{{ fmtDateTime(ev.observed_at) }}</td>
+                    <td>
+                      <span class="badge tiny" :class="ev.currently_abnormal ? 'open' : 'neutral'">
+                        {{ ev.currently_abnormal ? t('incidents.detail.evCurrent') : t('incidents.detail.evHistorical') }}
+                      </span>
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
           </div>
         </section>
 
@@ -295,7 +297,7 @@ onBeforeUnmount(() => {
   top: 0;
   right: 0;
   bottom: 0;
-  width: min(680px, 100%);
+  width: min(940px, 96vw);
   background: var(--surface-solid);
   border-left: 1px solid var(--border);
   box-shadow: -10px 0 34px rgba(0, 0, 0, 0.32);
@@ -356,9 +358,13 @@ onBeforeUnmount(() => {
   font-size: 12.5px;
 }
 .facts dt {
+  margin: 0;
   color: var(--text-muted);
 }
 .facts dd {
+  /* Reset the browser's default 40px dd indent, which otherwise stacks on top of
+     the flex gap and pushes each value far from its label. */
+  margin: 0;
   color: var(--text-dim);
   font-variant-numeric: tabular-nums;
 }
@@ -389,6 +395,9 @@ onBeforeUnmount(() => {
   padding: 1px 7px;
   font-size: 10.5px;
 }
+.table-scroll {
+  overflow-x: auto;
+}
 .mini-table {
   width: 100%;
   border-collapse: collapse;
@@ -400,6 +409,9 @@ onBeforeUnmount(() => {
   padding: 4px 8px;
   border-bottom: 1px solid var(--border);
   vertical-align: top;
+  /* Keep headers and short values on one line so narrow columns can't collapse
+     into single-character vertical wrapping; the target column opts back out. */
+  white-space: nowrap;
 }
 .mini-table th {
   color: var(--text-muted);
@@ -408,6 +420,20 @@ onBeforeUnmount(() => {
 .mini-table td.num {
   text-align: right;
   font-variant-numeric: tabular-nums;
+}
+/* The target holds a full URL — let it wrap within a bounded column instead of
+   hogging width and squeezing every other column. */
+.mini-table td.ev-target {
+  white-space: normal;
+  word-break: break-all;
+  min-width: 220px;
+}
+/* Stack the name and address on separate lines so the URL starts at the cell's
+   left edge and every wrapped line stays column-aligned (an inline " · addr"
+   would start mid-line and wrap its tail back under the name). */
+.ev-target .ev-name,
+.ev-target .ev-addr {
+  display: block;
 }
 .notice {
   font-size: 12.5px;
