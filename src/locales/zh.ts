@@ -1224,6 +1224,7 @@ export default {
     sysDisk: '磁盘',
     sysIface: '网口',
     sysWifi: 'Wi-Fi',
+    sysNetwork: '网络 I/O',
     sysOverview: '系统概览',
     agentRuntime: 'Agent 运行状态',
     cpuTotal: '总 CPU',

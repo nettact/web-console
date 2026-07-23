@@ -1209,6 +1209,7 @@ export default {
     sysDisk: 'Disk',
     sysIface: 'Interfaces',
     sysWifi: 'Wi-Fi',
+    sysNetwork: 'Network I/O',
     sysOverview: 'System overview',
     agentRuntime: 'Agent status',
     cpuTotal: 'Total CPU',

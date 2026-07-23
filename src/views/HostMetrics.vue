@@ -42,7 +42,7 @@ interface HostGroup {
   metrics: SeriesInfo[]
   collection?: Collection
 }
-type Collection = 'cpu' | 'disk' | 'iface' | 'wifi'
+type Collection = 'cpu' | 'disk' | 'iface' | 'wifi' | 'netio'
 
 // Group host series: CPU (total + cores), disk, the network interfaces, and the
 // Wi-Fi adapters each collapse into one collection; the remaining host metrics
@@ -53,13 +53,16 @@ const SECTION_ORDER: Record<string, number> = {
   'host::disk': 1,
   'iface::all': 2,
   'wifi::all': 3,
-  'host::overview': 4,
-  'agent::runtime': 5,
+  'host::network': 4,
+  'host::overview': 5,
+  'agent::runtime': 6,
 }
 function classify(s: SeriesInfo): { key: string; label: string; collection?: Collection } {
   if (s.kind === 'host.cpu.pct' || s.kind === 'host.cpu.core.pct')
     return { key: 'host::cpu', label: t('hostMetrics.sysCpu'), collection: 'cpu' }
   if (s.kind.startsWith('host.disk.')) return { key: 'host::disk', label: t('hostMetrics.sysDisk'), collection: 'disk' }
+  if (s.kind === 'host.net.rx_bps' || s.kind === 'host.net.tx_bps')
+    return { key: 'host::network', label: t('hostMetrics.sysNetwork'), collection: 'netio' }
   if (familyOf(s.kind) === 'iface') return { key: 'iface::all', label: t('hostMetrics.sysIface'), collection: 'iface' }
   if (familyOf(s.kind) === 'wifi') return { key: 'wifi::all', label: t('hostMetrics.sysWifi'), collection: 'wifi' }
   if (familyOf(s.kind) === 'host') return { key: 'host::overview', label: t('hostMetrics.sysOverview') }
@@ -79,6 +82,18 @@ const groups = computed<HostGroup[]>(() => {
     g.metrics.push(s)
   }
   for (const g of m.values()) g.metrics.sort((a, b) => orderOf(a.kind) - orderOf(b.kind))
+  // Total CPU % lives primarily in its own CPU section, but we also surface it as
+  // the headline metric at the very top of the System overview. Inject after the
+  // per-group sort so it stays first regardless of METRIC_ORDER.
+  const totalCpu = series.value.find((s) => s.kind === 'host.cpu.pct')
+  if (totalCpu) {
+    let overview = m.get('host::overview')
+    if (!overview) {
+      overview = { key: 'host::overview', target: totalCpu.target, label: t('hostMetrics.sysOverview'), metrics: [] }
+      m.set('host::overview', overview)
+    }
+    if (!overview.metrics.some((mm) => mm.kind === 'host.cpu.pct')) overview.metrics.unshift(totalCpu)
+  }
   return [...m.values()].sort((a, b) => (SECTION_ORDER[a.key] ?? 9) - (SECTION_ORDER[b.key] ?? 9))
 })
 
@@ -145,6 +160,22 @@ const collectionCharts = computed<CollChart[]>(() => {
       status: true,
       series: [{ key: ckey('iface.up', name), label: metricLabel('iface.up'), kind: 'iface.up', target: name, unit: 'bool', color: kindColor('iface.up') }],
     }))
+  }
+  if (g.collection === 'netio') {
+    // One chart for the host's aggregate network throughput: download (rx) and
+    // upload (tx) rates overlaid, both on the shared bps axis.
+    const one = (kind: string, label: string): CollSeries => ({
+      key: ckey(kind, 'host'),
+      label,
+      kind,
+      target: 'host',
+      unit: 'bps',
+      color: kindColor(kind),
+    })
+    const series: CollSeries[] = []
+    if (g.metrics.some((m) => m.kind === 'host.net.rx_bps')) series.push(one('host.net.rx_bps', t('dashboard.download')))
+    if (g.metrics.some((m) => m.kind === 'host.net.tx_bps')) series.push(one('host.net.tx_bps', t('dashboard.upload')))
+    return series.length ? [{ id: 'netio', title: t('hostMetrics.sysNetwork'), series }] : []
   }
   if (g.collection === 'wifi') {
     // One section for all wireless adapters, each keyed by interface name: a

@@ -33,7 +33,10 @@ export const RAW_MAX_SEC = 2 * 3600
 export const NAT_CODE_KINDS = new Set(['probe.nat.mapping', 'probe.nat.filtering', 'probe.nat.type'])
 export const TCP_ERROR_KIND = 'probe.tcp.error_class'
 export const CODE_KINDS = new Set([...NAT_CODE_KINDS, TCP_ERROR_KIND])
-export const INFO_KINDS = new Set(['host.mem.total', 'probe.icmp.samples', ...CODE_KINDS])
+// host.uptime_s is a monotonic counter: plotting it as a trend line is
+// meaningless, but the latest value ("up for N days") is useful — so it's an info
+// kind too, shown as a card only, never on the chart and never a picker chip.
+export const INFO_KINDS = new Set(['host.mem.total', 'host.uptime_s', 'probe.icmp.samples', ...CODE_KINDS])
 
 // natCodeLabel maps a NAT result code to its category label. These are the RFC
 // 4787 / RFC 3489 terms, shown verbatim in English (they are standardized terms;
@@ -131,6 +134,8 @@ const KIND_COLORS: Record<string, string> = {
   'host.cpu.pct': '#38bdf8',
   'host.disk.used': '#818cf8',
   'host.disk.free': '#34d399',
+  'host.net.rx_bps': '#38bdf8',
+  'host.net.tx_bps': '#f472b6',
 }
 export const FALLBACK = ['#38bdf8', '#fbbf24', '#a78bfa', '#f472b6', '#818cf8', '#34d399']
 export const kindColor = (k: string) => KIND_COLORS[k] || FALLBACK[Math.abs(hash(k)) % FALLBACK.length]
