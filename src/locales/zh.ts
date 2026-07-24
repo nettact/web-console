@@ -1088,7 +1088,8 @@ export default {
 
   agents: {
     title: 'Agent 管理',
-    sub: '管理 agent 并签发注册令牌。agent 使用令牌自助注册，因此生成令牌即为「添加 agent」。',
+    sub: '集中查看节点状态、资源水位与连接健康度。',
+    addAgent: '添加 Agent',
     agentList: 'Agent 列表',
     thDisplayName: '显示名',
     thHostname: '主机名',
@@ -1139,7 +1140,13 @@ export default {
   agentStatus: {
     tabStatus: '状态列表',
     tabGroups: '分组管理',
-    tabEnroll: '接入',
+    tabEnroll: '接入管理',
+    summaryAll: '全部',
+    liveSync: '实时同步',
+    syncStale: '同步异常',
+    resultCount: '{n} 个节点',
+    download: '下行',
+    upload: '上行',
     statusOffline: '离线',
     statusAbnormal: '异常',
     statusNeverConnected: '从未接入',

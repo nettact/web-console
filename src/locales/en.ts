@@ -1073,7 +1073,8 @@ export default {
 
   agents: {
     title: 'Agents',
-    sub: 'Manage agents and issue enrollment tokens. Agents self-enroll with a token, so generating one is how you add an agent.',
+    sub: 'Monitor node status, resource levels and connection health in one place.',
+    addAgent: 'Add Agent',
     agentList: 'Agents',
     thDisplayName: 'Display name',
     thHostname: 'Hostname',
@@ -1124,7 +1125,13 @@ export default {
   agentStatus: {
     tabStatus: 'Status',
     tabGroups: 'Groups',
-    tabEnroll: 'Enroll',
+    tabEnroll: 'Enrollment',
+    summaryAll: 'All',
+    liveSync: 'Live sync',
+    syncStale: 'Sync stale',
+    resultCount: '{n} nodes',
+    download: 'Down',
+    upload: 'Up',
     statusOffline: 'Offline',
     statusAbnormal: 'Abnormal',
     statusNeverConnected: 'Never connected',

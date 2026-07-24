@@ -11,7 +11,6 @@ import {
   isAgentFilter,
   matchesAgentSearch,
   matchesGroup,
-  sampleAge,
   type AgentFilter,
 } from '../lib/agentStatusPage'
 import MonitorStateBadge from '../components/status/MonitorStateBadge.vue'
@@ -81,11 +80,10 @@ const visibleRows = computed(() =>
 )
 
 const summaryCards = computed(() => [
-  { key: 'offline' as AgentFilter, label: t('agentStatus.statusOffline'), n: counts.value.byStatus.offline, tone: 'bad' },
-  { key: 'abnormal' as AgentFilter, label: t('agentStatus.statusAbnormal'), n: counts.value.byStatus.abnormal, tone: 'warn' },
-  { key: 'never_connected' as AgentFilter, label: t('agentStatus.statusNeverConnected'), n: counts.value.byStatus.never_connected, tone: 'unknown' },
+  { key: 'all' as AgentFilter, label: t('agentStatus.summaryAll'), n: scopedRows.value.length, tone: 'total' },
   { key: 'ok' as AgentFilter, label: t('agentStatus.statusOk'), n: counts.value.byStatus.ok, tone: 'good' },
-  { key: 'muted' as AgentFilter, label: t('agentStatus.muted'), n: counts.value.muted, tone: 'unknown' },
+  { key: 'abnormal' as AgentFilter, label: t('agentStatus.statusAbnormal'), n: counts.value.byStatus.abnormal, tone: 'warn' },
+  { key: 'offline' as AgentFilter, label: t('agentStatus.statusOffline'), n: counts.value.byStatus.offline, tone: 'bad' },
 ])
 
 function toggleCard(key: AgentFilter) {
@@ -100,14 +98,6 @@ const filtersActive = computed(() => !!search.value.trim() || statusFilter.value
 
 // ---- per-row helpers ----
 const fmtDateTime = (s: string | null) => (s ? new Date(s).toLocaleString(toDateLocale(locale.value)) : '—')
-function relTime(iso: string | null): string {
-  const secs = sampleAge(iso, now.value)
-  if (secs == null) return '—'
-  if (secs < 60) return t('agentStatus.ageSeconds', { n: secs })
-  if (secs < 3600) return t('agentStatus.ageMinutes', { n: Math.floor(secs / 60) })
-  if (secs < 86400) return t('agentStatus.ageHours', { n: Math.floor(secs / 3600) })
-  return t('agentStatus.ageDays', { n: Math.floor(secs / 86400) })
-}
 function agentName(r: AgentStatusRow): string {
   return r.display_name || r.hostname || r.id
 }
@@ -268,120 +258,159 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <main class="page">
-    <div class="page-head">
-      <h2>{{ t('agents.title') }}</h2>
-      <p class="sub">{{ t('agents.sub') }}</p>
-    </div>
-    <p v-if="error" class="err">{{ error }}</p>
-
-    <nav class="tabs">
-      <button :class="{ active: tab === 'status' }" @click="tab = 'status'">{{ t('agentStatus.tabStatus') }}</button>
-      <button :class="{ active: tab === 'groups' }" @click="tab = 'groups'">{{ t('agentStatus.tabGroups') }}</button>
-      <button :class="{ active: tab === 'enroll' }" @click="tab = 'enroll'">{{ t('agentStatus.tabEnroll') }}</button>
-    </nav>
-
-    <!-- ============ STATUS LIST ============ -->
-    <section v-show="tab === 'status'">
-      <p v-if="agentStatus.stale" class="hint stale-note">{{ t('agentStatus.staleSnapshot') }}</p>
-      <div class="cards">
-        <button
-          v-for="c in summaryCards"
-          :key="c.key"
-          class="card"
-          :class="[`tone-${c.tone}`, { active: statusFilter === c.key }]"
-          @click="toggleCard(c.key)"
-        >
-          <span class="card-n">{{ c.n }}</span>
-          <span class="card-l">{{ c.label }}</span>
+  <main class="page agents-page">
+    <header class="agents-hero">
+      <div>
+        <div class="eyebrow">NETTACT / AGENT FLEET</div>
+        <h2>{{ t('agents.title') }}</h2>
+        <p>{{ t('agents.sub') }}</p>
+      </div>
+      <div class="hero-actions">
+        <span class="sync-state" :class="{ stale: agentStatus.stale }">
+          <i></i>
+          {{ agentStatus.stale ? t('agentStatus.syncStale') : t('agentStatus.liveSync') }}
+        </span>
+        <button class="btn btn-primary add-agent" @click="tab = 'enroll'">
+          <span aria-hidden="true">＋</span>{{ t('agents.addAgent') }}
         </button>
       </div>
+    </header>
 
-      <div class="filter-bar">
-        <input v-model="search" type="search" class="search" :placeholder="t('agentStatus.searchPlaceholder')" />
-        <select v-model="groupFilter">
-          <option value="all">{{ t('agentStatus.allGroups') }}</option>
-          <option value="ungrouped">{{ t('agentStatus.ungrouped') }}</option>
-          <option v-for="g in groupFilterOptions" :key="g.id" :value="g.id">{{ g.name }}</option>
-        </select>
-        <select v-model="statusFilter">
-          <option value="all">{{ t('agentStatus.allStatuses') }}</option>
-          <option value="offline">{{ t('agentStatus.statusOffline') }}</option>
-          <option value="abnormal">{{ t('agentStatus.statusAbnormal') }}</option>
-          <option value="never_connected">{{ t('agentStatus.statusNeverConnected') }}</option>
-          <option value="ok">{{ t('agentStatus.statusOk') }}</option>
-          <option value="muted">{{ t('agentStatus.muted') }}</option>
-        </select>
-        <button v-if="filtersActive" class="link-btn" @click="resetFilters">{{ t('agentStatus.reset') }}</button>
-        <span class="spacer"></span>
-        <span class="count">{{ visibleRows.length }}</span>
-      </div>
+    <p v-if="error" class="err page-error">{{ error }}</p>
 
-      <div class="table-wrap">
-        <table class="data-table agents-table">
-          <thead>
-            <tr>
-              <th>{{ t('agentStatus.thName') }}</th>
-              <th>{{ t('agentStatus.thGroups') }}</th>
-              <th>{{ t('agentStatus.thStatus') }}</th>
-              <th>{{ t('agentStatus.thLastSeen') }}</th>
-              <th>{{ t('agentStatus.thVersion') }}</th>
-              <th>{{ t('agentStatus.thUptime') }}</th>
-              <th>CPU</th>
-              <th>{{ t('agentStatus.thLoad') }}</th>
-              <th>{{ t('agentStatus.thMemory') }}</th>
-              <th>{{ t('agentStatus.thDisk') }}</th>
-              <th>{{ t('agentStatus.thNet') }}</th>
-              <th></th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr v-if="agentStatus.error && !agentStatus.loaded">
-              <td colspan="12" class="err">{{ agentStatus.error }}</td>
-            </tr>
-            <tr v-else-if="!visibleRows.length">
-              <td colspan="12" class="hint">{{ agentStatus.loaded ? t('agentStatus.noneMatch') : t('agents.noAgents') }}</td>
-            </tr>
-            <tr v-for="r in visibleRows" :key="r.id" class="agent-row" @click="openAgent(r)">
-              <td>
-                <div class="name-cell">
-                  <OsIcon :platform="r.platform" :size="16" />
-                  <div class="name-lines">
-                    <div class="name">{{ agentName(r) }}</div>
-                    <div v-if="r.hostname && r.display_name" class="hint mono">{{ r.hostname }}</div>
-                  </div>
+    <section v-show="tab === 'status'" class="summary-grid" :aria-label="t('agentStatus.summaryAll')">
+      <button
+        v-for="c in summaryCards"
+        :key="c.key"
+        class="summary-card"
+        :class="[`tone-${c.tone}`, { active: statusFilter === c.key }]"
+        @click="toggleCard(c.key)"
+      >
+        <span class="radar" aria-hidden="true"><i></i><b></b></span>
+        <span class="summary-copy">
+          <small>{{ c.label }}</small>
+          <strong>{{ c.n }}</strong>
+        </span>
+        <svg class="spark" viewBox="0 0 120 28" preserveAspectRatio="none" aria-hidden="true">
+          <path d="M0 23 10 19 18 22 27 13 36 18 45 11 55 17 65 8 75 15 84 6 94 12 104 5 120 9" />
+        </svg>
+      </button>
+    </section>
+
+    <div class="console-surface">
+      <nav class="tabs">
+        <button :class="{ active: tab === 'status' }" @click="tab = 'status'">{{ t('agentStatus.tabStatus') }}</button>
+        <button :class="{ active: tab === 'groups' }" @click="tab = 'groups'">{{ t('agentStatus.tabGroups') }}</button>
+        <button :class="{ active: tab === 'enroll' }" @click="tab = 'enroll'">{{ t('agentStatus.tabEnroll') }}</button>
+      </nav>
+
+      <!-- ============ STATUS LIST ============ -->
+      <section v-show="tab === 'status'" class="status-pane">
+        <p v-if="agentStatus.stale" class="hint stale-note">{{ t('agentStatus.staleSnapshot') }}</p>
+        <div class="filter-bar">
+          <label class="search-control">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7" /><path d="m20 20-4-4" /></svg>
+            <input v-model="search" type="search" :placeholder="t('agentStatus.searchPlaceholder')" />
+          </label>
+          <select v-model="groupFilter" :aria-label="t('agentStatus.allGroups')">
+            <option value="all">{{ t('agentStatus.allGroups') }}</option>
+            <option value="ungrouped">{{ t('agentStatus.ungrouped') }}</option>
+            <option v-for="g in groupFilterOptions" :key="g.id" :value="g.id">{{ g.name }}</option>
+          </select>
+          <select v-model="statusFilter" :aria-label="t('agentStatus.allStatuses')">
+            <option value="all">{{ t('agentStatus.allStatuses') }}</option>
+            <option value="offline">{{ t('agentStatus.statusOffline') }}</option>
+            <option value="abnormal">{{ t('agentStatus.statusAbnormal') }}</option>
+            <option value="never_connected">{{ t('agentStatus.statusNeverConnected') }}</option>
+            <option value="ok">{{ t('agentStatus.statusOk') }}</option>
+            <option value="muted">{{ t('agentStatus.muted') }}</option>
+          </select>
+          <button v-if="filtersActive" class="reset-btn" @click="resetFilters">{{ t('agentStatus.reset') }}</button>
+          <span class="spacer"></span>
+          <span class="result-count">{{ t('agentStatus.resultCount', { n: visibleRows.length }) }}</span>
+        </div>
+
+        <div class="status-scroll">
+          <div class="status-list">
+            <div class="status-grid list-head" aria-hidden="true">
+              <span>{{ t('agentStatus.thName') }}</span>
+              <span>{{ t('agentStatus.thGroups') }}</span>
+              <span>{{ t('agentStatus.thStatus') }}</span>
+              <span>{{ t('agentStatus.thUptime') }}</span>
+              <span>{{ t('agentStatus.thVersion') }}</span>
+              <div class="resource-head">
+                <span>CPU</span>
+                <span>{{ t('agentStatus.thLoad') }}</span>
+                <span>{{ t('agentStatus.thMemory') }}</span>
+                <span>{{ t('agentStatus.thDisk') }}</span>
+                <span>{{ t('agentStatus.thNet') }}</span>
+              </div>
+              <span></span>
+            </div>
+
+            <div v-if="agentStatus.error && !agentStatus.loaded" class="list-message err">{{ agentStatus.error }}</div>
+            <div v-else-if="!visibleRows.length" class="list-message hint">
+              {{ agentStatus.loaded ? t('agentStatus.noneMatch') : t('agents.noAgents') }}
+            </div>
+
+            <article
+              v-for="r in visibleRows"
+              :key="r.id"
+              class="status-grid agent-strip"
+              :class="`state-${r.status}`"
+              tabindex="0"
+              @click="openAgent(r)"
+              @keyup.enter="openAgent(r)"
+            >
+              <div class="identity-cell">
+                <span class="device-orbit"><OsIcon :platform="r.platform" :size="21" /></span>
+                <div class="name-lines">
+                  <strong>{{ agentName(r) }}</strong>
+                  <span class="mono">{{ r.hostname || r.id }}</span>
                 </div>
-              </td>
-              <td>
-                <span v-if="!r.groups.length" class="hint">—</span>
+              </div>
+
+              <div class="groups-cell">
+                <span v-if="!r.groups.length" class="empty-value">—</span>
                 <span v-for="g in r.groups" :key="g.id" class="grp-chip">{{ g.name }}</span>
-              </td>
-              <td>
+              </div>
+
+              <div class="agent-state-cell">
                 <div class="status-cell">
                   <MonitorStateBadge dim="agent" :state="r.status" />
                   <span v-if="r.connectivity_alerts_muted" class="muted-tag">{{ t('agentStatus.mutedTag') }}</span>
                 </div>
-                <div v-if="reasonText(r)" class="hint reason">{{ reasonText(r) }}</div>
-              </td>
-              <td class="hint">{{ relTime(r.last_seen_at) }}</td>
-              <td class="mono">{{ r.agent_version || '—' }}</td>
-              <td><AgentResourceCell kind="uptime" :resources="r.resources" :now="now" /></td>
-              <td><AgentResourceCell kind="cpu" :resources="r.resources" :now="now" /></td>
-              <td><AgentResourceCell kind="load" :resources="r.resources" :now="now" /></td>
-              <td><AgentResourceCell kind="memory" :resources="r.resources" :now="now" /></td>
-              <td><AgentResourceCell kind="disk" :resources="r.resources" :now="now" /></td>
-              <td><AgentResourceCell kind="net" :resources="r.resources" :now="now" /></td>
-              <td class="actions" @click.stop>
-                <button class="link-btn" @click="toggleMute(r)">
-                  {{ r.connectivity_alerts_muted ? t('agentStatus.unmute') : t('agentStatus.mute') }}
+                <span v-if="reasonText(r)" class="reason">{{ reasonText(r) }}</span>
+              </div>
+
+              <AgentResourceCell kind="uptime" :resources="r.resources" :now="now" />
+              <span class="version mono">{{ r.agent_version || '—' }}</span>
+
+              <div class="resource-grid">
+                <AgentResourceCell kind="cpu" :resources="r.resources" :now="now" />
+                <AgentResourceCell kind="load" :resources="r.resources" :now="now" />
+                <AgentResourceCell kind="memory" :resources="r.resources" :now="now" />
+                <AgentResourceCell kind="disk" :resources="r.resources" :now="now" />
+                <AgentResourceCell kind="net" :resources="r.resources" :now="now" />
+              </div>
+
+              <div class="row-actions" @click.stop>
+                <button
+                  class="icon-action"
+                  :class="{ active: r.connectivity_alerts_muted }"
+                  :title="r.connectivity_alerts_muted ? t('agentStatus.unmute') : t('agentStatus.mute')"
+                  @click="toggleMute(r)"
+                >
+                  <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-1.2-1.1-1.7-1.9-3.2" /><path d="M10 21h4M3 3l18 18" /></svg>
                 </button>
-                <button class="link-btn danger" :disabled="busy" @click="removeAgent(r)">{{ t('common.delete') }}</button>
-              </td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
-    </section>
+                <button class="icon-action danger" :disabled="busy" :title="t('common.delete')" @click="removeAgent(r)">
+                  <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M9 7V4h6v3M7 7l1 13h8l1-13M10 11v5M14 11v5" /></svg>
+                </button>
+              </div>
+            </article>
+          </div>
+        </div>
+      </section>
 
     <!-- ============ GROUPS ============ -->
     <section v-show="tab === 'groups'" class="panel">
@@ -441,250 +470,458 @@ onBeforeUnmount(() => {
         </table>
       </div>
     </section>
+    </div>
   </main>
 </template>
 
 <style scoped>
-/* The status table is wide (12 columns); widen the page past the global 1160px
-   cap so it fits without horizontal scrolling on typical screens. The scoped
-   selector outranks the global .page rule. */
-.page {
+.agents-page {
   max-width: 1600px;
+  padding-top: 24px;
+}
+.agents-hero {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  margin-bottom: 20px;
+}
+.agents-hero h2 {
+  margin-top: 3px;
+  font-size: 27px;
+  letter-spacing: -.025em;
+}
+.agents-hero p {
+  margin: 5px 0 0;
+  color: var(--text-dim);
+  font-size: 12.5px;
+}
+.eyebrow {
+  color: var(--primary);
+  font-family: var(--mono);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: .16em;
+}
+.hero-actions {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+}
+.sync-state {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  color: var(--text-dim);
+  font-size: 12px;
+  white-space: nowrap;
+}
+.sync-state i {
+  position: relative;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #22d3ee;
+  box-shadow: 0 0 12px #22d3ee;
+}
+.sync-state i::after {
+  content: '';
+  position: absolute;
+  inset: -5px;
+  border: 1px solid color-mix(in srgb, #22d3ee 48%, transparent);
+  border-radius: 50%;
+  animation: sync-pulse 2s ease-out infinite;
+}
+.sync-state.stale i {
+  background: var(--warning);
+  box-shadow: 0 0 12px var(--warning);
+}
+.add-agent {
+  min-height: 38px;
+  padding-inline: 17px;
+}
+.add-agent span {
+  font-size: 18px;
+  font-weight: 400;
+  line-height: 1;
+}
+.page-error {
+  margin: -8px 0 16px;
+}
+@keyframes sync-pulse {
+  70%, 100% { opacity: 0; transform: scale(1.7); }
+}
+
+.summary-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(170px, 1fr));
+  gap: 14px;
+  margin-bottom: 20px;
+}
+.summary-card {
+  --tone: var(--primary);
+  position: relative;
+  display: grid;
+  grid-template-columns: 58px 1fr;
+  align-items: center;
+  min-height: 112px;
+  padding: 16px 18px;
+  overflow: hidden;
+  color: var(--text);
+  text-align: left;
+  border: 1px solid color-mix(in srgb, var(--tone) 38%, var(--border));
+  border-radius: 11px;
+  background:
+    linear-gradient(135deg, color-mix(in srgb, var(--tone) 7%, transparent), transparent 58%),
+    color-mix(in srgb, var(--surface) 92%, transparent);
+  box-shadow: inset 0 1px color-mix(in srgb, var(--tone) 16%, transparent), var(--shadow-soft);
+  cursor: pointer;
+  transition: border-color .16s ease, transform .16s ease, background .16s ease;
+}
+.summary-card:hover,
+.summary-card.active {
+  border-color: color-mix(in srgb, var(--tone) 75%, transparent);
+  background:
+    linear-gradient(135deg, color-mix(in srgb, var(--tone) 13%, transparent), transparent 62%),
+    color-mix(in srgb, var(--surface) 95%, transparent);
+}
+.summary-card:hover { transform: translateY(-1px); }
+.summary-card.active { box-shadow: inset 0 0 24px color-mix(in srgb, var(--tone) 7%, transparent), 0 0 18px color-mix(in srgb, var(--tone) 10%, transparent); }
+.summary-card.tone-good { --tone: var(--success); }
+.summary-card.tone-warn { --tone: var(--warning); }
+.summary-card.tone-bad { --tone: var(--danger); }
+.radar {
+  position: relative;
+  width: 48px;
+  height: 48px;
+  border: 1px solid color-mix(in srgb, var(--tone) 48%, transparent);
+  border-radius: 50%;
+  background: radial-gradient(circle, transparent 27%, color-mix(in srgb, var(--tone) 12%, transparent) 28% 30%, transparent 31% 54%, color-mix(in srgb, var(--tone) 13%, transparent) 55% 57%, transparent 58%);
+  box-shadow: 0 0 18px color-mix(in srgb, var(--tone) 18%, transparent);
+}
+.radar::before,
+.radar::after {
+  content: '';
+  position: absolute;
+  background: color-mix(in srgb, var(--tone) 38%, transparent);
+}
+.radar::before { top: 50%; left: -5px; width: 56px; height: 1px; }
+.radar::after { top: -5px; left: 50%; width: 1px; height: 56px; }
+.radar i {
+  position: absolute;
+  inset: 9px;
+  border: 1px solid var(--tone);
+  border-radius: 50%;
+}
+.radar b {
+  position: absolute;
+  top: 8px;
+  left: 50%;
+  width: 1px;
+  height: 16px;
+  background: var(--tone);
+  box-shadow: 0 0 7px var(--tone);
+  transform: rotate(42deg);
+  transform-origin: 50% 16px;
+}
+.summary-copy {
+  z-index: 1;
+  display: grid;
+  justify-items: end;
+}
+.summary-copy small {
+  color: color-mix(in srgb, var(--tone) 78%, var(--text));
+  font-size: 11px;
+  font-weight: 600;
+}
+.summary-copy strong {
+  margin-top: 3px;
+  font-family: var(--mono);
+  font-size: 31px;
+  line-height: 1;
+  letter-spacing: -.04em;
+}
+.spark {
+  position: absolute;
+  right: 12px;
+  bottom: 8px;
+  width: 46%;
+  height: 22px;
+  opacity: .65;
+}
+.spark path {
+  fill: none;
+  stroke: var(--tone);
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
+}
+
+.console-surface {
+  position: relative;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--primary) 22%, var(--border));
+  border-radius: 13px;
+  background: color-mix(in srgb, var(--surface) 90%, transparent);
+  box-shadow: inset 0 1px rgba(255,255,255,.025), var(--shadow);
+  backdrop-filter: blur(16px);
+}
+.console-surface::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 220px;
+  height: 1px;
+  background: linear-gradient(90deg, var(--primary), transparent);
+  box-shadow: 0 0 10px var(--primary);
 }
 .tabs {
   display: flex;
-  gap: 4px;
+  gap: 3px;
+  min-height: 48px;
+  padding: 0 15px;
   border-bottom: 1px solid var(--border);
-  margin-bottom: 16px;
+  background: linear-gradient(90deg, color-mix(in srgb, var(--primary-soft) 45%, transparent), transparent 38%);
 }
 .tabs button {
-  border: none;
-  background: transparent;
+  position: relative;
+  padding: 0 18px;
   color: var(--text-dim);
   font: inherit;
-  padding: 8px 14px;
-  cursor: pointer;
-  border-bottom: 2px solid transparent;
-  margin-bottom: -1px;
-}
-.tabs button.active {
-  color: var(--text);
-  border-bottom-color: var(--primary);
-}
-.cards {
-  display: flex;
-  gap: 10px;
-  flex-wrap: wrap;
-  margin-bottom: 14px;
-}
-.card {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 2px;
-  min-width: 96px;
-  padding: 10px 14px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  background: var(--surface);
+  font-size: 12.5px;
+  border: 0;
+  background: transparent;
   cursor: pointer;
 }
-.card.active {
-  border-color: var(--primary);
-  background: var(--primary-soft);
+.tabs button::after {
+  content: '';
+  position: absolute;
+  right: 14px;
+  bottom: -1px;
+  left: 14px;
+  height: 2px;
+  background: transparent;
 }
-.card-n {
-  font-size: 22px;
-  font-weight: 700;
-}
-.card-l {
-  font-size: 12px;
-  color: var(--text-dim);
-}
-.card.tone-bad .card-n {
-  color: #fca5a5;
-}
-.card.tone-warn .card-n {
-  color: #fcd34d;
-}
-.card.tone-good .card-n {
-  color: #6ee7b7;
-}
+.tabs button.active { color: var(--primary); }
+.tabs button.active::after { background: var(--primary); box-shadow: 0 0 9px var(--primary); }
+.status-pane { padding: 16px 10px 10px; }
+.stale-note { margin: 0 4px 10px; color: var(--warning); }
 .filter-bar {
   display: flex;
   align-items: center;
   gap: 10px;
-  margin-bottom: 12px;
+  padding: 0 4px 14px;
   flex-wrap: wrap;
 }
-.filter-bar .search {
-  min-width: 220px;
+.search-control {
+  position: relative;
+  display: block;
+  min-width: 250px;
 }
-.filter-bar .spacer {
-  flex: 1;
+.search-control svg {
+  position: absolute;
+  top: 50%;
+  left: 11px;
+  width: 16px;
+  fill: none;
+  stroke: var(--text-muted);
+  stroke-width: 1.8;
+  transform: translateY(-50%);
+  pointer-events: none;
 }
-.count {
-  min-width: 22px;
-  padding: 1px 9px;
-  border-radius: var(--radius-pill);
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--text-dim);
-  background: var(--surface-2);
-  border: 1px solid var(--border);
-  text-align: center;
-}
-.table-wrap {
-  overflow-x: auto;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-}
-.agents-table {
-  min-width: 1240px;
-}
-.agent-row {
-  cursor: pointer;
-}
-.agent-row:hover {
-  background: var(--surface-2);
-}
-.name-cell {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-.name-lines {
-  min-width: 0;
-}
-.name {
-  font-weight: 600;
-}
-.mono {
-  font-family: var(--mono, monospace);
-  font-size: 12px;
-}
-.grp-chip {
-  display: inline-block;
-  font-size: 11px;
-  padding: 1px 8px;
-  margin: 1px 3px 1px 0;
-  border-radius: var(--radius-pill);
-  border: 1px solid var(--border-strong);
-  background: var(--surface-2);
-  color: var(--text-dim);
-}
-.status-cell {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-.reason {
-  margin-top: 2px;
-}
-.muted-tag {
-  font-size: 10.5px;
-  padding: 0 6px;
-  border-radius: var(--radius-pill);
-  border: 1px solid var(--border-strong);
-  color: var(--text-muted);
-}
-.actions {
-  display: flex;
-  gap: 10px;
-  justify-content: flex-end;
-  white-space: nowrap;
-}
-.stale-note {
-  margin: 0 0 8px;
-}
-.link-btn {
-  border: none;
-  background: transparent;
+.search-control input { width: 100%; padding-left: 35px !important; }
+.filter-bar select { min-width: 130px; }
+.reset-btn {
+  padding: 7px 9px;
   color: var(--primary);
   font: inherit;
-  padding: 0;
+  font-size: 11px;
+  border: 0;
+  background: transparent;
   cursor: pointer;
 }
-.link-btn:hover {
-  text-decoration: underline;
-}
-.link-btn.danger {
-  color: var(--danger);
-}
-.panel {
-  margin-bottom: 20px;
-}
-.panel-body {
-  padding: 4px 2px 16px;
-}
-.panel-body .row {
-  margin: 12px 0 0;
-}
-.tiny {
-  font-size: 11.5px;
-  margin: 8px 0 0;
-}
-.group-card {
-  margin-top: 12px;
-  padding: 10px 12px;
+.result-count {
+  padding: 4px 10px;
+  color: var(--text-dim);
+  font-size: 10.5px;
   border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  background: var(--surface);
+  border-radius: var(--radius-pill);
+  background: var(--surface-2);
 }
-.group-head {
-  display: flex;
+.status-scroll {
+  overflow-x: auto;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--bg-0) 34%, transparent);
+}
+.status-list { min-width: 1370px; }
+.status-grid {
+  display: grid;
+  grid-template-columns: minmax(235px, 1.25fr) 120px 165px 100px 72px minmax(560px, 2.5fr) 68px;
   align-items: center;
-  gap: 10px;
+  gap: 14px;
 }
-.group-head .spacer {
-  flex: 1;
+.list-head {
+  min-height: 40px;
+  padding: 0 14px;
+  color: var(--text-muted);
+  font-size: 9.5px;
+  font-weight: 650;
+  letter-spacing: .06em;
+  border-bottom: 1px solid var(--border);
+  background: linear-gradient(180deg, color-mix(in srgb, var(--primary-soft) 28%, transparent), transparent);
 }
-.group-name {
-  min-width: 180px;
-  font-weight: 600;
-}
-.group-members {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px 12px;
-  margin-top: 10px;
-  padding-top: 10px;
-  border-top: 1px dashed var(--border);
-}
-.member-chip {
-  display: inline-flex;
+.resource-head,
+.resource-grid {
+  display: grid;
+  grid-template-columns: 72px 82px 105px 112px minmax(145px, 1fr);
   align-items: center;
-  gap: 6px;
-  font-size: 12.5px;
-  color: var(--text-dim);
-}
-.member-chip input {
-  width: auto;
-}
-.token {
-  display: flex;
   gap: 12px;
+  min-width: 0;
+}
+.resource-head > span:last-child { color: var(--text-dim); }
+.list-message { padding: 34px 20px; text-align: center; }
+.list-message.err { margin: 12px; }
+.agent-strip {
+  position: relative;
+  min-height: 82px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border);
+  outline: none;
+  cursor: pointer;
+  transition: background .15s ease, box-shadow .15s ease;
+}
+.agent-strip:last-child { border-bottom: 0; }
+.agent-strip::before {
+  content: '';
+  position: absolute;
+  top: 12px;
+  bottom: 12px;
+  left: 0;
+  width: 2px;
+  border-radius: 0 3px 3px 0;
+  background: var(--primary);
+  box-shadow: 0 0 9px var(--primary);
+}
+.agent-strip.state-ok::before { background: #22d3ee; box-shadow: 0 0 9px #22d3ee; }
+.agent-strip.state-abnormal::before { background: var(--warning); box-shadow: 0 0 9px var(--warning); }
+.agent-strip.state-offline::before { background: var(--danger); box-shadow: 0 0 9px var(--danger); }
+.agent-strip.state-never_connected::before { background: var(--text-muted); box-shadow: none; }
+.agent-strip:hover,
+.agent-strip:focus-visible {
+  background: linear-gradient(90deg, color-mix(in srgb, var(--primary-soft) 34%, transparent), var(--overlay-hover) 55%, transparent);
+  box-shadow: inset 0 0 24px color-mix(in srgb, var(--primary) 3%, transparent);
+}
+.identity-cell {
+  display: flex;
   align-items: center;
-  padding: 12px 14px;
-  margin-top: 12px;
-  background: var(--primary-soft);
-  border: 1px solid rgba(56, 189, 248, 0.28);
-  border-radius: var(--radius-sm);
-  flex-wrap: wrap;
+  gap: 12px;
+  min-width: 0;
 }
-.token-label {
-  font-size: 12px;
+.device-orbit {
+  position: relative;
+  display: grid;
+  width: 42px;
+  height: 42px;
+  flex: none;
+  place-items: center;
+  border: 1px solid color-mix(in srgb, var(--primary) 70%, transparent);
+  border-radius: 50%;
+  background: radial-gradient(circle, var(--primary-soft), transparent 68%);
+  box-shadow: inset 0 0 12px var(--primary-soft), 0 0 11px color-mix(in srgb, var(--primary) 22%, transparent);
+}
+.device-orbit::after {
+  content: '';
+  position: absolute;
+  inset: 4px;
+  border: 1px dashed color-mix(in srgb, var(--primary) 35%, transparent);
+  border-radius: 50%;
+}
+.state-abnormal .device-orbit { border-color: var(--warning); box-shadow: inset 0 0 12px var(--warning-soft), 0 0 11px color-mix(in srgb, var(--warning) 25%, transparent); }
+.state-offline .device-orbit { border-color: var(--danger); box-shadow: inset 0 0 12px var(--danger-soft), 0 0 11px color-mix(in srgb, var(--danger) 25%, transparent); }
+.name-lines { display: grid; min-width: 0; }
+.name-lines strong { overflow: hidden; font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
+.name-lines .mono { margin-top: 3px; overflow: hidden; color: var(--text-muted); font-size: 9.5px; text-overflow: ellipsis; white-space: nowrap; }
+.groups-cell { min-width: 0; }
+.grp-chip {
+  display: inline-block;
+  max-width: 108px;
+  padding: 2px 7px;
+  margin: 2px 3px 2px 0;
+  overflow: hidden;
+  color: color-mix(in srgb, var(--primary) 75%, var(--text));
+  font-size: 9.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  border: 1px solid color-mix(in srgb, var(--primary) 24%, var(--border));
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--primary-soft) 45%, transparent);
+}
+.empty-value { color: var(--text-muted); }
+.agent-state-cell { display: grid; gap: 5px; min-width: 0; }
+.status-cell { display: flex; align-items: center; gap: 5px; }
+.reason { overflow: hidden; color: var(--warning); font-size: 9.5px; text-overflow: ellipsis; white-space: nowrap; }
+.state-offline .reason { color: var(--danger); }
+.muted-tag { padding: 1px 5px; color: var(--text-muted); font-size: 8px; border: 1px solid var(--border-strong); border-radius: 999px; }
+.version { color: var(--primary); font-size: 10.5px; }
+.row-actions { display: flex; justify-content: flex-end; gap: 3px; opacity: .42; transition: opacity .15s ease; }
+.agent-strip:hover .row-actions,
+.row-actions:focus-within { opacity: 1; }
+.icon-action {
+  display: grid;
+  width: 27px;
+  height: 27px;
+  padding: 0;
   color: var(--text-dim);
+  border: 1px solid transparent;
+  border-radius: 7px;
+  background: transparent;
+  place-items: center;
+  cursor: pointer;
 }
-.token code {
-  font-family: var(--mono);
-  background: var(--code-bg);
-  word-break: break-all;
-  color: var(--primary);
-  padding: 1px 6px;
-  border-radius: 5px;
+.icon-action:hover,
+.icon-action.active { color: var(--primary); border-color: var(--border); background: var(--surface-2); }
+.icon-action.danger:hover { color: var(--danger); }
+.icon-action:disabled { opacity: .45; cursor: not-allowed; }
+.icon-action svg { width: 14px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+
+.console-surface > .panel {
+  margin: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
 }
-.enroll-examples {
-  margin-top: 16px;
+.panel-body { padding: 18px; }
+.panel-body .row { margin: 12px 0 0; }
+.tiny { margin: 8px 0 0; font-size: 11.5px; }
+.group-card { margin-top: 12px; padding: 12px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface-2); }
+.group-head { display: flex; align-items: center; gap: 10px; }
+.group-head .spacer { flex: 1; }
+.group-name { min-width: 180px; font-weight: 600; }
+.group-members { display: flex; flex-wrap: wrap; gap: 8px 12px; margin-top: 10px; padding-top: 10px; border-top: 1px dashed var(--border); }
+.member-chip { display: inline-flex; align-items: center; gap: 6px; color: var(--text-dim); font-size: 12.5px; }
+.member-chip input { width: auto; }
+.token { display: flex; align-items: center; gap: 12px; padding: 12px 14px; margin-top: 12px; flex-wrap: wrap; border: 1px solid color-mix(in srgb, var(--primary) 28%, transparent); border-radius: var(--radius-sm); background: var(--primary-soft); }
+.token-label { color: var(--text-dim); font-size: 12px; }
+.token code { padding: 1px 6px; color: var(--primary); font-family: var(--mono); word-break: break-all; border-radius: 5px; background: var(--code-bg); }
+.enroll-examples { margin-top: 16px; }
+.table-wrap { overflow-x: auto; border-top: 1px solid var(--border); }
+
+@media (max-width: 1100px) {
+  .summary-grid { grid-template-columns: repeat(2, minmax(170px, 1fr)); }
+  .agents-hero { align-items: flex-start; }
+}
+@media (max-width: 700px) {
+  .agents-page { padding: 20px 14px 44px; }
+  .agents-hero { display: grid; }
+  .hero-actions { justify-content: space-between; }
+  .summary-grid { grid-template-columns: 1fr; }
+  .summary-card { min-height: 96px; }
+  .filter-bar { align-items: stretch; }
+  .search-control,
+  .filter-bar select { width: 100%; }
+  .filter-bar .spacer { display: none; }
+  .result-count { margin-left: auto; align-self: center; }
 }
 </style>
