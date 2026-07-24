@@ -255,7 +255,8 @@ onBeforeUnmount(() => {
                     <td class="hint">{{ m.agent_host || m.agent_id }}</td>
                     <td>
                       {{ metricLabel(ev.metric_kind) }}
-                      <span v-if="ev.reason_code > 0" class="reason-chip">{{ probeReasonLabel(ev.reason_code) }}</span>
+                      <span v-if="ev.reason_code > 0" class="reason-chip" :title="ev.reason_detail || undefined">{{ probeReasonLabel(ev.reason_code) }}</span>
+                      <span v-if="ev.reason_detail" class="hint mono ev-detail" :title="ev.reason_detail">{{ ev.reason_detail }}</span>
                     </td>
                     <td class="num mono">{{ fmtNum(ev.value) }}</td>
                     <td class="num mono">
@@ -444,6 +445,17 @@ onBeforeUnmount(() => {
   border: 1px solid rgba(248, 113, 113, 0.4);
   background: rgba(248, 113, 113, 0.1);
   white-space: nowrap;
+}
+/* Raw underlying error under the reason chip (verbatim machine text, never
+   localized) — ellipsized on one line so a long dial error can't blow the
+   column out; the full text is in the hover title. */
+.ev-detail {
+  display: block;
+  max-width: 300px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
 }
 .table-scroll {
   overflow-x: auto;

@@ -39,7 +39,14 @@ export function useMetricMeta() {
   // probeReasonLabel maps a probe.*.error_class code (telemetry.ProbeReason*) to its
   // localized reason, shared by the TCP error-class card and the alert-evidence
   // reason chip; probeReasonInfo is the hover tooltip explaining the categories.
-  const PROBE_REASON_KEY: Record<number, string> = { 0: 'none', 1: 'timeout', 2: 'refused', 3: 'unreachable', 4: 'dns', 5: 'tls', 9: 'other' }
+  // Single-digit codes are failure families; 4x = DNS, 5x = TLS, 7x = HTTP-acceptance
+  // refinements. Unknown codes fall back to 'other'.
+  const PROBE_REASON_KEY: Record<number, string> = {
+    0: 'none', 1: 'timeout', 2: 'refused', 3: 'unreachable', 4: 'dns', 5: 'tls', 6: 'reset', 9: 'other',
+    41: 'dnsNxdomain', 42: 'dnsServfail', 43: 'dnsNoRecord',
+    51: 'tlsExpired', 52: 'tlsUntrusted', 53: 'tlsHostname',
+    71: 'httpStatus', 72: 'httpKeyword',
+  }
   const probeReasonLabel = (code: number) => t(`metrics.probeReason.${PROBE_REASON_KEY[Math.round(code)] ?? 'other'}`)
   const probeReasonInfo = () => t('metrics.probeReason.info')
 

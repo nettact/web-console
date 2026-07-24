@@ -19,8 +19,17 @@ const triggerValues = (a: Alert) =>
 
 // Distinct frozen failure reasons across an alert's evidence (unreachable / DNS-
 // failed / …), shown as chips so the row states WHY, not just the breached value.
-const reasonLabels = (a: Alert) =>
-  [...new Set(a.evidence.filter((ev) => ev.reason_code > 0).map((ev) => probeReasonLabel(ev.reason_code)))]
+// Deduped by label; each chip carries the first non-empty raw reason_detail of
+// its label's evidence as the hover title (the verbatim low-level error).
+const reasonLabels = (a: Alert): { label: string; title: string | undefined }[] => {
+  const byLabel = new Map<string, string | undefined>()
+  for (const ev of a.evidence) {
+    if (ev.reason_code <= 0) continue
+    const label = probeReasonLabel(ev.reason_code)
+    if (!byLabel.get(label)) byLabel.set(label, ev.reason_detail || undefined)
+  }
+  return [...byLabel].map(([label, title]) => ({ label, title }))
+}
 </script>
 
 <template>
@@ -50,7 +59,7 @@ const reasonLabels = (a: Alert) =>
           <td>{{ a.state === 'resolved' ? t('metrics.stateResolved') : a.state === 'firing' ? t('metrics.stateFiring') : a.state }}</td>
           <td class="num mono">
             {{ triggerValues(a) }}
-            <span v-for="r in reasonLabels(a)" :key="r" class="reason-chip">{{ r }}</span>
+            <span v-for="r in reasonLabels(a)" :key="r.label" class="reason-chip" :title="r.title">{{ r.label }}</span>
           </td>
         </tr>
       </tbody>
