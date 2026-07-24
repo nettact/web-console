@@ -71,6 +71,31 @@ function blank(): ProbeTarget {
   return { group_id: '', kind: 'icmp', name: '', target: '', params: {}, enabled: true }
 }
 
+// Every <select> needs its bound param to hold a real option value: an undefined
+// binding matches no <option>, so the browser renders a blank row instead of the
+// first choice. Seed the per-kind selects with their first option ('' means the
+// leading "system default" entry, which cleanParams drops before saving).
+const KIND_SELECT_DEFAULTS: Record<string, Record<string, string>> = {
+  dns: { resolver_protocol: '', record_type: '' },
+  http: { method: '' },
+  nat: { nat_transport: 'udp' },
+}
+
+function applyKindDefaults() {
+  if (!form.params) form.params = {}
+  const defaults = KIND_SELECT_DEFAULTS[form.kind]
+  if (!defaults) return
+  const params = form.params as Record<string, unknown>
+  for (const [key, value] of Object.entries(defaults)) {
+    // A stored '' is a real choice only where '' IS the seeded default — that is
+    // the leading "system default" <option>. Where the default is a concrete value
+    // the select has no empty option at all, so an existing '' (e.g. a NAT monitor
+    // saved without a transport) matches nothing and renders a blank row; seed it.
+    const unset = params[key] === undefined || params[key] === null || (params[key] === '' && value !== '')
+    if (unset) params[key] = value
+  }
+}
+
 const defaultGroupId = computed(() => groups.value.find((g) => g.is_default)?.id || '')
 
 const dnsProto = computed(() => form.params?.resolver_protocol || '')
@@ -121,15 +146,18 @@ async function loadAll() {
       return
     }
     Object.assign(form, JSON.parse(JSON.stringify(found)))
-    if (!form.params) form.params = {}
-    if (form.kind === 'nat' && !form.params.nat_transport) form.params.nat_transport = 'udp'
-    headersText.value = headersToText(form.params.headers)
-  } else if (!form.group_id) {
+    applyKindDefaults()
+    headersText.value = headersToText(form.params!.headers)
+    return
+  }
+  if (!form.group_id) {
     // New target: honor an explicit ?group= (from a group's "add target" link),
     // otherwise land it in the site default group.
     const q = queryStr(route.query.group)
     form.group_id = groups.value.some((g) => g.id === q) ? q : defaultGroupId.value
   }
+  // The kind watcher can't cover a kind set during setup (query prefill / new-host).
+  applyKindDefaults()
 }
 
 function headersToText(h?: Record<string, string>): string {
@@ -202,14 +230,19 @@ async function save() {
     const match = form.id
       ? all.value.find((x) => x.id === form.id)
       : all.value.find((x) => x.id && !beforeIds.has(x.id))
-    if (match) {
-      form.id = match.id
-      if (!editingId.value && match.id) router.replace(`/monitoring/${match.id}/edit`)
-    }
-    // Surface the save-time warning for THIS monitor (which in-scope agents cannot
-    // run it and why), so a mixed-capability save is visible immediately.
-    saveWarning.value = res.warnings.find((wgn) => wgn.monitor_id === form.id) ?? null
+    if (match) form.id = match.id
     saved.value = true
+    // The save-time warning for THIS monitor (which in-scope agents cannot run it
+    // and why) is actionable, so a warned save stays on the form to show it; a
+    // clean save goes straight back to the monitor list.
+    const warning = res.warnings.find((wgn) => wgn.monitor_id === form.id) ?? null
+    if (!warning) {
+      router.push('/monitoring')
+      return
+    }
+    saveWarning.value = warning
+    // Keep the URL on the monitor that was just created, so a reload re-opens it.
+    if (!editingId.value && form.id) router.replace(`/monitoring/${form.id}/edit`)
   } catch (e) {
     error.value = String((e as Error).message || e)
   } finally {
@@ -227,7 +260,7 @@ watch(
       form.params.keyword = ''
       form.params.keyword_invert = false
     }
-    if (k === 'nat' && !form.params.nat_transport) form.params.nat_transport = 'udp'
+    applyKindDefaults()
   },
 )
 

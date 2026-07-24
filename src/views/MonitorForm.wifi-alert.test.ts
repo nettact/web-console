@@ -27,7 +27,7 @@ async function render(targets: ProbeTarget[] = []) {
     id: 'group-default', site_id: 'site_default', name: 'Default', is_default: true,
     merge_enabled: true, all_agents: true, agent_group_ids: [],
   }])
-  apiMock.setTargets.mockResolvedValue([])
+  apiMock.setTargets.mockResolvedValue({ ok: true, warnings: [] })
   const i18n = createI18n({ legacy: false, locale: 'en', messages: { en } })
   const page = mount(MonitorForm, {
     global: { plugins: [i18n], stubs: { RouterLink: true } },
