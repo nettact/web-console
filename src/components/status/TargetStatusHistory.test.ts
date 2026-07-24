@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, mount } from '@vue/test-utils'
 import { createMemoryHistory, createRouter } from 'vue-router'
 
-const apiMock = vi.hoisted(() => ({ agent: vi.fn(), listSeries: vi.fn(), metrics: vi.fn() }))
+const apiMock = vi.hoisted(() => ({ agent: vi.fn(), listSeries: vi.fn(), metrics: vi.fn(), metricsSummary: vi.fn() }))
 vi.mock('../../api', () => ({ api: apiMock }))
 
 import TargetStatusAgentDetails from './TargetStatusAgentDetails.vue'
@@ -29,6 +29,7 @@ const agent = {
 beforeEach(() => {
   apiMock.agent.mockReset().mockResolvedValue(agent)
   apiMock.metrics.mockReset().mockResolvedValue([])
+  apiMock.metricsSummary.mockReset().mockResolvedValue({ window_seconds: 7200, kinds: {} })
   apiMock.listSeries.mockReset().mockResolvedValue([
     { kind: 'probe.dns.ok', target: '1.1.1.1', layer: 'network', unit: 'bool', monitor_id: 'target-1' },
     { kind: 'probe.dns.duration_ms', target: '1.1.1.1', layer: 'network', unit: 'ms', monitor_id: 'target-1' },

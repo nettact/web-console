@@ -59,10 +59,15 @@ async function loadAll() {
       api.agentConnAlerts({ agent: id.value, status: 'all', limit: 50 }),
       api.agentStatusHistory(id.value),
       api.alerts(),
-      api.metrics(id.value, 'host.cpu.pct', { target: 'host' }),
-      api.metrics(id.value, 'host.mem.pct', { target: 'host' }),
-      api.metrics(id.value, 'host.net.rx_bps', { target: 'host' }),
-      api.metrics(id.value, 'host.net.tx_bps', { target: 'host' }),
+      // Explicit window + limit: the server truncates oldest-first (ORDER BY ts
+      // LIMIT), so the cap must cover the whole 2h window at the fastest
+      // supported collection interval (1s) or the charts silently lose their
+      // NEWEST samples. The api.metrics default (limit 200) would do exactly
+      // that as soon as host collection runs faster than every 36s.
+      api.metrics(id.value, 'host.cpu.pct', { target: 'host', sinceSeconds: 7200, limit: 7201 }),
+      api.metrics(id.value, 'host.mem.pct', { target: 'host', sinceSeconds: 7200, limit: 7201 }),
+      api.metrics(id.value, 'host.net.rx_bps', { target: 'host', sinceSeconds: 7200, limit: 7201 }),
+      api.metrics(id.value, 'host.net.tx_bps', { target: 'host', sinceSeconds: 7200, limit: 7201 }),
     ])
     agent.value = a
     connAlerts.value = ca

@@ -6,7 +6,7 @@
 // (historical), overlaying one line/row per agent.
 import { ref, computed, watch, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { api, type Agent, type Alert, type Sample, type TargetAgentStatusRow } from '../../api'
+import { api, type Agent, type Alert, type KindSummary, type Sample, type TargetAgentStatusRow } from '../../api'
 import MetricChart from '../MetricChart.vue'
 import StatusBand from '../StatusBand.vue'
 import MetricStatCards from '../MetricStatCards.vue'
@@ -18,7 +18,7 @@ import {
   FALLBACK,
   CODE_KINDS,
   INFO_KINDS,
-  RAW_MAX_SEC,
+  SUMMARY_MAX_SEC,
   isStatusKind,
   kindColor,
   orderOf,
@@ -41,9 +41,13 @@ const props = defineProps<{
 
 const { t } = useI18n()
 const { metricLabel, unitLabel } = useMetricMeta()
-const { buildCard } = useMetricCards()
+const { buildCard, buildCodeCard } = useMetricCards()
 
 const samples = ref<Record<string, Sample[]>>({}) // key: `${agentId}::${kind}`
+// Server-side aggregates for categorical code kinds (NAT / TCP error): the
+// cards only need latest (+ determinate fallback), so these come from the
+// summary endpoint instead of a raw sample window. key: `${agentId}::${kind}`.
+const summaries = ref<Record<string, KindSummary>>({})
 const alerts = ref<Alert[]>([])
 const loading = ref(false)
 let dataSeq = 0
@@ -76,10 +80,16 @@ const band = computed(() => bandSeriesFor(props.family))
 // The headline numeric shown as "latest" in the summary (RTT / resolve / latency).
 const primaryNumeric = computed(() => numericKinds.value[0] ?? '')
 
-// Every kind we need to fetch per agent: selected charts + status bands + card
-// kinds + the summary's band source + the headline numeric.
+// Categorical code kinds render as latest-value cards only — they're served by
+// the aggregation endpoint, never fetched as sample windows.
+const codeKinds = computed(() => cardKinds.value.filter((k) => CODE_KINDS.has(k)))
+
+// Every kind we need to fetch per agent as a sample series: selected charts +
+// status bands + non-code card kinds + the summary's band source + the headline
+// numeric. Code kinds are excluded — see codeKinds.
 const fetchKinds = computed(() => {
   const set = new Set<string>([...selectedNumeric.value, ...statusKinds.value, ...cardKinds.value])
+  for (const k of CODE_KINDS) set.delete(k)
   if (band.value) set.add(band.value.kind)
   if (primaryNumeric.value) set.add(primaryNumeric.value)
   return [...set]
@@ -138,14 +148,17 @@ function statusRows(kind: string) {
   })
 }
 
-// Per-agent stat card for a card-only kind (NAT/TCP-error code card, or the
-// numeric ICMP sample count) — buildCard picks the right rendering per kind.
+// Per-agent stat card for a card-only kind. Categorical code kinds (NAT/TCP
+// error) build from the server-side aggregate; the numeric ICMP sample count
+// keeps the sample-based card (its foot shows min/max/avg over the range).
 function agentCards(kind: string): { agent: string; card: Card }[] {
   return props.probers
     .filter((p) => p.series.some((s) => s.kind === kind))
     .map((p) => ({
       agent: agentName(p.agent),
-      card: buildCard({ label: metricLabel(kind), color: kindColor(kind), kind, unit: kindUnit.value.get(kind) || 'code', samples: samplesFor(p.agent.id, kind) }),
+      card: CODE_KINDS.has(kind)
+        ? buildCodeCard({ label: metricLabel(kind), color: kindColor(kind), kind }, summaries.value[skey(p.agent.id, kind)])
+        : buildCard({ label: metricLabel(kind), color: kindColor(kind), kind, unit: kindUnit.value.get(kind) || 'code', samples: samplesFor(p.agent.id, kind) }),
     }))
 }
 
@@ -207,33 +220,49 @@ const summary = computed<SummaryRow[]>(() => {
 async function loadData() {
   const seq = ++dataSeq
   const kinds = fetchKinds.value
-  if (!props.probers.length || !kinds.length) {
+  const codes = codeKinds.value
+  if (!props.probers.length || (!kinds.length && !codes.length)) {
     samples.value = {}
+    summaries.value = {}
     return
   }
   loading.value = true
+  const scope = {
+    monitor: props.monitorId,
+    target: props.monitorId ? undefined : props.target || undefined,
+  }
   const jobs: Promise<[string, Sample[]]>[] = []
   for (const p of props.probers) {
     for (const k of kinds) {
       jobs.push(
         api
-          .metrics(p.agent.id, k, {
-            monitor: props.monitorId,
-            target: props.monitorId ? undefined : props.target || undefined,
-            limit: 5000,
-            // Categorical code series must be read raw (never bucket-averaged).
-            sinceSeconds: CODE_KINDS.has(k) ? Math.min(props.rangeSec, RAW_MAX_SEC) : props.rangeSec,
-          })
+          .metrics(p.agent.id, k, { ...scope, limit: 5000, sinceSeconds: props.rangeSec })
           .then((s) => [skey(p.agent.id, k), s] as [string, Sample[]])
           .catch(() => [skey(p.agent.id, k), []] as [string, Sample[]]),
       )
     }
   }
-  const results = await Promise.all(jobs)
+  // One aggregate request per agent covers all code kinds. The window follows
+  // the selected range (clamped to the endpoint's raw-retention cap) so a card
+  // never shows a result from outside the range the user is looking at.
+  const summaryJobs: Promise<[string, Record<string, KindSummary>]>[] = codes.length
+    ? props.probers.map((p) =>
+        api
+          .metricsSummary(p.agent.id, codes, { ...scope, sinceSeconds: Math.min(props.rangeSec, SUMMARY_MAX_SEC) })
+          .then((s) => [p.agent.id, s.kinds] as [string, Record<string, KindSummary>])
+          .catch(() => [p.agent.id, {}] as [string, Record<string, KindSummary>]),
+      )
+    : []
+  const [results, summaryResults] = await Promise.all([Promise.all(jobs), Promise.all(summaryJobs)])
   if (seq !== dataSeq) return
   const map: Record<string, Sample[]> = {}
   for (const [k, s] of results) map[k] = s
   samples.value = map
+  const sums: Record<string, KindSummary> = {}
+  for (const [agentId, kindMap] of summaryResults) {
+    for (const [k, ks] of Object.entries(kindMap)) sums[skey(agentId, k)] = ks
+  }
+  summaries.value = sums
   loading.value = false
 }
 

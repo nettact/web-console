@@ -419,6 +419,25 @@ export interface Sample {
   // series (host.*, iface.up, agent.*).
   monitor_id?: string
 }
+export interface SummaryLatest {
+  ts: string
+  value: number
+}
+// Server-side aggregates over a raw window (PERF-001): latest, nearest-rank
+// P95, and mean, computed from the same samples the /metrics endpoint would
+// return. latest_nonzero is the newest sample whose value rounds to a nonzero
+// integer — categorical code cards use it to skip a transient "unknown" probe.
+export interface KindSummary {
+  latest: SummaryLatest | null
+  latest_nonzero: SummaryLatest | null
+  p95: number | null
+  avg: number | null
+  count: number
+}
+export interface MetricsSummary {
+  window_seconds: number
+  kinds: Record<string, KindSummary>
+}
 export interface ProbeParams {
   interval_seconds?: number
   timeout_ms?: number
@@ -1100,6 +1119,24 @@ export const api = {
     if (opts.monitor) p.set('monitor', opts.monitor)
     if (opts.sinceSeconds) p.set('since_seconds', String(opts.sinceSeconds))
     return req<Sample[]>('GET', `/api/v1/agents/${encodeURIComponent(id)}/metrics?${p.toString()}`)
+  },
+  // Per-kind latest/P95/avg aggregated server-side from raw samples (default
+  // window 2h, capped at raw retention) — stat cards get one small response
+  // instead of a sample window. Same monitor/target scoping as `metrics`;
+  // `reduce: 'worst'` collapses to the per-timestamp worst value across series
+  // and `excludeTargets` drops series by target string (dashboard quality).
+  metricsSummary: (
+    id: string,
+    kinds: string[],
+    opts: { monitor?: string; target?: string; sinceSeconds?: number; reduce?: 'worst'; excludeTargets?: string[] } = {},
+  ) => {
+    const p = new URLSearchParams({ kinds: kinds.join(',') })
+    if (opts.monitor) p.set('monitor', opts.monitor)
+    if (opts.target) p.set('target', opts.target)
+    if (opts.sinceSeconds) p.set('since_seconds', String(opts.sinceSeconds))
+    if (opts.reduce) p.set('reduce', opts.reduce)
+    if (opts.excludeTargets?.length) p.set('exclude_targets', opts.excludeTargets.join(','))
+    return req<MetricsSummary>('GET', `/api/v1/agents/${encodeURIComponent(id)}/metrics/summary?${p.toString()}`)
   },
   // Latest value per series (one point per target) — cheap "current status".
   latest: (id: string, sinceSeconds?: number) => {

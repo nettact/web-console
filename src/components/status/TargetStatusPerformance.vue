@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { api, type Sample } from '../../api'
+import { api, type MetricsSummary } from '../../api'
 import { fmtNum, natCodeLabel, natTone } from '../../lib/metricMeta'
 
 const { t } = useI18n()
@@ -11,16 +11,6 @@ const props = defineProps<{
   targetKind: string
   agentId: string
 }>()
-
-// The metrics endpoint serves unaggregated samples through two hours; use
-// that raw window so P95 is calculated from real probe observations rather than
-// percentiles of minute averages.
-const WINDOW_SECONDS = 2 * 3600
-// The server truncates oldest-first (ORDER BY ts LIMIT), so the cap must cover
-// the whole window at the fastest supported probe interval (1s); the +1 covers
-// the inclusive `ts >= now - 7200` predicate admitting 7201 integer timestamps.
-// A lower cap would silently drop the NEWEST samples and skew "latest" and P95.
-const SAMPLE_LIMIT = WINDOW_SECONDS + 1
 
 const latencyKinds: Record<string, string> = {
   icmp: 'probe.icmp.rtt_ms',
@@ -33,26 +23,19 @@ const latencyKinds: Record<string, string> = {
 
 const propsLatencyKind = computed(() => latencyKinds[props.targetKind] || '')
 const supportsLoss = computed(() => props.targetKind === 'icmp' || props.targetKind === 'gateway')
-const latencySamples = ref<Sample[]>([])
-const lossSamples = ref<Sample[]>([])
-const natTypeSamples = ref<Sample[]>([])
+// latest/P95 come pre-aggregated from the server over the 2h raw window (the
+// server default), so one lightweight request replaces pulling ~7k samples per
+// kind into the browser.
+const summary = ref<MetricsSummary | null>(null)
 let loadSequence = 0
 
-const latestValue = (samples: Sample[]): number | null => {
-  if (!samples.length) return null
-  return samples.reduce((latest, sample) => new Date(sample.ts).getTime() > new Date(latest.ts).getTime() ? sample : latest).value
-}
+const kindLatest = (kind: string): number | null =>
+  summary.value?.kinds[kind]?.latest?.value ?? null
 
-const percentile = (samples: Sample[], ratio: number): number | null => {
-  if (!samples.length) return null
-  const values = samples.map((sample) => sample.value).sort((a, b) => a - b)
-  return values[Math.max(0, Math.ceil(values.length * ratio) - 1)]
-}
-
-const latency = computed(() => latestValue(latencySamples.value))
-const latencyP95 = computed(() => percentile(latencySamples.value, 0.95))
-const loss = computed(() => latestValue(lossSamples.value))
-const natType = computed(() => latestValue(natTypeSamples.value))
+const latency = computed(() => kindLatest(propsLatencyKind.value))
+const latencyP95 = computed(() => summary.value?.kinds[propsLatencyKind.value]?.p95 ?? null)
+const loss = computed(() => kindLatest('probe.icmp.loss_pct'))
+const natType = computed(() => kindLatest('probe.nat.type'))
 const hasPerformance = computed(() => latency.value != null || loss.value != null || natType.value != null)
 
 const formatMs = (value: number | null): string => value == null ? '—' : `${fmtNum(value)} ms`
@@ -94,25 +77,17 @@ async function loadPerformance(): Promise<void> {
   const sequence = ++loadSequence
   const latencyKind = propsLatencyKind.value
   if (!latencyKind) {
-    latencySamples.value = []
-    lossSamples.value = []
-    natTypeSamples.value = []
+    summary.value = null
     return
   }
-  const options = { monitor: props.targetId, limit: SAMPLE_LIMIT, sinceSeconds: WINDOW_SECONDS }
-  const [latencyResult, lossResult, natTypeResult] = await Promise.all([
-    api.metrics(props.agentId, latencyKind, options).catch(() => [] as Sample[]),
-    supportsLoss.value
-      ? api.metrics(props.agentId, 'probe.icmp.loss_pct', options).catch(() => [] as Sample[])
-      : Promise.resolve([] as Sample[]),
-    props.targetKind === 'nat'
-      ? api.metrics(props.agentId, 'probe.nat.type', options).catch(() => [] as Sample[])
-      : Promise.resolve([] as Sample[]),
-  ])
+  const kinds = [latencyKind]
+  if (supportsLoss.value) kinds.push('probe.icmp.loss_pct')
+  if (props.targetKind === 'nat') kinds.push('probe.nat.type')
+  const result = await api
+    .metricsSummary(props.agentId, kinds, { monitor: props.targetId })
+    .catch(() => null)
   if (sequence !== loadSequence) return
-  latencySamples.value = latencyResult
-  lossSamples.value = lossResult
-  natTypeSamples.value = natTypeResult
+  summary.value = result
 }
 
 watch([

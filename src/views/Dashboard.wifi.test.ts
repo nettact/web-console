@@ -13,6 +13,7 @@ const apiMock = vi.hoisted(() => ({
   updateDashboardLayout: vi.fn(),
   quota: vi.fn(),
   metrics: vi.fn(),
+  metricsSummary: vi.fn(),
   latest: vi.fn(),
   listDevices: vi.fn(),
   agentStatusHistory: vi.fn(),
@@ -70,6 +71,7 @@ async function render(
   apiMock.agents.mockResolvedValue([agent])
   apiMock.quota.mockResolvedValue({ used: 1, max: 10 })
   apiMock.metrics.mockResolvedValue([])
+  apiMock.metricsSummary.mockResolvedValue({ window_seconds: 86400, kinds: {} })
   apiMock.latest.mockResolvedValue(latest)
   apiMock.listDevices.mockResolvedValue([])
   apiMock.agentStatusHistory.mockResolvedValue(history)
@@ -366,6 +368,21 @@ describe('Dashboard network adapter list', () => {
       .mockResolvedValueOnce(history('probe.icmp.jitter_ms', 4, 'ms'))
       .mockResolvedValueOnce(history('host.net.rx_bps', 2048, 'bps'))
       .mockResolvedValueOnce(history('host.net.tx_bps', 1024, 'bps'))
+    // The quality stat numbers (P95 / avg) come from the server-side worst-target
+    // aggregate, not from the chart samples above.
+    const summaryEntry = (p95: number, avg: number) => ({
+      latest: { ts: '2026-07-16T01:55:00Z', value: p95 },
+      latest_nonzero: { ts: '2026-07-16T01:55:00Z', value: p95 },
+      p95, avg, count: 1,
+    })
+    apiMock.metricsSummary.mockResolvedValueOnce({
+      window_seconds: 86400,
+      kinds: {
+        'probe.icmp.rtt_ms': summaryEntry(42, 42),
+        'probe.icmp.jitter_ms': summaryEntry(4, 4),
+        'probe.icmp.loss_pct': summaryEntry(2, 2),
+      },
+    })
 
     await render(connected, baseAgent, [
       ...history('probe.icmp.loss_pct', 100, 'pct'),

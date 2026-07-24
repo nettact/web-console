@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, mount } from '@vue/test-utils'
 import { createMemoryHistory, createRouter } from 'vue-router'
 
-const apiMock = vi.hoisted(() => ({ monitorGroups: vi.fn(), agentGroups: vi.fn(), targetStatuses: vi.fn(), metrics: vi.fn() }))
+const apiMock = vi.hoisted(() => ({ monitorGroups: vi.fn(), agentGroups: vi.fn(), targetStatuses: vi.fn(), metrics: vi.fn(), metricsSummary: vi.fn() }))
 vi.mock('../api', () => ({ api: apiMock }))
 
 import TargetStatus from './TargetStatus.vue'
@@ -56,6 +56,7 @@ beforeEach(() => {
   }])
   apiMock.agentGroups.mockResolvedValue([])
   apiMock.metrics.mockReset().mockResolvedValue([])
+  apiMock.metricsSummary.mockReset().mockResolvedValue({ window_seconds: 7200, kinds: {} })
   targetStatus.generatedAt = '2026-07-18T05:00:01Z'
   targetStatus.targets = [statusRow]
   targetStatus.loaded = true

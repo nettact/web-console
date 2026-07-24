@@ -9,6 +9,7 @@ import {
   type Alert,
   type Device,
   type IncidentSummary,
+  type MetricsSummary,
   type ProbeState,
   type Quota,
   type Sample,
@@ -48,6 +49,10 @@ const incidentSummary = ref<IncidentSummary | null>(null)
 const qualityRttHistory = ref<Sample[]>([])
 const qualityLossHistory = ref<Sample[]>([])
 const qualityJitterHistory = ref<Sample[]>([])
+// Server-side worst-target aggregates backing the quality stat numbers: raw
+// observations reduced per timestamp, so P95 is a true percentile rather than
+// a percentile of the chart's minute-bucket averages.
+const qualitySummary = ref<MetricsSummary | null>(null)
 const trafficRxHistory = ref<Sample[]>([])
 const trafficTxHistory = ref<Sample[]>([])
 const error = ref('')
@@ -285,12 +290,22 @@ async function loadHistory() {
   const id = selected.value
   try {
     const opts = { sinceSeconds: 24 * 3600, limit: 1500 }
-    const [rtt, loss, jitter, rx, tx] = await Promise.all([
+    const [rtt, loss, jitter, rx, tx, quality] = await Promise.all([
       api.metrics(id, 'probe.icmp.rtt_ms', opts),
       api.metrics(id, 'probe.icmp.loss_pct', opts),
       api.metrics(id, 'probe.icmp.jitter_ms', opts),
       api.metrics(id, 'host.net.rx_bps', opts),
       api.metrics(id, 'host.net.tx_bps', opts),
+      // Same worst-target-per-second semantics as aggregateWorst, but computed
+      // server-side from raw samples (the chart fetches above are minute
+      // buckets past 2h, and a P95 of bucket averages understates spikes).
+      api
+        .metricsSummary(id, ['probe.icmp.rtt_ms', 'probe.icmp.jitter_ms', 'probe.icmp.loss_pct'], {
+          sinceSeconds: 24 * 3600,
+          reduce: 'worst',
+          excludeTargets: ['gateway'],
+        })
+        .catch(() => null),
     ])
     if (sequence !== historySequence) return
     qualityRttHistory.value = rtt
@@ -298,6 +313,7 @@ async function loadHistory() {
     qualityJitterHistory.value = jitter
     trafficRxHistory.value = rx
     trafficTxHistory.value = tx
+    qualitySummary.value = quality
   } catch {
     // Keep the last successful history while live cards refresh independently.
   }
@@ -310,6 +326,7 @@ async function changeAgent() {
   qualityRttHistory.value = []
   qualityLossHistory.value = []
   qualityJitterHistory.value = []
+  qualitySummary.value = null
   trafficRxHistory.value = []
   trafficTxHistory.value = []
   await Promise.all([loadMetrics(), loadHistory()])
@@ -658,16 +675,9 @@ const qualityChartMetrics = computed(() => [
   { key: 'loss', label: t('dashboard.qualityLoss'), kind: 'probe.icmp.loss_pct', unit: 'pct', color: '#fbbf24', samples: qualityLoss.value },
 ].filter((metric) => metric.samples.length))
 
-function percentile(samples: Sample[], pct: number): number | null {
-  if (!samples.length) return null
-  const values = samples.map((sample) => sample.value).sort((a, b) => a - b)
-  return values[Math.min(values.length - 1, Math.ceil(values.length * pct) - 1)]
-}
-const qualityRttP95 = computed(() => percentile(qualityRtt.value, 0.95))
-const qualityJitterP95 = computed(() => percentile(qualityJitter.value, 0.95))
-const qualityLossAvg = computed(() => qualityLoss.value.length
-  ? qualityLoss.value.reduce((sum, sample) => sum + sample.value, 0) / qualityLoss.value.length
-  : null)
+const qualityRttP95 = computed(() => qualitySummary.value?.kinds['probe.icmp.rtt_ms']?.p95 ?? null)
+const qualityJitterP95 = computed(() => qualitySummary.value?.kinds['probe.icmp.jitter_ms']?.p95 ?? null)
+const qualityLossAvg = computed(() => qualitySummary.value?.kinds['probe.icmp.loss_pct']?.avg ?? null)
 
 const trafficChartMetrics = computed(() => [
   { key: 'rx', label: t('dashboard.download'), kind: 'host.net.rx_bps', unit: 'bps', color: '#38bdf8', samples: trafficRxHistory.value },

@@ -4,7 +4,7 @@
 // old History view so both the Host Metrics and Target Status pages render cards
 // identically.
 
-import type { Sample } from '../api'
+import type { KindSummary, Sample } from '../api'
 import type { Tone } from '../lib/metricMeta'
 import { NAT_CODE_KINDS, TCP_ERROR_KIND, natCodeLabel, natTone, tcpErrorTone, fmtNum } from '../lib/metricMeta'
 import { availability, countRestarts, toPoints, uptimeOnline } from '../lib/timeline'
@@ -141,5 +141,46 @@ export function useMetricCards() {
 
   const buildCards = (list: CardInput[]): Card[] => list.map(buildCard)
 
-  return { buildCard, buildCards }
+  // buildCodeCard renders a categorical code card (NAT / TCP error class) from a
+  // server-side KindSummary instead of a raw sample window: these cards only
+  // need the newest value (plus, for NAT, the newest determinate value as the
+  // stale fallback), so fetching thousands of samples per agent just to read the
+  // last one was pure waste (PERF-001 follow-up). Mirrors buildCard's NAT/TCP
+  // branches exactly.
+  function buildCodeCard(m: { label: string; color: string; kind: string }, summary: KindSummary | undefined): Card {
+    const latest = summary?.latest
+    if (!latest) return { label: m.label, color: m.color, value: '—', foot: t('metrics.noDataRange') }
+
+    if (NAT_CODE_KINDS.has(m.kind)) {
+      // Same transient-"unknown" fallback as buildCard: a lost/rate-limited STUN
+      // reply reports code 0; show the most recent determinate result instead
+      // and flag it as stale in the foot.
+      const fallback = Math.round(latest.value) === 0 ? summary?.latest_nonzero : null
+      const shown = fallback ?? latest
+      const timeStr = fmtTime(shown.ts)
+      return {
+        label: m.label,
+        color: m.color,
+        tone: natTone(m.kind, shown.value),
+        value: natCodeLabel(m.kind, shown.value),
+        small: true,
+        info: natInfo(m.kind),
+        foot: fallback ? t('metrics.nat.footStale', { time: timeStr }) : t('metrics.nat.foot', { time: timeStr }),
+      }
+    }
+
+    // TCP error class: 0 (none) is a valid determinate "no error", so no stale
+    // fallback — always the newest value.
+    return {
+      label: m.label,
+      color: m.color,
+      tone: tcpErrorTone(latest.value),
+      value: tcpErrorLabel(latest.value),
+      small: true,
+      info: tcpErrorInfo(),
+      foot: t('metrics.nat.foot', { time: fmtTime(latest.ts) }),
+    }
+  }
+
+  return { buildCard, buildCards, buildCodeCard }
 }

@@ -24,6 +24,10 @@ export const HIDDEN_KINDS = new Set(['agent.wal_pending'])
 // this window to read the true latest value. Mirrors server-core pickTier.
 export const RAW_MAX_SEC = 2 * 3600
 
+// The /metrics/summary endpoint always aggregates raw observations and accepts
+// windows up to raw retention. Mirrors server-core summaryMaxWindowSec.
+export const SUMMARY_MAX_SEC = 2 * 86400
+
 // NAT behavior/type results are categorical codes, not trend values: they render
 // as labeled stat cards (a raw-integer line carries no meaning). The TCP
 // error-class is the same shape (a diagnostic code, not a trend), so both are
