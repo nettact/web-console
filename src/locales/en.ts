@@ -1332,15 +1332,15 @@ export default {
       infoType:
         'NAT type: derived from mapping + filtering behavior (RFC 3489).\n• Open Internet: no NAT, directly reachable.\n• Full Cone: endpoint-independent mapping + filtering, best for P2P.\n• Restricted Cone: endpoint-independent mapping + address-dependent filtering.\n• Port-Restricted Cone: endpoint-independent mapping + address-and-port-dependent filtering (most common at home).\n• Symmetric: address-and-port-dependent mapping, hardest for P2P hole-punching.',
     },
-    tcpError: {
+    probeReason: {
       none: 'None',
-      timeout: 'Connection timed out',
-      refused: 'Connection refused',
+      timeout: 'Timed out (no response)',
+      refused: 'Refused by peer',
       unreachable: 'Network unreachable',
       dns: 'DNS resolution failed',
       tls: 'TLS handshake failed',
       other: 'Other error',
-      info: 'How a failed connection is classified:\n• Connection timed out: no answer within the deadline (host/network down or dropping).\n• Connection refused: host is up but the port is closed (fast refusal).\n• Network unreachable: no route to the destination.\n• DNS resolution failed: the hostname could not be resolved.\n• TLS handshake failed: TCP connected but TLS negotiation failed.',
+      info: 'How a probe failure is classified:\n• Timed out (no response): no answer within the deadline (unreachable, dropped, or too slow).\n• Refused by peer: the peer actively refused (e.g. a closed port, or a DNS server refusing the query).\n• Network unreachable: no route to the destination.\n• DNS resolution failed: the name could not be resolved or has no matching record.\n• TLS handshake failed: TLS negotiation failed after connecting.',
     },
   },
 

@@ -575,6 +575,9 @@ export interface AlertEvidence {
   comparator: string // gt | gte | lt | lte | eq
   threshold: number
   value: number
+  // Frozen probe failure reason (telemetry.ProbeReason* code): the underlying cause
+  // (unreachable / DNS-failed / timeout). 0 = none (a pure threshold breach).
+  reason_code: number
   observed_at: string
   // Read-time overlay (STATUS-001): whether this evidence's condition is STILL
   // currently satisfied on a firing alert. False ⇒ recovered historical evidence.

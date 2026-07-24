@@ -1346,15 +1346,15 @@ export default {
       infoType:
         'NAT 类型：由映射 + 过滤行为归纳（RFC 3489）。\n• Open Internet：无 NAT，公网可直连。\n• Full Cone：端点无关映射 + 端点无关过滤，最利于 P2P。\n• Restricted Cone：端点无关映射 + 地址相关过滤。\n• Port-Restricted Cone：端点无关映射 + 地址端口相关过滤（家用最常见）。\n• Symmetric：地址端口相关映射，P2P 打洞最难。',
     },
-    tcpError: {
+    probeReason: {
       none: '正常',
-      timeout: '连接超时',
-      refused: '连接被拒绝',
+      timeout: '超时无响应',
+      refused: '请求被拒绝',
       unreachable: '网络不可达',
       dns: 'DNS 解析失败',
       tls: 'TLS 握手失败',
       other: '其它错误',
-      info: '连接失败的分类：\n• 连接超时：在期限内无应答（主机/网络不可达或被丢弃）。\n• 连接被拒绝：主机在线但端口关闭（快速拒绝）。\n• 网络不可达：没有到目标的路由。\n• DNS 解析失败：域名无法解析。\n• TLS 握手失败：TCP 已连接但 TLS 协商失败。',
+      info: '探测失败原因的分类：\n• 超时无响应：在期限内未收到应答（不可达、被丢弃或处理过慢）。\n• 请求被拒绝：对方主动拒绝（如端口关闭、DNS 服务器拒绝查询）。\n• 网络不可达：没有到目标的路由。\n• DNS 解析失败：域名无法解析或无匹配记录。\n• TLS 握手失败：连接建立后 TLS 协商失败。',
     },
   },
 

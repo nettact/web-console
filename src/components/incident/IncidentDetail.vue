@@ -40,7 +40,7 @@ function presenceOf(agentId: string): 'online' | 'offline' | '' {
 }
 const { sevLabel, layerLabel, kindLabel, resolveReasonLabel, comparatorSymbol, comparatorLabel } =
   useIncidentLabels()
-const { metricLabel } = useMetricMeta()
+const { metricLabel, probeReasonLabel } = useMetricMeta()
 
 const detail = ref<IncidentDetail | null>(null)
 const timeline = ref<TimelineEntry[]>([])
@@ -253,7 +253,10 @@ onBeforeUnmount(() => {
                       <span v-if="ev.target_name && ev.target_addr" class="hint mono ev-addr">{{ ev.target_addr }}</span>
                     </td>
                     <td class="hint">{{ m.agent_host || m.agent_id }}</td>
-                    <td>{{ metricLabel(ev.metric_kind) }}</td>
+                    <td>
+                      {{ metricLabel(ev.metric_kind) }}
+                      <span v-if="ev.reason_code > 0" class="reason-chip">{{ probeReasonLabel(ev.reason_code) }}</span>
+                    </td>
                     <td class="num mono">{{ fmtNum(ev.value) }}</td>
                     <td class="num mono">
                       <span :aria-label="comparatorLabel(ev.comparator)">{{ comparatorSymbol(ev.comparator) }}</span>
@@ -428,6 +431,19 @@ onBeforeUnmount(() => {
 .badge.tiny {
   padding: 1px 7px;
   font-size: 10.5px;
+}
+/* Frozen probe failure reason ("network unreachable" / "DNS resolution failed"),
+   shown beside the metric so the operator sees WHY, not just the breached value. */
+.reason-chip {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  font-size: 10.5px;
+  color: #fca5a5;
+  border: 1px solid rgba(248, 113, 113, 0.4);
+  background: rgba(248, 113, 113, 0.1);
+  white-space: nowrap;
 }
 .table-scroll {
   overflow-x: auto;

@@ -6,7 +6,7 @@
 
 import type { KindSummary, Sample } from '../api'
 import type { Tone } from '../lib/metricMeta'
-import { NAT_CODE_KINDS, TCP_ERROR_KIND, natCodeLabel, natTone, tcpErrorTone, fmtNum } from '../lib/metricMeta'
+import { NAT_CODE_KINDS, PROBE_ERROR_KINDS, natCodeLabel, natTone, probeReasonTone, fmtNum } from '../lib/metricMeta'
 import { availability, countRestarts, toPoints, uptimeOnline } from '../lib/timeline'
 import { fmtByUnit, isByteUnit } from '../lib/format'
 import { useMetricMeta } from './useMetricMeta'
@@ -32,7 +32,7 @@ export interface Card {
 
 export function useMetricCards() {
   const { t } = useI18n()
-  const { unitLabel, natInfo, tcpErrorLabel, tcpErrorInfo, fmtDur, fmtTime } = useMetricMeta()
+  const { unitLabel, natInfo, probeReasonLabel, probeReasonInfo, fmtDur, fmtTime } = useMetricMeta()
 
   function buildCard(m: CardInput): Card {
     const pts = toPoints(m.samples)
@@ -79,18 +79,18 @@ export function useMetricCards() {
       }
     }
 
-    if (m.kind === TCP_ERROR_KIND) {
-      // The latest connect classification as a labeled card: 0 (none) is healthy,
+    if (PROBE_ERROR_KINDS.has(m.kind)) {
+      // The latest failure classification as a labeled card: 0 (none) is healthy,
       // any other class explains the failure. No stale fallback — 0 is a valid
       // determinate "no error", unlike a lost NAT probe.
       const last = pts[pts.length - 1]
       return {
         label: m.label,
         color: m.color,
-        tone: tcpErrorTone(last.v),
-        value: tcpErrorLabel(last.v),
+        tone: probeReasonTone(last.v),
+        value: probeReasonLabel(last.v),
         small: true,
-        info: tcpErrorInfo(),
+        info: probeReasonInfo(),
         foot: t('metrics.nat.foot', { time: fmtTime(new Date(last.t).toISOString()) }),
       }
     }
@@ -141,11 +141,11 @@ export function useMetricCards() {
 
   const buildCards = (list: CardInput[]): Card[] => list.map(buildCard)
 
-  // buildCodeCard renders a categorical code card (NAT / TCP error class) from a
-  // server-side KindSummary instead of a raw sample window: these cards only
+  // buildCodeCard renders a categorical code card (NAT / probe error class) from
+  // a server-side KindSummary instead of a raw sample window: these cards only
   // need the newest value (plus, for NAT, the newest determinate value as the
   // stale fallback), so fetching thousands of samples per agent just to read the
-  // last one was pure waste (PERF-001 follow-up). Mirrors buildCard's NAT/TCP
+  // last one was pure waste (PERF-001 follow-up). Mirrors buildCard's NAT/error
   // branches exactly.
   function buildCodeCard(m: { label: string; color: string; kind: string }, summary: KindSummary | undefined): Card {
     const latest = summary?.latest
@@ -169,15 +169,15 @@ export function useMetricCards() {
       }
     }
 
-    // TCP error class: 0 (none) is a valid determinate "no error", so no stale
+    // Probe error class: 0 (none) is a valid determinate "no error", so no stale
     // fallback — always the newest value.
     return {
       label: m.label,
       color: m.color,
-      tone: tcpErrorTone(latest.value),
-      value: tcpErrorLabel(latest.value),
+      tone: probeReasonTone(latest.value),
+      value: probeReasonLabel(latest.value),
       small: true,
-      info: tcpErrorInfo(),
+      info: probeReasonInfo(),
       foot: t('metrics.nat.foot', { time: fmtTime(latest.ts) }),
     }
   }

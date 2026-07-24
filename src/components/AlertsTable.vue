@@ -9,13 +9,18 @@ import { useMetricMeta } from '../composables/useMetricMeta'
 
 defineProps<{ alerts: Alert[]; showAgent?: boolean }>()
 const { t } = useI18n()
-const { sevTone, sevLabel, fmtTime } = useMetricMeta()
+const { sevTone, sevLabel, fmtTime, probeReasonLabel } = useMetricMeta()
 
 // An alert instance (keyed rule+Agent) freezes the value of every contributing
 // condition. Render each evidence value; an AND rule that fired on several
 // conditions shows them all.
 const triggerValues = (a: Alert) =>
   a.evidence.length ? a.evidence.map((ev) => fmtNum(ev.value)).join(', ') : '—'
+
+// Distinct frozen failure reasons across an alert's evidence (unreachable / DNS-
+// failed / …), shown as chips so the row states WHY, not just the breached value.
+const reasonLabels = (a: Alert) =>
+  [...new Set(a.evidence.filter((ev) => ev.reason_code > 0).map((ev) => probeReasonLabel(ev.reason_code)))]
 </script>
 
 <template>
@@ -43,7 +48,10 @@ const triggerValues = (a: Alert) =>
           <td>{{ a.rule_name }}</td>
           <td><span class="sev" :class="`is-${sevTone(a.severity)}`">{{ sevLabel(a.severity) }}</span></td>
           <td>{{ a.state === 'resolved' ? t('metrics.stateResolved') : a.state === 'firing' ? t('metrics.stateFiring') : a.state }}</td>
-          <td class="num mono">{{ triggerValues(a) }}</td>
+          <td class="num mono">
+            {{ triggerValues(a) }}
+            <span v-for="r in reasonLabels(a)" :key="r" class="reason-chip">{{ r }}</span>
+          </td>
         </tr>
       </tbody>
     </table>
@@ -112,6 +120,17 @@ const triggerValues = (a: Alert) =>
 .sev.is-unknown {
   color: var(--text-dim);
   border-color: var(--border-strong);
+}
+.reason-chip {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  font-size: 11px;
+  color: #fca5a5;
+  border: 1px solid rgba(248, 113, 113, 0.4);
+  background: rgba(248, 113, 113, 0.1);
+  white-space: nowrap;
 }
 .pad {
   padding: 8px 2px;

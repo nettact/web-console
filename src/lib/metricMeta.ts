@@ -29,14 +29,19 @@ export const RAW_MAX_SEC = 2 * 3600
 export const SUMMARY_MAX_SEC = 2 * 86400
 
 // NAT behavior/type results are categorical codes, not trend values: they render
-// as labeled stat cards (a raw-integer line carries no meaning). The TCP
-// error-class is the same shape (a diagnostic code, not a trend), so both are
-// "code kinds". Together with the static capacity totals (mem.total) and the
-// per-cycle ICMP sample count they are "info" kinds — shown as a card or caption,
-// never plotted as a flat, meaningless line.
+// as labeled stat cards (a raw-integer line carries no meaning). The per-probe
+// error-classes (telemetry.ProbeReason* codes) are the same shape (a diagnostic
+// code, not a trend), so both are "code kinds". Together with the static capacity
+// totals (mem.total) and the per-cycle ICMP sample count they are "info" kinds —
+// shown as a card or caption, never plotted as a flat, meaningless line.
 export const NAT_CODE_KINDS = new Set(['probe.nat.mapping', 'probe.nat.filtering', 'probe.nat.type'])
-export const TCP_ERROR_KIND = 'probe.tcp.error_class'
-export const CODE_KINDS = new Set([...NAT_CODE_KINDS, TCP_ERROR_KIND])
+export const PROBE_ERROR_KINDS = new Set([
+  'probe.tcp.error_class',
+  'probe.icmp.error_class',
+  'probe.dns.error_class',
+  'probe.http.error_class',
+])
+export const CODE_KINDS = new Set([...NAT_CODE_KINDS, ...PROBE_ERROR_KINDS])
 // host.uptime_s is a monotonic counter: plotting it as a trend line is
 // meaningless, but the latest value ("up for N days") is useful — so it's an info
 // kind too, shown as a card only, never on the chart and never a picker chip.
@@ -60,10 +65,10 @@ export function natTone(kind: string, code: number): Tone {
   return n >= 3 ? 'bad' : n === 1 ? 'good' : 'unknown'
 }
 
-// tcpErrorTone maps a probe.tcp.error_class code to a card tone: 0 (none) is the
+// probeReasonTone maps a probe.*.error_class code to a card tone: 0 (none) is the
 // healthy state, any other class is a failure. The human label is localized in
-// useMetricMeta.tcpErrorLabel (the codes are telemetry.TCPErr*).
-export function tcpErrorTone(code: number): Tone {
+// useMetricMeta.probeReasonLabel (the codes are telemetry.ProbeReason*).
+export function probeReasonTone(code: number): Tone {
   return Math.round(code) === 0 ? 'good' : 'bad'
 }
 
@@ -79,6 +84,7 @@ const METRIC_ORDER = [
   'probe.icmp.jitter_ms',
   'probe.icmp.loss_pct',
   'probe.icmp.samples',
+  'probe.icmp.error_class',
   'probe.tcp.ok',
   'probe.tcp.connect_ms',
   'probe.tcp.dns_ms',
@@ -118,11 +124,14 @@ const KIND_COLORS: Record<string, string> = {
   'probe.icmp.loss_pct': '#fbbf24',
   'probe.icmp.jitter_ms': '#a78bfa',
   'probe.icmp.samples': '#94a3b8',
+  'probe.icmp.error_class': '#f87171',
   'probe.dns.resolve_ms': '#818cf8',
   'probe.dns.ok': '#34d399',
+  'probe.dns.error_class': '#f87171',
   'probe.http.status': '#5eead4',
   'probe.http.latency_ms': '#f472b6',
   'probe.http.ok': '#34d399',
+  'probe.http.error_class': '#f87171',
   'probe.tcp.ok': '#34d399',
   'probe.tcp.connect_ms': '#38bdf8',
   'probe.tcp.dns_ms': '#818cf8',
