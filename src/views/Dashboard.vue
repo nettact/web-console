@@ -87,11 +87,18 @@ const visibleCardCount = computed(() => draftLayout.value.filter((card) => card.
 const cardDefinition = (id: string) => DASHBOARD_CARD_DEFINITIONS.find((card) => card.id === id)!
 const cardLayout = (id: string) => activeLayout.value.find((card) => card.id === id)
 const cardVisible = (id: string) => cardLayout(id)?.visible ?? false
+// compact = 3 cols, medium/tall = 6 cols (half row), wide = 12 cols. `tall` also
+// claims two grid rows so its chart card renders at double height; narrow-screen
+// CSS resets the row span so it degrades to a single stacked full-width card.
 const cardGridStyle = (id: string): Record<string, string | number> => {
   const index = activeLayout.value.findIndex((card) => card.id === id)
   const size = cardLayout(id)?.size ?? 'wide'
-  return { order: index, gridColumn: `span ${size === 'compact' ? 3 : size === 'medium' ? 6 : 12}` }
+  const columns = size === 'compact' ? 3 : size === 'medium' || size === 'tall' ? 6 : 12
+  const style: Record<string, string | number> = { order: index, gridColumn: `span ${columns}` }
+  if (size === 'tall') style.gridRow = 'span 2'
+  return style
 }
+const cardIsTall = (id: string) => cardLayout(id)?.size === 'tall'
 
 function beginLayoutEdit() {
   if (!editingLayout.value) draftLayout.value = cloneDashboardLayout(savedLayout.value)
@@ -369,6 +376,29 @@ const publicTargets = computed(() =>
     .filter((sample) => sample.target !== 'gateway')
     .sort((a, b) => a.target.localeCompare(b.target) || rowKey(a).localeCompare(rowKey(b))),
 )
+// Public ICMP targets feeding the 24h quality aggregate, derived from the
+// authoritative target-status config (kind 'icmp' — the gateway is its own kind
+// with target 'gateway', which the aggregate's excludeTargets:['gateway'] drops)
+// scoped to the selected Agent's applicable monitors. NOT from the /latest
+// snapshot: a target that just started failing or went stale has no fresh RTT
+// sample there yet still counts in the 24h aggregate, so a snapshot-derived note
+// would under-report. Sourcing from config keeps this footnote in lockstep with
+// the request — it names exactly the set the aggregate covers, and shifts with it
+// whenever monitors are added/removed.
+const qualityTargetNames = computed(() =>
+  [...new Set(
+    targetStatus.targets
+      .filter((row) => row.kind === 'icmp' && row.agents.some((a) => a.agent_id === selected.value))
+      .map((row) => row.target),
+  )].sort((a, b) => a.localeCompare(b)),
+)
+const qualitySourceNote = computed(() => {
+  const names = qualityTargetNames.value
+  const targets = names.length
+    ? t('dashboard.qualitySourceTargets', { list: names.join(locale.value === 'en' ? ', ' : '、') })
+    : t('dashboard.qualitySourceTargetsAll')
+  return t('dashboard.qualitySourceNote', { targets })
+})
 const dnsTargets = computed(() =>
   byKind('probe.dns.resolve_ms').sort(
     (a, b) => a.target.localeCompare(b.target) || rowKey(a).localeCompare(rowKey(b)),
@@ -599,6 +629,18 @@ const availabilityPct = computed(() => {
   if (!losses.length) return null
   return losses.reduce((sum, loss) => sum + Math.max(0, 100 - loss), 0) / losses.length
 })
+// Per-target availability behind the averaged card number, worst first, so the
+// card can name which public ICMP target is dragging the average down. targetId
+// is the monitor that owns the series (used to deep-link into target status);
+// empty when the sample carries no monitor_id, leaving the name un-linked.
+const availabilityBreakdown = computed(() =>
+  byKind('probe.icmp.loss_pct')
+    .filter((sample) => sample.target !== 'gateway')
+    .map((sample) => ({ targetId: sample.monitor_id ?? '', name: sample.target, pct: Math.max(0, 100 - sample.value) }))
+    .sort((a, b) => a.pct - b.pct),
+)
+const availabilityOffenders = computed(() => availabilityBreakdown.value.filter((row) => row.pct < 100))
+const worstAvailabilityTarget = computed(() => availabilityOffenders.value[0] ?? null)
 const failureCount = computed(() => statusHistory.value.filter((event) => event.status === 'offline').length)
 
 const severityRank: Record<string, number> = { critical: 0, error: 1, warn: 2, info: 3 }
@@ -884,7 +926,16 @@ onBeforeUnmount(() => {
         <DashboardCardControls v-if="editingLayout" :title="t(cardDefinition('availability').titleKey)" :size="cardLayout('availability')!.size" :sizes="cardDefinition('availability').sizes" :first="visibleCardIndex('availability') === 0" :last="visibleCardIndex('availability') === visibleCardCount - 1" @resize="updateCardSize('availability', $event)" @move="moveVisibleCard('availability', $event)" @remove="removeWidget('availability')" @pointer-drag="startPointerCardDrag('availability', $event)" />
         <span>{{ t('dashboard.cardAvailability') }}</span>
         <strong>{{ availabilityPct == null ? '--' : `${availabilityPct.toFixed(1)}%` }}</strong>
-        <p>{{ t('dashboard.availabilityFoot', { n: publicLosses.length }) }}</p>
+        <p v-if="availabilityPct != null && worstAvailabilityTarget" class="availability-attribution">
+          <RouterLink
+            v-if="worstAvailabilityTarget.targetId"
+            class="attribution-link"
+            :to="{ path: '/target-status', query: { agent: selected, target: worstAvailabilityTarget.targetId } }"
+          >{{ worstAvailabilityTarget.name }} {{ worstAvailabilityTarget.pct.toFixed(0) }}%</RouterLink>
+          <span v-else class="mono">{{ worstAvailabilityTarget.name }} {{ worstAvailabilityTarget.pct.toFixed(0) }}%</span>
+          <span v-if="availabilityOffenders.length > 1"> · {{ t('dashboard.availabilityMoreOffenders', { n: availabilityOffenders.length - 1 }) }}</span>
+        </p>
+        <p v-else>{{ t('dashboard.availabilityFoot', { n: publicLosses.length }) }}</p>
       </article>
       <article v-if="cardVisible('latency')" class="insight-card dashboard-card-shell" :class="worstPublicRtt == null ? 'is-unknown' : worstPublicRtt < 80 ? 'is-good' : worstPublicRtt < 150 ? 'is-warn' : 'is-bad'" :style="cardGridStyle('latency')" data-layout-card="latency" :data-layout-editing="editingLayout || undefined" :data-dragging="draggingCardID === 'latency' || undefined" :draggable="editingLayout" @dragstart="startCardDrag('latency', $event)" @dragend="draggingCardID = ''" @dragover.prevent @drop="dropLayoutCard('latency')">
         <DashboardCardControls v-if="editingLayout" :title="t(cardDefinition('latency').titleKey)" :size="cardLayout('latency')!.size" :sizes="cardDefinition('latency').sizes" :first="visibleCardIndex('latency') === 0" :last="visibleCardIndex('latency') === visibleCardCount - 1" @resize="updateCardSize('latency', $event)" @move="moveVisibleCard('latency', $event)" @remove="removeWidget('latency')" @pointer-drag="startPointerCardDrag('latency', $event)" />
@@ -936,12 +987,13 @@ onBeforeUnmount(() => {
         </div>
       </section>
 
-      <section v-if="cardVisible('network-quality')" class="surface trend-summary-card dashboard-card-shell" :style="cardGridStyle('network-quality')" data-layout-card="network-quality" :data-layout-editing="editingLayout || undefined" :data-dragging="draggingCardID === 'network-quality' || undefined" :draggable="editingLayout" @dragstart="startCardDrag('network-quality', $event)" @dragend="draggingCardID = ''" @dragover.prevent @drop="dropLayoutCard('network-quality')">
+      <section v-if="cardVisible('network-quality')" class="surface trend-summary-card dashboard-card-shell" :class="{ 'is-tall': cardIsTall('network-quality') }" :style="cardGridStyle('network-quality')" data-layout-card="network-quality" :data-layout-editing="editingLayout || undefined" :data-dragging="draggingCardID === 'network-quality' || undefined" :draggable="editingLayout" @dragstart="startCardDrag('network-quality', $event)" @dragend="draggingCardID = ''" @dragover.prevent @drop="dropLayoutCard('network-quality')">
         <DashboardCardControls v-if="editingLayout" :title="t(cardDefinition('network-quality').titleKey)" :size="cardLayout('network-quality')!.size" :sizes="cardDefinition('network-quality').sizes" :first="visibleCardIndex('network-quality') === 0" :last="visibleCardIndex('network-quality') === visibleCardCount - 1" @resize="updateCardSize('network-quality', $event)" @move="moveVisibleCard('network-quality', $event)" @remove="removeWidget('network-quality')" @pointer-drag="startPointerCardDrag('network-quality', $event)" />
         <div class="summary-card-head">
           <div><span class="section-kicker">24H</span><h3>{{ t('dashboard.networkQuality24h') }}</h3></div>
           <RouterLink class="text-link" :to="{ path: '/target-status', query: { agent: selected } }">{{ t('dashboard.viewAll') }} →</RouterLink>
         </div>
+        <p class="card-source-note">{{ qualitySourceNote }}</p>
         <div class="trend-stat-row">
           <div><span>{{ t('dashboard.qualityRttP95') }}</span><strong>{{ fmt(qualityRttP95, 1) }}<small> ms</small></strong></div>
           <div><span>{{ t('dashboard.qualityLossAvg') }}</span><strong>{{ fmt(qualityLossAvg, 2) }}<small>%</small></strong></div>
@@ -974,7 +1026,7 @@ onBeforeUnmount(() => {
         </div>
       </article>
 
-      <section v-if="cardVisible('traffic-trend')" class="surface trend-summary-card dashboard-card-shell" :style="cardGridStyle('traffic-trend')" data-layout-card="traffic-trend" :data-layout-editing="editingLayout || undefined" :data-dragging="draggingCardID === 'traffic-trend' || undefined" :draggable="editingLayout" @dragstart="startCardDrag('traffic-trend', $event)" @dragend="draggingCardID = ''" @dragover.prevent @drop="dropLayoutCard('traffic-trend')">
+      <section v-if="cardVisible('traffic-trend')" class="surface trend-summary-card dashboard-card-shell" :class="{ 'is-tall': cardIsTall('traffic-trend') }" :style="cardGridStyle('traffic-trend')" data-layout-card="traffic-trend" :data-layout-editing="editingLayout || undefined" :data-dragging="draggingCardID === 'traffic-trend' || undefined" :draggable="editingLayout" @dragstart="startCardDrag('traffic-trend', $event)" @dragend="draggingCardID = ''" @dragover.prevent @drop="dropLayoutCard('traffic-trend')">
         <DashboardCardControls v-if="editingLayout" :title="t(cardDefinition('traffic-trend').titleKey)" :size="cardLayout('traffic-trend')!.size" :sizes="cardDefinition('traffic-trend').sizes" :first="visibleCardIndex('traffic-trend') === 0" :last="visibleCardIndex('traffic-trend') === visibleCardCount - 1" @resize="updateCardSize('traffic-trend', $event)" @move="moveVisibleCard('traffic-trend', $event)" @remove="removeWidget('traffic-trend')" @pointer-drag="startPointerCardDrag('traffic-trend', $event)" />
         <div class="summary-card-head"><div><span class="section-kicker">24H</span><h3>{{ t('dashboard.trafficTrend') }}</h3></div></div>
         <div class="traffic-live-row">
@@ -1652,10 +1704,18 @@ onBeforeUnmount(() => {
 .insight-card > span { color: var(--text-muted); font-size: 10px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
 .insight-card strong { margin-top: 7px; color: var(--insight-color); font-size: 28px; font-variant-numeric: tabular-nums; }
 .insight-card p { margin: 4px 0 0; color: var(--text-muted); font-size: 10px; }
+.availability-attribution { display: flex; flex-wrap: wrap; align-items: baseline; gap: 1px 6px; }
+.availability-attribution .attribution-link { color: var(--insight-color); font-weight: 750; font-variant-numeric: tabular-nums; }
+.availability-attribution .attribution-link:hover { text-decoration: underline; }
+.availability-attribution .mono { color: var(--insight-color); font-weight: 700; }
 .empty-layout-state { margin-top: 18px; padding: 48px 20px; }
 .empty-layout-state p { margin: 0 0 10px; color: var(--text-muted); }
 @media (max-width: 900px) {
-  .dashboard-card-shell { grid-column: 1 / -1 !important; }
+  /* Everything collapses to a single stacked column; a tall card drops its
+     second row so it becomes an ordinary full-width card and never overlaps. */
+  .dashboard-card-shell { grid-column: 1 / -1 !important; grid-row: auto !important; }
+  .trend-summary-card.is-tall { min-height: 390px; }
+  .trend-summary-card.is-tall :deep(.dashboard-trend-chart.chart) { height: 255px; flex: none; }
 }
 .direct-layout-toolbar {
   position: sticky;
@@ -1821,7 +1881,13 @@ onBeforeUnmount(() => {
 .health-count strong { font-size: 25px; line-height: 1; }
 .health-count span { margin-top: 7px; color: var(--text-muted); font-size: 10px; }
 .health-count.good strong { color: var(--success); }.health-count.bad strong { color: var(--danger); }.health-count.warn strong { color: var(--warning); }.health-count.muted strong { color: var(--text-muted); }
-.trend-summary-card { min-height: 390px; }
+.trend-summary-card { display: flex; flex-direction: column; min-height: 390px; }
+/* 2×2 tall variant: fills two grid rows and lets its chart grow into the extra
+   height instead of leaving a gap under a fixed-height chart. */
+.trend-summary-card.is-tall { min-height: clamp(520px, 42vw, 620px); }
+.trend-summary-card.is-tall :deep(.dashboard-trend-chart.chart) { height: auto; flex: 1 1 auto; min-height: 320px; }
+.trend-summary-card.is-tall .summary-empty { flex: 1; }
+.card-source-note { margin: -12px 0 14px; color: var(--text-muted); font-size: 10px; line-height: 1.5; word-break: break-word; }
 .trend-stat-row { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin-bottom: 4px; }
 .trend-stat-row > div { display: grid; padding: 10px 12px; border-radius: 11px; background: var(--surface-2); }
 .trend-stat-row span { color: var(--text-muted); font-size: 9px; text-transform: uppercase; }

@@ -215,7 +215,7 @@ describe('Dashboard network adapter list', () => {
     await render(connected, baseAgent, [], [], null)
 
     const expectedVisible = [
-      'overall', 'availability', 'latency', 'wifi-summary', 'lan-summary', 'active-alerts',
+      'overall', 'availability', 'nat-summary', 'wifi-summary', 'lan-summary', 'active-alerts',
       'monitor-health', 'network-quality', 'traffic-trend', 'lan-devices',
     ]
     for (const [index, id] of expectedVisible.entries()) {

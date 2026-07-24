@@ -13,13 +13,13 @@ import {
 const simpleVisible = [
   ['overall', 'wide'],
   ['availability', 'compact'],
-  ['latency', 'compact'],
+  ['nat-summary', 'compact'],
   ['wifi-summary', 'compact'],
   ['lan-summary', 'compact'],
   ['active-alerts', 'medium'],
   ['monitor-health', 'medium'],
-  ['network-quality', 'wide'],
-  ['traffic-trend', 'wide'],
+  ['network-quality', 'tall'],
+  ['traffic-trend', 'tall'],
   ['lan-devices', 'wide'],
 ]
 
@@ -44,6 +44,12 @@ describe('dashboard layout', () => {
     expect(identifyDashboardLayoutPreset(layout)).toBe('professional')
     expect(DASHBOARD_CARD_DEFINITIONS.find((card) => card.id === 'system-status')?.sizes).toEqual(['medium', 'wide'])
     expect(DASHBOARD_CARD_DEFINITIONS.find((card) => card.id === 'nat-summary')?.sizes).toEqual(['compact', 'medium'])
+    // Only the two chart cards expose the 2×2 tall slot.
+    expect(DASHBOARD_CARD_DEFINITIONS.find((card) => card.id === 'network-quality')?.sizes).toEqual(['medium', 'wide', 'tall'])
+    expect(DASHBOARD_CARD_DEFINITIONS.find((card) => card.id === 'traffic-trend')?.sizes).toEqual(['medium', 'wide', 'tall'])
+    expect(DASHBOARD_CARD_DEFINITIONS.filter((card) => card.sizes.includes('tall')).map((card) => card.id)).toEqual([
+      'network-quality', 'traffic-trend',
+    ])
   })
 
   it('returns independent preset copies and recognizes only exact presets', () => {

@@ -74,6 +74,7 @@ button:disabled { opacity: .3; cursor: default; }
 .ratio-icon.is-compact { width: 8px; }
 .ratio-icon.is-medium { width: 14px; }
 .ratio-icon.is-wide { width: 20px; }
+.ratio-icon.is-tall { width: 13px; height: 15px; }
 .remove-card-button { color: var(--danger); font-size: 17px; }
 .remove-card-button:hover { color: #fff; border-color: var(--danger); background: var(--danger); }
 @media (max-width: 560px) {

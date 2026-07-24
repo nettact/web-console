@@ -1,4 +1,5 @@
-export type DashboardCardSize = 'compact' | 'medium' | 'wide'
+// `tall` is a half-row-wide, double-row-high (2×2) slot for chart cards only.
+export type DashboardCardSize = 'compact' | 'medium' | 'wide' | 'tall'
 
 export type DashboardLayoutPresetID = 'simple' | 'professional'
 
@@ -32,12 +33,12 @@ export const DASHBOARD_CARD_DEFINITIONS: readonly DashboardCardDefinition[] = [
   { id: 'agent-status', titleKey: 'dashboard.cardAgentStatus', sizes: ['compact', 'medium'], defaultSize: 'compact' },
   { id: 'active-alerts', titleKey: 'dashboard.cardActiveAlerts', sizes: ['medium', 'wide'], defaultSize: 'medium' },
   { id: 'monitor-health', titleKey: 'dashboard.cardMonitorHealth', sizes: ['medium', 'wide'], defaultSize: 'medium' },
-  { id: 'network-quality', titleKey: 'dashboard.cardNetworkQuality', sizes: ['medium', 'wide'], defaultSize: 'wide' },
+  { id: 'network-quality', titleKey: 'dashboard.cardNetworkQuality', sizes: ['medium', 'wide', 'tall'], defaultSize: 'wide' },
   { id: 'data-freshness', titleKey: 'dashboard.cardDataFreshness', sizes: ['compact', 'medium'], defaultSize: 'compact' },
   { id: 'wifi-summary', titleKey: 'dashboard.cardWifiSummary', sizes: ['compact', 'medium'], defaultSize: 'compact' },
   { id: 'nat-summary', titleKey: 'dashboard.natType', sizes: ['compact', 'medium'], defaultSize: 'compact' },
   { id: 'lan-summary', titleKey: 'dashboard.lanDevices', sizes: ['compact', 'medium'], defaultSize: 'compact' },
-  { id: 'traffic-trend', titleKey: 'dashboard.cardTrafficTrend', sizes: ['medium', 'wide'], defaultSize: 'medium' },
+  { id: 'traffic-trend', titleKey: 'dashboard.cardTrafficTrend', sizes: ['medium', 'wide', 'tall'], defaultSize: 'medium' },
   { id: 'incident-summary', titleKey: 'dashboard.cardIncidentSummary', sizes: ['medium', 'wide'], defaultSize: 'medium' },
   { id: 'important-targets', titleKey: 'dashboard.cardImportantTargets', sizes: ['wide'], defaultSize: 'wide' },
   { id: 'system-status', titleKey: 'dashboard.cardSystemStatus', sizes: ['medium', 'wide'], defaultSize: 'wide' },
@@ -56,13 +57,14 @@ const PROFESSIONAL_LAYOUT: readonly DashboardCardLayout[] = DASHBOARD_CARD_DEFIN
 const SIMPLE_VISIBLE_LAYOUT: readonly DashboardCardLayout[] = [
   { id: 'overall', visible: true, size: 'wide' },
   { id: 'availability', visible: true, size: 'compact' },
-  { id: 'latency', visible: true, size: 'compact' },
+  { id: 'nat-summary', visible: true, size: 'compact' },
   { id: 'wifi-summary', visible: true, size: 'compact' },
   { id: 'lan-summary', visible: true, size: 'compact' },
   { id: 'active-alerts', visible: true, size: 'medium' },
   { id: 'monitor-health', visible: true, size: 'medium' },
-  { id: 'network-quality', visible: true, size: 'wide' },
-  { id: 'traffic-trend', visible: true, size: 'wide' },
+  // Network quality + traffic trend sit side by side as 2×2 tall charts.
+  { id: 'network-quality', visible: true, size: 'tall' },
+  { id: 'traffic-trend', visible: true, size: 'tall' },
   { id: 'lan-devices', visible: true, size: 'wide' },
 ]
 
