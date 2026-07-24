@@ -114,6 +114,23 @@ function fmtSnapshot(value: string): string {
   return new Date(value).toLocaleString(toDateLocale(locale.value), { hour12: false })
 }
 
+// The snapshot chip is the only "is this current?" signal on the page, so it must
+// distinguish a frozen snapshot (tab was hidden, refresh still pending) from a
+// live one. It deliberately stays a single fixed-height chip rather than a banner:
+// a banner appearing/disappearing around the resume would shift the whole page and
+// throw away the scroll position this view works to preserve.
+const snapshotTone = computed(() => {
+  if (targetStatus.error && !targetStatus.loaded) return 'error'
+  if (targetStatus.stale) return 'stale'
+  if (targetStatus.loaded && targetStatus.syncing) return 'syncing'
+  return 'live'
+})
+const snapshotText = computed(() => {
+  if (!targetStatus.loaded) return targetStatus.error ? t('targetStatus.errorBanner') : t('targetStatus.loading')
+  const time = fmtSnapshot(targetStatus.generatedAt)
+  return targetStatus.syncing ? t('targetStatus.resyncing', { time }) : t('targetStatus.updatedAt', { time })
+})
+
 function toggleGroup(id: string): void {
   const next = new Set(expandedGroups.value)
   if (next.has(id)) next.delete(id)
@@ -273,11 +290,9 @@ onActivated(() => {
         <h2>{{ t('targetStatus.title') }}</h2>
         <p class="sub">{{ t('targetStatus.sub') }}</p>
       </div>
-      <div class="snapshot" :class="{ stale: targetStatus.stale, error: !!targetStatus.error && !targetStatus.loaded }">
-        <span class="snapshot-dot" :class="targetStatus.error && !targetStatus.loaded ? 'error' : targetStatus.stale ? 'stale' : 'live'"></span>
-        <span v-if="targetStatus.loaded">{{ t('targetStatus.updatedAt', { time: fmtSnapshot(targetStatus.generatedAt) }) }}</span>
-        <span v-else-if="targetStatus.error">{{ t('targetStatus.errorBanner') }}</span>
-        <span v-else>{{ t('targetStatus.loading') }}</span>
+      <div class="snapshot" :class="snapshotTone">
+        <span class="snapshot-dot" :class="snapshotTone"></span>
+        <span>{{ snapshotText }}</span>
       </div>
     </div>
 
@@ -396,10 +411,15 @@ onActivated(() => {
   font-size: 11px;
 }
 .snapshot.stale { color: var(--warning); border-color: rgba(251, 191, 36, 0.3); }
+.snapshot.syncing { color: var(--text-muted); }
 .snapshot-dot { width: 7px; height: 7px; border-radius: 50%; }
 .snapshot-dot.live { background: var(--success); }
 .snapshot-dot.stale { background: var(--warning); }
+.snapshot-dot.syncing { background: var(--text-muted); animation: snapshot-blink 1.1s ease-in-out infinite; }
 .snapshot-dot.error { background: var(--danger); }
+@keyframes snapshot-blink {
+  50% { opacity: 0.3; }
+}
 .status-banner,
 .focus-banner {
   margin-bottom: 14px;

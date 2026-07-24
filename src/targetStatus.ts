@@ -21,6 +21,11 @@ export const targetStatus = reactive<{
   targets: TargetStatusRow[]
   loaded: boolean // a successful snapshot has been seen at least once
   stale: boolean // showing a prior snapshot after a failed refresh
+  // Showing a frozen snapshot: the stream is suspended (hidden tab), or it was
+  // just resumed and no refresh has landed yet. Distinct from `stale`, which means
+  // a refresh actually failed — consumers must not badge a frozen snapshot "live",
+  // and a refresh that never settles leaves this set rather than lying.
+  syncing: boolean
   error: string // initial-load failure (no snapshot to fall back to)
   live: boolean // SSE stream connected
 }>({
@@ -28,6 +33,7 @@ export const targetStatus = reactive<{
   targets: [],
   loaded: false,
   stale: false,
+  syncing: false,
   error: '',
   live: false,
 })
@@ -83,9 +89,13 @@ export async function refreshTargetStatus(): Promise<void> {
         targetStatus.generatedAt = r.generated_at
         targetStatus.loaded = true
         targetStatus.stale = false
+        targetStatus.syncing = false
         targetStatus.error = ''
       } catch (e) {
         if (lifecycle !== runLifecycle) return
+        // The attempt settled — `stale` now carries the outcome, so the snapshot
+        // is no longer merely "resuming".
+        targetStatus.syncing = false
         if (targetStatus.loaded) {
           // Keep the last good snapshot; mark it possibly outdated.
           targetStatus.stale = true
@@ -137,6 +147,13 @@ export function initTargetStatus(): void {
   targetStatus.live = true
 }
 
+// Suspend the live stream WITHOUT touching the snapshot. Called when the browser
+// tab is hidden (a hidden tab must not hold an SSE connection). The store keeps
+// serving its last snapshot so the pages that read it keep rendering at full
+// height: dropping the rows here would collapse the kept-alive target-status view
+// to its loading card, and the browser would discard the user's scroll position.
+// The snapshot is frozen from here (`syncing`) until the refresh that the next
+// initTargetStatus() kicks off actually lands, so the UI never badges it live.
 export function stopTargetStatus(): void {
   stream?.close()
   stream = null
@@ -155,8 +172,16 @@ export function stopTargetStatus(): void {
   document.removeEventListener('visibilitychange', onVisibility)
   window.removeEventListener('focus', onFocus)
   targetStatus.live = false
+  targetStatus.syncing = true
+}
+
+// Full teardown for session end (logout, app unmount): suspend the stream and
+// drop the snapshot, so a later login never renders the previous session's data.
+export function resetTargetStatus(): void {
+  stopTargetStatus()
   targetStatus.loaded = false
   targetStatus.stale = false
+  targetStatus.syncing = false
   targetStatus.error = ''
   targetStatus.targets = []
   targetStatus.generatedAt = ''

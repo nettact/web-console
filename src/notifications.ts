@@ -96,6 +96,11 @@ export function initNotifications(): void {
   notifications.live = true
 }
 
+// Suspend the stream WITHOUT clearing the issue list — a hidden tab keeps the
+// bell badge and its list rendered from the last known state (see
+// stopTargetStatus()); the next initNotifications() refetches. The toast baseline
+// is dropped so returning to the tab re-primes silently instead of replaying
+// every issue that went active while we were not listening.
 export function stopNotifications(): void {
   stream?.close()
   stream = null
@@ -103,6 +108,11 @@ export function stopNotifications(): void {
   primed = false
   lastState.clear()
   notifications.live = false
+}
+
+// Full teardown for session end (logout, app unmount).
+export function resetNotifications(): void {
+  stopNotifications()
   notifications.issues = []
   notifications.unread = 0
 }

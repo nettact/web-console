@@ -17,6 +17,9 @@ export const agentStatus = reactive<{
   agents: AgentStatusRow[]
   loaded: boolean
   stale: boolean
+  // Frozen snapshot: stream suspended, or resumed with no refresh landed yet.
+  // See targetStatus.ts — the Agent view must not badge such rows "live sync".
+  syncing: boolean
   error: string
   live: boolean
 }>({
@@ -24,6 +27,7 @@ export const agentStatus = reactive<{
   agents: [],
   loaded: false,
   stale: false,
+  syncing: false,
   error: '',
   live: false,
 })
@@ -70,9 +74,11 @@ export async function refreshAgentStatus(): Promise<void> {
         agentStatus.generatedAt = r.generated_at
         agentStatus.loaded = true
         agentStatus.stale = false
+        agentStatus.syncing = false
         agentStatus.error = ''
       } catch (e) {
         if (lifecycle !== runLifecycle) return
+        agentStatus.syncing = false
         if (agentStatus.loaded) {
           agentStatus.stale = true
         } else {
@@ -117,6 +123,9 @@ export function initAgentStatus(): void {
   agentStatus.live = true
 }
 
+// Suspend the stream and the poll WITHOUT touching the snapshot — see
+// stopTargetStatus(): a hidden tab keeps rendering its last snapshot so the
+// kept-alive Agent view does not collapse and lose the user's scroll position.
 export function stopAgentStatus(): void {
   stream?.close()
   stream = null
@@ -135,8 +144,15 @@ export function stopAgentStatus(): void {
   document.removeEventListener('visibilitychange', onVisibility)
   window.removeEventListener('focus', onFocus)
   agentStatus.live = false
+  agentStatus.syncing = true
+}
+
+// Full teardown for session end (logout, app unmount).
+export function resetAgentStatus(): void {
+  stopAgentStatus()
   agentStatus.loaded = false
   agentStatus.stale = false
+  agentStatus.syncing = false
   agentStatus.error = ''
   agentStatus.agents = []
   agentStatus.generatedAt = ''

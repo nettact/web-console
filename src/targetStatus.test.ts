@@ -6,7 +6,7 @@ const streamMock = vi.hoisted(() => ({ close: vi.fn() }))
 vi.mock('./api', () => ({ api: apiMock }))
 vi.mock('./lib/sse', () => ({ openEventStream: vi.fn(() => streamMock) }))
 
-import { refreshTargetStatus, stopTargetStatus, targetStatus } from './targetStatus'
+import { refreshTargetStatus, resetTargetStatus, stopTargetStatus, targetStatus } from './targetStatus'
 
 function deferred<T>() {
   let resolve!: (value: T) => void
@@ -26,7 +26,7 @@ const response = (name: string) => ({
 
 beforeEach(() => {
   vi.clearAllMocks()
-  stopTargetStatus()
+  resetTargetStatus()
 })
 
 describe('authoritative target-status refresh', () => {
@@ -63,6 +63,31 @@ describe('authoritative target-status refresh', () => {
     expect(targetStatus.targets[0]?.target_id).toBe('second')
   })
 
+  it('keeps the snapshot when the stream is only suspended, and drops it on reset', async () => {
+    apiMock.targetStatuses.mockResolvedValueOnce(response('first'))
+    await refreshTargetStatus()
+
+    // Hiding the browser tab suspends the stream. The snapshot must survive, or
+    // the kept-alive target-status view collapses to its loading card and the
+    // browser throws away the user's scroll position.
+    stopTargetStatus()
+    expect(targetStatus.live).toBe(false)
+    expect(targetStatus.loaded).toBe(true)
+    expect(targetStatus.targets[0]?.target_id).toBe('first')
+    // ...but the frozen snapshot must not keep claiming to be live: `syncing`
+    // holds until a refresh actually lands, so a hung resume cannot show a stale
+    // reading under a live badge.
+    expect(targetStatus.syncing).toBe(true)
+
+    apiMock.targetStatuses.mockResolvedValueOnce(response('second'))
+    await refreshTargetStatus()
+    expect(targetStatus.syncing).toBe(false)
+
+    resetTargetStatus()
+    expect(targetStatus.loaded).toBe(false)
+    expect(targetStatus.targets).toEqual([])
+  })
+
   it('keeps the last successful snapshot and marks it stale on failure', async () => {
     apiMock.targetStatuses.mockResolvedValueOnce(response('first')).mockRejectedValueOnce(new Error('offline'))
     await refreshTargetStatus()
@@ -70,6 +95,8 @@ describe('authoritative target-status refresh', () => {
 
     expect(targetStatus.targets[0]?.target_id).toBe('first')
     expect(targetStatus.stale).toBe(true)
+    // The attempt settled, so `stale` — not `syncing` — carries the outcome.
+    expect(targetStatus.syncing).toBe(false)
     expect(targetStatus.error).toBe('')
   })
 })

@@ -4,9 +4,9 @@ import { useRouter, useRoute, RouterLink, RouterView } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { auth, logout } from './auth'
 import { showResumeBanner, saveOnboarding } from './onboarding'
-import { initNotifications, stopNotifications } from './notifications'
-import { initTargetStatus, stopTargetStatus } from './targetStatus'
-import { initAgentStatus, stopAgentStatus } from './agentStatus'
+import { initNotifications, resetNotifications, stopNotifications } from './notifications'
+import { initTargetStatus, resetTargetStatus, stopTargetStatus } from './targetStatus'
+import { initAgentStatus, resetAgentStatus, stopAgentStatus } from './agentStatus'
 import LangSwitch from './components/LangSwitch.vue'
 import ThemeSwitch from './components/ThemeSwitch.vue'
 import NotificationBell from './components/NotificationBell.vue'
@@ -23,8 +23,18 @@ async function doLogout() {
 
 // Keep one multiplexed SSE connection only while this tab is visible. Hidden
 // NetTact tabs must not occupy Chrome's small HTTP/1.1 per-origin connection pool.
+//
+// Hiding only SUSPENDS the stores — their snapshots stay, so the kept-alive views
+// keep rendering at full height and the browser keeps the user's scroll position.
+// Only losing the session drops the data.
 function syncLiveStreams(): void {
-  if (auth.user && document.visibilityState === 'visible') {
+  if (!auth.user) {
+    resetNotifications()
+    resetTargetStatus()
+    resetAgentStatus()
+    return
+  }
+  if (document.visibilityState === 'visible') {
     initNotifications()
     initTargetStatus()
     initAgentStatus()
@@ -52,20 +62,20 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
   document.removeEventListener('visibilitychange', onVisibilityChange)
-  stopNotifications()
-  stopTargetStatus()
-  stopAgentStatus()
+  resetNotifications()
+  resetTargetStatus()
+  resetAgentStatus()
 })
 
 // `label` is an i18n key resolved at render time so nav + breadcrumb re-translate live.
 const nav = [
   { to: '/', label: 'nav.overview' },
-  { to: '/processes', label: 'nav.processes' },
-  { to: '/target-status', label: 'nav.targetStatus' },
-  { to: '/host-metrics', label: 'nav.hostMetrics' },
   { to: '/incidents', label: 'nav.incidents' },
-  { to: '/monitoring', label: 'nav.monitoring' },
+  { to: '/host-metrics', label: 'nav.hostMetrics' },
+  { to: '/target-status', label: 'nav.targetStatus' },
+  { to: '/processes', label: 'nav.processes' },
   { to: '/agents', label: 'nav.agents' },
+  { to: '/monitoring', label: 'nav.monitoring' },
   { to: '/settings', label: 'nav.settings' },
 ]
 

@@ -266,9 +266,9 @@ onBeforeUnmount(() => {
         <p>{{ t('agents.sub') }}</p>
       </div>
       <div class="hero-actions">
-        <span class="sync-state" :class="{ stale: agentStatus.stale }">
+        <span class="sync-state" :class="{ stale: agentStatus.stale, syncing: !agentStatus.stale && agentStatus.syncing }">
           <i></i>
-          {{ agentStatus.stale ? t('agentStatus.syncStale') : t('agentStatus.liveSync') }}
+          {{ agentStatus.stale ? t('agentStatus.syncStale') : agentStatus.syncing ? t('agentStatus.syncing') : t('agentStatus.liveSync') }}
         </span>
         <button class="btn btn-primary add-agent" @click="tab = 'enroll'">
           <span aria-hidden="true">＋</span>{{ t('agents.addAgent') }}
@@ -535,6 +535,15 @@ onBeforeUnmount(() => {
 .sync-state.stale i {
   background: var(--warning);
   box-shadow: 0 0 12px var(--warning);
+}
+/* Frozen snapshot (hidden tab / refresh in flight): drop the "live" glow and the
+   outward pulse so a stale-but-plausible reading never reads as a live one. */
+.sync-state.syncing i {
+  background: var(--text-muted);
+  box-shadow: none;
+}
+.sync-state.syncing i::after {
+  display: none;
 }
 .add-agent {
   min-height: 38px;
