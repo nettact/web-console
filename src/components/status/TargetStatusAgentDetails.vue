@@ -35,6 +35,14 @@ function reasonLabel(agent: TargetAgentStatusRow): string {
   return t(`targetStatus.reason.${agent.reason_code}`)
 }
 
+// Native tooltip for the stale probe badge: explains the per-agent freshness
+// window that classified this pair as stale. Only shown when the pair is stale
+// and the server reported a window (omitted for host targets).
+function staleTitle(agent: TargetAgentStatusRow): string | undefined {
+  if (agent.probe_state !== 'stale' || agent.stale_after_seconds == null) return undefined
+  return t('targetStatus.staleAfter', { n: agent.stale_after_seconds })
+}
+
 function executionContextLabel(agent: TargetAgentStatusRow): string {
   if (agent.execution_state === 'target_blocked' && agent.matched_selector) {
     return t('targetStatus.context.target_blocked_selector', { selector: agent.matched_selector })
@@ -84,7 +92,12 @@ function openHistory(agentID: string): void {
         </div>
         <div class="state-badges">
           <MonitorStateBadge dim="execution" :state="agent.execution_state" />
-          <MonitorStateBadge v-if="agent.probe_state !== 'not_applicable'" dim="probe" :state="agent.probe_state" />
+          <MonitorStateBadge
+            v-if="agent.probe_state !== 'not_applicable'"
+            dim="probe"
+            :state="agent.probe_state"
+            :title="staleTitle(agent)"
+          />
           <MonitorStateBadge dim="rule" :state="agent.rule_state" />
         </div>
         <span class="history-link-hint">{{ t('targetStatus.openHistory') }} →</span>
@@ -104,6 +117,11 @@ function openHistory(agentID: string): void {
           <span>{{ t('targetStatus.executionContext') }}</span>
           <strong>{{ executionContextLabel(agent) }}</strong>
           <small v-if="agent.pending_since">{{ t('targetStatus.pendingSince', { time: fmtTime(agent.pending_since) }) }}</small>
+        </div>
+        <div v-if="agent.stale_after_seconds != null" class="fact-card">
+          <span>{{ t('targetStatus.staleWindow') }}</span>
+          <strong>{{ t('targetStatus.staleSeconds', { n: agent.stale_after_seconds }) }}</strong>
+          <small>{{ t('targetStatus.staleAfter', { n: agent.stale_after_seconds }) }}</small>
         </div>
       </div>
 

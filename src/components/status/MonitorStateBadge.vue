@@ -11,6 +11,8 @@ import { AGENT_TONE, DISPLAY_TONE, EXECUTION_TONE, PROBE_TONE, RULE_TONE, type T
 const props = defineProps<{
   dim: 'display' | 'execution' | 'probe' | 'rule' | 'agent'
   state: string
+  // Optional native tooltip (e.g. the stale window explanation on a stale badge).
+  title?: string
 }>()
 
 const TONE_MAPS: Record<typeof props.dim, Record<string, Tone>> = {
@@ -27,7 +29,7 @@ const label = computed(() => te(labelKey.value) ? t(labelKey.value) : props.stat
 </script>
 
 <template>
-  <span class="pill" :class="`is-${tone}`" :aria-label="label">{{ label }}</span>
+  <span class="pill" :class="`is-${tone}`" :aria-label="label" :title="title">{{ label }}</span>
 </template>
 
 <style scoped>

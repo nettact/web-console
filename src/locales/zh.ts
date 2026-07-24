@@ -1525,6 +1525,9 @@ export default {
     lastValue: '最新值',
     observedAt: '观测于 {time}',
     pendingSince: '自 {time} 起等待上报',
+    staleWindow: '过期窗口',
+    staleSeconds: '{n} 秒',
+    staleAfter: '超过 {n} 秒未收到数据视为过期',
     missingPerms: '缺少 {n} 项权限',
     condValue: '当前 {v}',
     severity: {

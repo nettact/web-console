@@ -1511,6 +1511,9 @@ export default {
     lastValue: 'Latest value',
     observedAt: 'Observed {time}',
     pendingSince: 'Pending since {time}',
+    staleWindow: 'Stale window',
+    staleSeconds: '{n}s',
+    staleAfter: 'Considered stale after {n}s without data',
     missingPerms: '{n} permissions missing',
     condValue: 'now {v}',
     severity: {
