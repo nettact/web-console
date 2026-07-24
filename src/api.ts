@@ -1037,6 +1037,17 @@ export interface AgentInterfaces {
 
 export class AuthError extends Error {}
 
+// Non-2xx responses other than 401 throw ApiError, which carries the HTTP status
+// so callers can branch on it (e.g. 403 = wrong old password on change-password)
+// without string-matching the server's English `error` text.
+export class ApiError extends Error {
+  status: number
+  constructor(status: number, message: string) {
+    super(message)
+    this.status = status
+  }
+}
+
 async function req<T>(method: string, url: string, body?: unknown): Promise<T> {
   const opts: RequestInit = { method, credentials: 'include' }
   if (body !== undefined) {
@@ -1053,7 +1064,7 @@ async function req<T>(method: string, url: string, body?: unknown): Promise<T> {
     } catch {
       /* ignore */
     }
-    throw new Error(msg)
+    throw new ApiError(r.status, msg)
   }
   if (r.status === 204) return undefined as T
   return (await r.json()) as T
@@ -1074,7 +1085,7 @@ async function reqOrNull<T>(method: string, url: string): Promise<T | null> {
     } catch {
       /* ignore */
     }
-    throw new Error(msg)
+    throw new ApiError(r.status, msg)
   }
   return (await r.json()) as T
 }
@@ -1083,6 +1094,13 @@ export const api = {
   login: (username: string, password: string) => req<User>('POST', '/api/v1/auth/login', { username, password }),
   logout: () => req<unknown>('POST', '/api/v1/auth/logout'),
   me: () => req<User>('GET', '/api/v1/auth/me'),
+  // Change the current user's password. A wrong old password comes back 403
+  // (ApiError with status 403 — a field error, NOT a session expiry); a missing
+  // or expired session is 401 (AuthError → send the user back to login); a too-
+  // weak new password is 400 with `error`. On success the server keeps THIS
+  // session and invalidates the others.
+  changePassword: (oldPassword: string, newPassword: string) =>
+    req<{ ok: boolean }>('POST', '/api/v1/auth/password', { old_password: oldPassword, new_password: newPassword }),
   serverInfo: () => req<ServerInfo>('GET', '/api/v1/server-info'),
   quota: () => req<Quota>('GET', '/api/v1/quota'),
   stats: () => req<StorageStats>('GET', '/api/v1/stats'),

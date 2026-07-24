@@ -2,7 +2,9 @@
 import { ref, reactive, computed, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRouter } from 'vue-router'
-import { api, type Quota, type Channel, type ServerInfo, type StorageStats } from '../api'
+import { api, ApiError, AuthError, type Quota, type Channel, type ServerInfo, type StorageStats } from '../api'
+import { auth } from '../auth'
+import { pushToast } from '../toasts'
 import WebhookChannelForm from '../components/WebhookChannelForm.vue'
 import DataCleanup from '../components/DataCleanup.vue'
 
@@ -47,6 +49,62 @@ const system = reactive({ name: '', lang: 'zh' })
 // 控制台地址：通知里深链回本事故详情页的基础 URL（如 http://localhost:12450）。
 const consoleUrl = ref('')
 const consoleSaved = ref(false)
+
+// 账户与安全（AUTH-001）：修改当前登录用户的密码。契约：旧密码错误返回 403
+// （ApiError.status===403，作字段错误展示）；会话缺失/过期返回 401（AuthError，
+// 清空登录态并送回登录页）；新密码强度不符返回 400。desktop 模式下管理员密码随机
+// 生成且从不展示，用户无从填写「当前密码」，故整个面板对 desktop 隐藏（见模板）。
+// 强度口径与服务端一致：≥8 个 Unicode 码点且 ≤72 UTF-8 字节。
+const PW_MIN = 8 // 最少码点数
+const PW_MAX_BYTES = 72 // 最多 UTF-8 字节数（bcrypt 上限）
+const pwCodePoints = (s: string) => [...s].length
+const pwBytes = (s: string) => new TextEncoder().encode(s).length
+const pw = reactive({ old: '', next: '', confirm: '' })
+const pwError = ref('')
+const pwSaved = ref(false)
+// 前端预校验：新密码码点数达标、字节数不超限、两次一致，且当前密码已填。
+const pwValid = computed(
+  () =>
+    pw.old.length > 0 &&
+    pwCodePoints(pw.next) >= PW_MIN &&
+    pwBytes(pw.next) <= PW_MAX_BYTES &&
+    pw.next === pw.confirm,
+)
+async function savePassword() {
+  pwError.value = ''
+  if (pwCodePoints(pw.next) < PW_MIN) {
+    pwError.value = t('settings.account.tooShort', { min: PW_MIN })
+    return
+  }
+  if (pwBytes(pw.next) > PW_MAX_BYTES) {
+    pwError.value = t('settings.account.tooLong', { max: PW_MAX_BYTES })
+    return
+  }
+  if (pw.next !== pw.confirm) {
+    pwError.value = t('settings.account.mismatch')
+    return
+  }
+  try {
+    await api.changePassword(pw.old, pw.next)
+    pw.old = ''
+    pw.next = ''
+    pw.confirm = ''
+    pwSaved.value = true
+    setTimeout(() => (pwSaved.value = false), 2000)
+  } catch (e) {
+    if (e instanceof ApiError && e.status === 403) {
+      // 403 → 旧密码错误，作字段错误处理，不触发跳转登录。
+      pwError.value = t('settings.account.wrongOld')
+    } else if (e instanceof AuthError) {
+      // 401 → 会话已失效：清空登录态、提示、送回登录页（与 doLogout 一致）。
+      pushToast({ tone: 'warn', title: t('settings.account.sessionExpired') })
+      auth.user = null
+      router.push('/login')
+    } else {
+      pwError.value = String((e as Error).message || e)
+    }
+  }
+}
 
 // 监听地址（SETTINGS-001）：仅本机 / 局域网两种模式 + 端口，保存到 listen_addr。
 // desktop 保存后立即重启内嵌 server；standalone 下次启动生效（显示待生效徽标）。
@@ -383,6 +441,33 @@ onMounted(load)
           <button class="btn btn-primary" @click="saveConsoleUrl">{{ t('common.save') }}</button>
           <span v-if="consoleSaved" class="hint saved">✓ {{ t('common.saved') }}</span>
         </div>
+      </div>
+    </section>
+
+    <section class="panel" v-if="serverInfo && !serverInfo.listen?.desktop">
+      <div class="panel-head"><h3>{{ t('settings.account.title') }}</h3></div>
+      <div class="panel-body">
+        <p class="hint">{{ t('settings.account.hint') }}</p>
+        <div class="pw-form">
+          <label class="pw-field">
+            <span class="knob-label">{{ t('settings.account.current') }}</span>
+            <input type="password" v-model="pw.old" autocomplete="current-password" />
+          </label>
+          <label class="pw-field">
+            <span class="knob-label">{{ t('settings.account.new') }}</span>
+            <input type="password" v-model="pw.next" autocomplete="new-password" />
+          </label>
+          <label class="pw-field">
+            <span class="knob-label">{{ t('settings.account.confirm') }}</span>
+            <input type="password" v-model="pw.confirm" autocomplete="new-password" />
+          </label>
+        </div>
+        <p class="hint">{{ t('settings.account.rule', { min: PW_MIN, max: PW_MAX_BYTES }) }}</p>
+        <div class="row field-row">
+          <button class="btn btn-primary" :disabled="!pwValid" @click="savePassword">{{ t('common.save') }}</button>
+          <span v-if="pwSaved" class="hint saved">✓ {{ t('settings.account.saved') }}</span>
+        </div>
+        <p v-if="pwError" class="err inline">{{ pwError }}</p>
       </div>
     </section>
 
@@ -850,6 +935,21 @@ input.tiny-name {
 }
 .name-in {
   min-width: 120px;
+}
+.pw-form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin: 14px 0 4px;
+  max-width: 340px;
+}
+.pw-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.pw-field input {
+  width: 100%;
 }
 .knob-grid {
   display: grid;
