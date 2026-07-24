@@ -222,7 +222,7 @@ export default {
     layoutPresetsTitle: '预设布局',
     layoutPresetsHint: '选择一种起点并立即预览；保存后才会同步到连接此服务器的其他浏览器。',
     layoutPreset_simple: '简明视图',
-    layoutPreset_simpleHint: '聚焦网络健康、可用率、NAT 类型与告警，并将网络质量与流量趋势并排为 2×2 大图，适合日常查看。',
+    layoutPreset_simpleHint: '聚焦网络健康、可用率、NAT 类型与告警。',
     layoutPreset_professional: '专业视图',
     layoutPreset_professionalHint: '显示完整监控、诊断、事件与主机资源信息，适合故障排查。',
     layoutPresetCustom: '自定义',

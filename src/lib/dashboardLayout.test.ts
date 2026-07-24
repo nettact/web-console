@@ -18,8 +18,8 @@ const simpleVisible = [
   ['lan-summary', 'compact'],
   ['active-alerts', 'medium'],
   ['monitor-health', 'medium'],
-  ['network-quality', 'tall'],
-  ['traffic-trend', 'tall'],
+  ['network-quality', 'medium'],
+  ['traffic-trend', 'medium'],
   ['lan-devices', 'wide'],
 ]
 

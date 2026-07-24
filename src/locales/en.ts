@@ -212,7 +212,7 @@ export default {
     layoutPresetsTitle: 'Preset layouts',
     layoutPresetsHint: 'Choose a starting point and preview it now. Changes sync to other browsers only after you save.',
     layoutPreset_simple: 'Simple view',
-    layoutPreset_simpleHint: 'Focuses on network health, availability, NAT type, and alerts, with network quality and traffic trend side by side as 2×2 charts for everyday use.',
+    layoutPreset_simpleHint: 'Focuses on network health, availability, NAT type, and alerts.',
     layoutPreset_professional: 'Professional view',
     layoutPreset_professionalHint: 'Shows complete monitoring, diagnostics, incidents, and host resources for troubleshooting.',
     layoutPresetCustom: 'Custom',

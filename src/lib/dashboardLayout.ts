@@ -62,9 +62,9 @@ const SIMPLE_VISIBLE_LAYOUT: readonly DashboardCardLayout[] = [
   { id: 'lan-summary', visible: true, size: 'compact' },
   { id: 'active-alerts', visible: true, size: 'medium' },
   { id: 'monitor-health', visible: true, size: 'medium' },
-  // Network quality + traffic trend sit side by side as 2×2 tall charts.
-  { id: 'network-quality', visible: true, size: 'tall' },
-  { id: 'traffic-trend', visible: true, size: 'tall' },
+  // Network quality + traffic trend sit side by side as 2×1 half-row charts.
+  { id: 'network-quality', visible: true, size: 'medium' },
+  { id: 'traffic-trend', visible: true, size: 'medium' },
   { id: 'lan-devices', visible: true, size: 'wide' },
 ]
 
