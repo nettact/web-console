@@ -510,7 +510,7 @@ export default {
         canceled: '已取消',
       },
       reasonDetail: {
-        permission_denied: '该 Agent 未被授予路径诊断权限，请在权限设置中为其开启对应的诊断权限。',
+        permission_denied: '该 Agent 的权限策略未授予路径诊断权限。本产品没有权限设置页面：请在 Agent 端把 diagnostic.traceroute.* 并入 NETTACT_AGENT_PERMISSIONS（或 YAML 配置的 permissions 键）后重启 Agent。',
         unsupported_platform: '当前 Agent 的平台或构建不支持该模式的路径诊断（例如非 Windows 平台的 TTL 探测）。',
         raw_socket_unavailable: 'TCP 路径诊断需要以管理员身份打开原始套接字来观测中间跳；当前 Agent 未以管理员权限运行。',
         policy_denied: '目标访问策略拒绝了对该地址的诊断，请检查目标的白名单/黑名单设置。',
@@ -1630,6 +1630,8 @@ export default {
     diagnostic_traceroute_tcp: 'TCP 路径诊断',
     // 受阻权限（已授予但平台/运行方式不支持，因此永远不会生效）的 title 提示。
     blockedTitle: '已授予但当前不受支持：{name}',
+    // 可交互（可点击打开解决方案）权限 chip 的 title。
+    remediationChipTitle: '查看解决方案：{name}',
   },
 
   permissionSource: {
@@ -1639,10 +1641,73 @@ export default {
     desktopFullAccessExplain: '该 agent 以桌面完全访问模式运行，授予其平台支持的全部权限（通常用于个人电脑上的本机监控）。',
   },
 
-  // 针对受阻权限的可见（非仅 tooltip）补救提示，按权限 id 查找（点换下划线）。
-  // 缺失时不渲染任何提示。
+  // 每个权限的用途（一句话），按权限 id 查找（点换下划线），在解决方案弹窗中展示。
+  // 缺失时不渲染用途行。
   permissionHint: {
-    diagnostic_traceroute_tcp: 'TCP 路由追踪需要以管理员身份运行 Agent',
+    probe_icmp: '用 ICMP（ping）探测目标的可达性与延迟',
+    probe_dns: '解析并探测 DNS 记录',
+    probe_http: '发起基础 HTTP(S) 探测（GET/HEAD）',
+    probe_http_extended: '以自定义方法/请求体/请求头发起 HTTP 探测',
+    probe_tcp: '探测 TCP 端口连通性',
+    probe_nat: '通过 STUN 探测 NAT 行为',
+    network_gateway_probe: '探测默认网关可达性',
+    network_interface_status_read: '读取网卡的启用/连通状态',
+    network_interface_address_read: '读取网卡的 IP 地址',
+    network_wifi_status_read: '读取 Wi-Fi 连接状态与信号',
+    network_wifi_ssid_read: '读取当前连接的 Wi-Fi SSID',
+    network_neighbor_read: '读取邻居（ARP/NDP）表以被动发现局域网设备',
+    network_neighbor_hostname_read: '解析邻居设备的主机名',
+    host_cpu_read: '读取主机 CPU 使用率',
+    host_memory_read: '读取主机内存使用',
+    host_disk_read: '读取主机磁盘使用',
+    host_load_read: '读取系统平均负载',
+    host_uptime_read: '读取主机运行时长',
+    host_network_io_read: '读取主机网络吞吐',
+    host_process_basic_read: '读取进程基础信息（名称/PID/状态）',
+    host_process_owner_read: '读取进程所属用户',
+    host_process_resource_read: '读取每个进程的 CPU/内存占用',
+    host_process_io_read: '读取每个进程的磁盘 I/O',
+    host_connection_summary_read: '读取网络连接概要（协议/状态）',
+    host_connection_local_read: '读取连接的本地地址',
+    host_connection_remote_read: '读取连接的远程地址',
+    host_connection_owner_read: '读取连接所属的进程',
+    diagnostic_traceroute_icmp: '用 ICMP 追踪到目标的网络路径',
+    diagnostic_traceroute_tcp: '用 TCP 追踪网络路径并观测中间跳',
+  },
+
+  // 硬性「平台/构建不支持」类受阻权限的可用平台说明（按权限 id 查找）。缺失时
+  // 解决方案弹窗回落到通用说明。目前仅 Windows 版 Agent 实现的 ICMP/网关/邻居能力。
+  permissionPlatforms: {
+    probe_icmp: '目前仅 Windows 版 Agent 实现 ICMP 探测；Linux/macOS 版暂未实现。',
+    network_gateway_probe: '目前仅 Windows 版 Agent 实现网关探测；Linux/macOS 版暂未实现。',
+    network_neighbor_read: '目前仅 Windows 版 Agent 实现邻居表读取；Linux/macOS 版暂未实现。',
+    network_neighbor_hostname_read: '目前仅 Windows 版 Agent 实现邻居主机名解析；Linux/macOS 版暂未实现。',
+    diagnostic_traceroute_icmp: '目前仅 Windows 版 Agent 实现 ICMP 路径诊断；Linux/macOS 版暂未实现。',
+  },
+
+  // 权限受阻解决方案弹窗（AGENT-003）。
+  permRemediation: {
+    title: '解决权限受阻',
+    purposeLabel: '用途：',
+    blockedChipsHint: '点击某个受阻权限查看解决方案。',
+    policyNote: '权限由 Agent 端策略决定，控制台无法远程修改（安全设计）。',
+    blockedIntro: '该权限尚未授予。请在 Agent 运行环境中授予该权限后重启 Agent。',
+    envLabel: '完整权限变量（整体替换默认策略）：',
+    envMissing: '基于当前授权无法生成完整的配置行。请在 Agent 端把「{name}」并入 NETTACT_AGENT_PERMISSIONS（或 YAML 配置的 permissions 键）后重启。',
+    runModeLabel: '按运行方式设置：',
+    yamlNote: 'Agent YAML 配置文件也可用 permissions 键设置同一组权限，且优先级高于环境变量。',
+    restartNote: '设置后需重启 Agent 才能生效。',
+    elevationIntro: '该权限已授予，但当前 Agent 未以足够的系统权限运行，因此无法生效。',
+    elevationWindows: 'Windows：以管理员身份重新运行 Agent（右键可执行文件 →「以管理员身份运行」；作为服务运行时，将服务账户设为具备该能力的账户或 LocalSystem）。',
+    elevationOther: '其他平台：以具备相应能力的账户运行 Agent（例如 root，或授予对应的 capability）。',
+    reRunNote: '以提升后的权限重新启动 Agent 后生效。',
+    unsupportedIntro: '当前 Agent 的平台或构建不具备此能力，授予权限或提权都无法启用。',
+    unsupportedGeneric: '请在支持该能力的平台或构建上部署 Agent。',
+    desktopNote: '此 Agent 以桌面完全访问模式内嵌运行，权限固定为完全授予，无需修改环境变量或配置文件。',
+    tab_powershell: 'PowerShell',
+    tab_systemd: 'systemd',
+    tab_container: 'Docker Compose',
+    tab_yaml: 'YAML',
   },
 
   selector: {

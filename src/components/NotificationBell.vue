@@ -7,7 +7,11 @@ import { ref, computed, watch, onBeforeUnmount } from 'vue'
 import { RouterLink } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { notifications, markRead, issueLink, issueReasonText } from '../notifications'
+import type { Issue } from '../api'
 import { toDateLocale } from '../i18n'
+import { serverInfo, ensureServerInfo } from '../serverInfo'
+import PermissionChips from './status/PermissionChips.vue'
+import PermissionRemediationDialog from './status/PermissionRemediationDialog.vue'
 
 const { locale } = useI18n()
 
@@ -32,6 +36,37 @@ function onClickItem(id: string) {
   close()
 }
 const fmtTime = (s: string) => new Date(s).toLocaleString(toDateLocale(locale.value), { hour12: false })
+
+// The server attaches a full NETTACT_AGENT_PERMISSIONS line to permission_blocked
+// issues; surface it inline with copy + a jump to the agent's detail (where the
+// remediation dialog shows the per run-mode snippets). Guarded so non-permission
+// issues render unchanged.
+function issueEnv(iss: Issue): string {
+  return iss.reason === 'permission_blocked' ? iss.remediation?.permissions_env || '' : ''
+}
+const copiedId = ref('')
+function copyEnv(iss: Issue) {
+  const env = issueEnv(iss)
+  if (!env) return
+  navigator.clipboard?.writeText(env)
+  copiedId.value = iss.id
+  window.setTimeout(() => {
+    if (copiedId.value === iss.id) copiedId.value = ''
+  }, 1500)
+}
+// A blocked permission's remediation lives entirely in the issue itself (its
+// missing_permissions + the server-computed permissions_env), so a missing-
+// permission chip opens the shared dialog inline rather than deep-linking to the
+// Agent page — whose chips only cover granted-but-unsupported permissions and so
+// would never surface this not-granted one. The dialog Teleports to <body>, so it
+// layers above the dropdown regardless of the panel's stacking context; it is
+// mounted outside the panel's v-if so it survives the panel closing.
+const remediation = ref<{ permId: string; env: string } | null>(null)
+function openRemediation(iss: Issue, permId: string) {
+  ensureServerInfo()
+  markRead([iss.id])
+  remediation.value = { permId, env: issueEnv(iss) }
+}
 
 // Close on outside click while the dropdown is open.
 function onDocClick(e: MouseEvent) {
@@ -79,6 +114,22 @@ onBeforeUnmount(() => document.removeEventListener('click', onDocClick, true))
               <span v-if="iss.count > 1" class="count">×{{ iss.count }}</span>
             </p>
             <p class="reason">{{ issueReasonText(iss) }}</p>
+            <div v-if="issueEnv(iss)" class="remediation" @click.stop.prevent>
+              <code class="rem-env">{{ $t('issues.remediationEnv', { env: issueEnv(iss) }) }}</code>
+              <div class="rem-actions">
+                <button type="button" class="rem-btn" @click.stop.prevent="copyEnv(iss)">
+                  {{ copiedId === iss.id ? $t('common.saved') : $t('agents.copy') }}
+                </button>
+              </div>
+              <PermissionChips
+                v-if="iss.missing_permissions.length"
+                class="rem-perms"
+                :label="$t('targetStatus.missingPermissions')"
+                :ids="iss.missing_permissions"
+                interactive
+                @select="(permId: string) => openRemediation(iss, permId)"
+              />
+            </div>
             <p class="when">{{ fmtTime(iss.last_seen_at) }}</p>
           </div>
         </RouterLink>
@@ -106,6 +157,15 @@ onBeforeUnmount(() => document.removeEventListener('click', onDocClick, true))
         </template>
       </div>
     </div>
+
+    <PermissionRemediationDialog
+      :open="!!remediation"
+      :perm-id="remediation?.permId || ''"
+      :category="'permission_blocked'"
+      :permissions-env="remediation?.env"
+      :desktop="serverInfo.desktop"
+      @close="remediation = null"
+    />
   </div>
 </template>
 
@@ -262,6 +322,42 @@ onBeforeUnmount(() => document.removeEventListener('click', onDocClick, true))
   font-size: 11px;
   color: var(--text-muted);
   font-variant-numeric: tabular-nums;
+}
+.remediation {
+  margin: 6px 0 0;
+  padding: 7px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  cursor: default;
+}
+.rem-env {
+  display: block;
+  font-family: var(--mono, monospace);
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--text-dim);
+  word-break: break-all;
+}
+.rem-actions {
+  display: flex;
+  gap: 10px;
+  margin-top: 6px;
+}
+.rem-perms {
+  margin-top: 8px;
+}
+.rem-btn {
+  border: none;
+  background: transparent;
+  color: var(--primary);
+  font: inherit;
+  font-size: 11.5px;
+  padding: 0;
+  cursor: pointer;
+}
+.rem-btn:hover {
+  text-decoration: underline;
 }
 .link-btn {
   border: none;

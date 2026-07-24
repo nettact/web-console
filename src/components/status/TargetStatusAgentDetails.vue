@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import type { TargetAgentStatusRow, TargetStatusRow } from '../../api'
@@ -6,8 +7,11 @@ import { useMetricMeta } from '../../composables/useMetricMeta'
 import { useIncidentLabels } from '../../composables/useIncidentLabels'
 import { fmtNum } from '../../lib/metricMeta'
 import { toDateLocale } from '../../i18n'
+import { notifications } from '../../notifications'
+import { serverInfo, ensureServerInfo } from '../../serverInfo'
 import MonitorStateBadge from './MonitorStateBadge.vue'
 import PermissionChips from './PermissionChips.vue'
+import PermissionRemediationDialog from './PermissionRemediationDialog.vue'
 import TargetStatusPerformance from './TargetStatusPerformance.vue'
 
 const props = defineProps<{
@@ -19,6 +23,47 @@ const router = useRouter()
 const { t, locale } = useI18n()
 const { metricLabel, unitLabel } = useMetricMeta()
 const { comparatorLabel, comparatorSymbol } = useIncidentLabels()
+
+// Remediation dialog for a clicked missing permission. A missing permission on a
+// target×agent pair is permission_blocked (not granted) unless the pair's whole
+// execution is `unsupported` (a platform/build gap for that probe kind). The full
+// NETTACT_AGENT_PERMISSIONS line is taken only from the active permission_blocked
+// issue for THIS exact target×agent (GET /issues, mirrored live in the
+// notifications store); the console never recomputes the granted∪missing closure
+// itself, so when no such issue is present we fall back to a generic instruction
+// inside the dialog.
+const remediation = ref<{
+  permId: string
+  category: 'permission_blocked' | 'unsupported'
+  env: string
+} | null>(null)
+
+function permissionsEnvFor(agentID: string): string {
+  // Only an *active* permission_blocked issue whose ref_id is exactly this target
+  // carries the env line for this target×agent pair. That line is the server's
+  // whole-policy replacement computed for one issue, so a different target's issue
+  // may omit the permission the operator just clicked — never borrow it. No exact
+  // match falls through to the dialog's generic "can't generate a full line" path.
+  const exact = notifications.issues.find(
+    (i) =>
+      i.state === 'active' &&
+      i.reason === 'permission_blocked' &&
+      i.agent_id === agentID &&
+      i.ref_id === props.target.target_id &&
+      i.remediation?.permissions_env,
+  )
+  return exact?.remediation?.permissions_env || ''
+}
+
+function openRemediation(agent: TargetAgentStatusRow, permId: string): void {
+  ensureServerInfo()
+  const category = agent.execution_state === 'unsupported' ? 'unsupported' : 'permission_blocked'
+  remediation.value = {
+    permId,
+    category,
+    env: category === 'permission_blocked' ? permissionsEnvFor(agent.agent_id) : '',
+  }
+}
 
 function fmtTime(value?: string): string {
   if (!value) return '—'
@@ -136,6 +181,8 @@ function openHistory(agentID: string): void {
         class="missing-permissions"
         :label="t('targetStatus.missingPermissions')"
         :ids="agent.missing_permissions"
+        interactive
+        @select="(permId: string) => openRemediation(agent, permId)"
       />
 
       <ul v-if="agent.active_conditions.length" class="condition-list">
@@ -168,6 +215,15 @@ function openHistory(agentID: string): void {
         </li>
       </ul>
     </article>
+
+    <PermissionRemediationDialog
+      :open="!!remediation"
+      :perm-id="remediation?.permId || ''"
+      :category="remediation?.category || 'permission_blocked'"
+      :permissions-env="remediation?.env"
+      :desktop="serverInfo.desktop"
+      @close="remediation = null"
+    />
   </div>
 </template>
 

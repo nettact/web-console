@@ -503,7 +503,7 @@ export default {
         canceled: 'Canceled',
       },
       reasonDetail: {
-        permission_denied: 'This Agent has not been granted the path-diagnostics permission. Enable the corresponding diagnostic permission for it in permission settings.',
+        permission_denied: 'This Agent’s permission policy does not grant path diagnostics. There is no permission settings page in this product: add diagnostic.traceroute.* to NETTACT_AGENT_PERMISSIONS (or the YAML config permissions key) on the Agent and restart it.',
         unsupported_platform: 'This Agent’s platform or build does not support path diagnostics in this mode (e.g. TTL probing outside Windows).',
         raw_socket_unavailable: 'TCP path diagnostics need a raw socket (opened as Administrator) to observe intermediate hops; this Agent is not running with Administrator privileges.',
         policy_denied: 'The target-access policy denied diagnostics to this address. Check the target allow/deny settings.',
@@ -1618,6 +1618,8 @@ export default {
     // Tooltip for a blocked permission (granted but not supported by this
     // platform/run mode, so the grant can never take effect).
     blockedTitle: 'Granted but not supported: {name}',
+    // Title for an interactive (click-to-open-solution) permission chip.
+    remediationChipTitle: 'How to fix: {name}',
   },
 
   permissionSource: {
@@ -1627,10 +1629,74 @@ export default {
     desktopFullAccessExplain: 'This agent runs in desktop full-access mode, granting every permission its platform supports (typically for local monitoring on a personal computer).',
   },
 
-  // Visible (non-tooltip-only) remediation hints for blocked permissions, looked
-  // up by permission id (dots swapped for underscores). Missing = no hint shown.
+  // One-line purpose of each permission, looked up by permission id (dots swapped
+  // for underscores), shown in the remediation dialog. Missing = no purpose line.
   permissionHint: {
-    diagnostic_traceroute_tcp: 'TCP traceroute requires running the Agent as Administrator',
+    probe_icmp: 'Probe target reachability and latency via ICMP (ping)',
+    probe_dns: 'Resolve and probe DNS records',
+    probe_http: 'Run basic HTTP(S) probes (GET/HEAD)',
+    probe_http_extended: 'Run HTTP probes with a custom method, body or headers',
+    probe_tcp: 'Probe TCP port connectivity',
+    probe_nat: 'Discover NAT behavior via STUN',
+    network_gateway_probe: 'Probe default-gateway reachability',
+    network_interface_status_read: 'Read network interface up/link status',
+    network_interface_address_read: 'Read interface IP addresses',
+    network_wifi_status_read: 'Read Wi-Fi connection status and signal',
+    network_wifi_ssid_read: 'Read the connected Wi-Fi SSID',
+    network_neighbor_read: 'Read the neighbor (ARP/NDP) table for passive LAN discovery',
+    network_neighbor_hostname_read: 'Resolve neighbor device hostnames',
+    host_cpu_read: 'Read host CPU usage',
+    host_memory_read: 'Read host memory usage',
+    host_disk_read: 'Read host disk usage',
+    host_load_read: 'Read system load average',
+    host_uptime_read: 'Read host uptime',
+    host_network_io_read: 'Read host network throughput',
+    host_process_basic_read: 'Read basic process info (name/PID/status)',
+    host_process_owner_read: 'Read the owning user of processes',
+    host_process_resource_read: 'Read per-process CPU and memory usage',
+    host_process_io_read: 'Read per-process disk I/O',
+    host_connection_summary_read: 'Read network connection summary (proto/state)',
+    host_connection_local_read: 'Read connection local addresses',
+    host_connection_remote_read: 'Read connection remote addresses',
+    host_connection_owner_read: 'Read the owning process of connections',
+    diagnostic_traceroute_icmp: 'Trace the network path to a destination via ICMP',
+    diagnostic_traceroute_tcp: 'Trace the network path via TCP, observing intermediate hops',
+  },
+
+  // Platform-availability note for a hard "unsupported" block, looked up by
+  // permission id. Missing = the dialog falls back to a generic explanation. Today
+  // the ICMP/gateway/neighbor capabilities are implemented only in the Windows build.
+  permissionPlatforms: {
+    probe_icmp: 'Only the Windows Agent build implements ICMP probing today; Linux/macOS builds do not yet.',
+    network_gateway_probe: 'Only the Windows Agent build implements gateway probing today; Linux/macOS builds do not yet.',
+    network_neighbor_read: 'Only the Windows Agent build implements neighbor-table reads today; Linux/macOS builds do not yet.',
+    network_neighbor_hostname_read: 'Only the Windows Agent build implements neighbor hostname resolution today; Linux/macOS builds do not yet.',
+    diagnostic_traceroute_icmp: 'Only the Windows Agent build implements ICMP path diagnostics today; Linux/macOS builds do not yet.',
+  },
+
+  // Permission remediation dialog (AGENT-003).
+  permRemediation: {
+    title: 'Resolve a blocked permission',
+    purposeLabel: 'Purpose: ',
+    blockedChipsHint: 'Click a blocked permission to see how to fix it.',
+    policyNote: 'Permissions are set by the Agent-side policy; the console cannot change them remotely (a security design).',
+    blockedIntro: 'This permission is not granted. Grant it in the Agent’s runtime environment, then restart the Agent.',
+    envLabel: 'Full permission variable (replaces the default policy wholesale):',
+    envMissing: 'A complete config line cannot be generated from the current grant. Add “{name}” to NETTACT_AGENT_PERMISSIONS (or the YAML config permissions key) on the Agent and restart.',
+    runModeLabel: 'Set it by run mode:',
+    yamlNote: 'The Agent YAML config file can set the same permissions via the permissions key, which takes precedence over environment variables.',
+    restartNote: 'Restart the Agent for the change to take effect.',
+    elevationIntro: 'This permission is granted, but the Agent is not running with enough OS privilege for it to take effect.',
+    elevationWindows: 'Windows: re-run the Agent as Administrator (right-click the executable → “Run as administrator”; when running as a service, set the service account to a privileged account or LocalSystem).',
+    elevationOther: 'Other platforms: run the Agent as an account with the capability (e.g. root, or grant the matching capability).',
+    reRunNote: 'Restart the Agent with the elevated privilege for the change to take effect.',
+    unsupportedIntro: 'The Agent’s current platform or build lacks this capability; neither granting the permission nor elevating privilege will enable it.',
+    unsupportedGeneric: 'Deploy the Agent on a platform or build that supports this capability.',
+    desktopNote: 'This Agent runs embedded in desktop full-access mode with a fixed full grant — no environment variable or config file change is needed.',
+    tab_powershell: 'PowerShell',
+    tab_systemd: 'systemd',
+    tab_container: 'Docker Compose',
+    tab_yaml: 'YAML',
   },
 
   selector: {

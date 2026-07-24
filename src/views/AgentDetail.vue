@@ -13,9 +13,11 @@ import {
 import { toDateLocale } from '../i18n'
 import { agentStatus, agentIndex, refreshAgentStatus } from '../agentStatus'
 import { targetStatus } from '../targetStatus'
-import { usePermissionMeta } from '../composables/usePermissionMeta'
+import { blockedCategory } from '../composables/usePermissionMeta'
+import { serverInfo, ensureServerInfo } from '../serverInfo'
 import MonitorStateBadge from '../components/status/MonitorStateBadge.vue'
 import PermissionChips from '../components/status/PermissionChips.vue'
+import PermissionRemediationDialog from '../components/status/PermissionRemediationDialog.vue'
 import OsIcon from '../components/agents/OsIcon.vue'
 import MetricChart from '../components/MetricChart.vue'
 import AlertsTable from '../components/AlertsTable.vue'
@@ -23,7 +25,6 @@ import AlertsTable from '../components/AlertsTable.vue'
 const { t, locale } = useI18n()
 const route = useRoute()
 const router = useRouter()
-const { permHint } = usePermissionMeta()
 
 const id = computed(() => String(route.params.id || ''))
 const agent = ref<Agent | null>(null)
@@ -55,9 +56,15 @@ const blockedPermissions = computed(() => {
   const supported = new Set(agent.value.supported)
   return agent.value.granted.filter((permId) => !supported.has(permId))
 })
-// Visible (non-tooltip-only) remediation hints for blocked permissions that have
-// one defined — looked up generically per permission id via permHint().
-const blockedHints = computed(() => blockedPermissions.value.map((permId) => permHint(permId)).filter(Boolean))
+// Remediation dialog for a clicked blocked permission. Blocked here means granted
+// by policy but not supported by this Agent's platform/build/run-mode, so it is
+// never a "not granted" (permission_blocked) case and carries no env line — the
+// category is elevation (needs Administrator, e.g. TCP traceroute) or a hard
+// unsupported platform/build gap.
+const remediation = ref<{ permId: string; category: 'elevation' | 'unsupported' } | null>(null)
+function openRemediation(permId: string) {
+  remediation.value = { permId, category: blockedCategory(permId) }
+}
 
 const fmt = (s: string | null | undefined) => (s ? new Date(s).toLocaleString(toDateLocale(locale.value)) : '—')
 function agentName(): string {
@@ -136,6 +143,7 @@ async function saveName() {
 watch(id, loadAll)
 onMounted(() => {
   loadAll()
+  ensureServerInfo()
   if (!agentStatus.loaded) refreshAgentStatus()
 })
 </script>
@@ -178,10 +186,20 @@ onMounted(() => {
           :label="t('agents.permBlocked')"
           :ids="blockedPermissions"
           tone="blocked"
+          interactive
+          @select="openRemediation"
         />
-        <p v-for="(hint, i) in blockedHints" :key="i" class="perm-hint">{{ hint }}</p>
+        <p v-if="blockedPermissions.length" class="perm-hint">{{ t('permRemediation.blockedChipsHint') }}</p>
       </div>
     </section>
+
+    <PermissionRemediationDialog
+      :open="!!remediation"
+      :perm-id="remediation?.permId || ''"
+      :category="remediation?.category || 'unsupported'"
+      :desktop="serverInfo.desktop"
+      @close="remediation = null"
+    />
 
     <!-- firing connectivity alert banner -->
     <section v-if="firingConn" class="card alert-banner">
@@ -323,7 +341,7 @@ onMounted(() => {
 .perm-hint {
   margin: 8px 0 0;
   font-size: 12px;
-  color: var(--danger);
+  color: var(--text-muted);
 }
 .alert-banner {
   display: flex;

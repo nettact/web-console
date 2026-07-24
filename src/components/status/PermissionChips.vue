@@ -4,10 +4,22 @@
 // name; the title carries the raw ID for operators who know it, except for
 // `blocked` chips (granted but not supported by this platform/build), whose
 // title explains why instead.
+//
+// When `interactive` is set, each chip becomes a focusable button that emits
+// `select` with its permission ID (used to open the remediation dialog). It stops
+// click/Enter/Space propagation so a chip inside a clickable card (e.g. the
+// target-status agent card) never also triggers the card's own action.
 import { useI18n } from 'vue-i18n'
 import { usePermissionMeta } from '../../composables/usePermissionMeta'
 
-const props = defineProps<{ label: string; ids: string[]; tone?: 'neutral' | 'granted' | 'effective' | 'blocked' }>()
+const props = defineProps<{
+  label: string
+  ids: string[]
+  tone?: 'neutral' | 'granted' | 'effective' | 'blocked'
+  interactive?: boolean
+}>()
+
+const emit = defineEmits<{ select: [id: string] }>()
 
 const { t } = useI18n()
 const { permLabel } = usePermissionMeta()
@@ -20,9 +32,23 @@ const chipTitle = (id: string): string =>
   <div class="perm-list">
     <span class="perm-label">{{ label }}</span>
     <span v-if="!ids.length" class="perm-none">{{ $t('permission.none') }}</span>
-    <span v-for="id in ids" :key="id" class="chip" :class="`is-${tone || 'neutral'}`" :title="chipTitle(id)">
-      {{ permLabel(id) }}
-    </span>
+    <template v-for="id in ids" :key="id">
+      <button
+        v-if="interactive"
+        type="button"
+        class="chip is-interactive"
+        :class="`is-${tone || 'neutral'}`"
+        :title="t('permission.remediationChipTitle', { name: permLabel(id) })"
+        @click.stop="emit('select', id)"
+        @keydown.enter.stop
+        @keydown.space.stop
+      >
+        {{ permLabel(id) }}
+      </button>
+      <span v-else class="chip" :class="`is-${tone || 'neutral'}`" :title="chipTitle(id)">
+        {{ permLabel(id) }}
+      </span>
+    </template>
   </div>
 </template>
 
@@ -52,6 +78,17 @@ const chipTitle = (id: string): string =>
   background: var(--surface-2);
   color: var(--text-dim);
   white-space: nowrap;
+}
+button.chip {
+  font-family: inherit;
+  cursor: pointer;
+}
+.chip.is-interactive:hover {
+  filter: brightness(1.12);
+}
+.chip.is-interactive:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 1px;
 }
 .chip.is-granted {
   border-color: rgba(56, 189, 248, 0.4);
