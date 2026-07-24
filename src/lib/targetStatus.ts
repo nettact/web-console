@@ -5,6 +5,7 @@
 // so the badge tone for a given machine state is identical everywhere.
 
 import type {
+  AgentOverallStatus,
   DisplayState,
   ExecutionState,
   ProbeState,
@@ -55,6 +56,15 @@ export const RULE_TONE: Record<RuleState, Tone> = {
   normal: 'good',
   breaching: 'warn',
   alerting: 'bad',
+}
+
+// Per-agent overall status (AGENT-001). offline is bad (unreachable), abnormal is
+// warn (firing alerts / issues while online), never_connected is unknown, ok good.
+export const AGENT_TONE: Record<AgentOverallStatus, Tone> = {
+  offline: 'bad',
+  abnormal: 'warn',
+  never_connected: 'unknown',
+  ok: 'good',
 }
 
 // A target's display_state is "abnormal" (worth surfacing / counting as a problem)

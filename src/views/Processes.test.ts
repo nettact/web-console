@@ -62,6 +62,9 @@ const fullAgent: Agent = {
   policy_hash: 'test',
   last_seen_at: null,
   created_at: '2026-01-01T00:00:00Z',
+  first_connected_at: null,
+  last_disconnect_kind: '',
+  connectivity_alerts_muted: false,
 }
 
 const initialSnapshot: HostSnapshot = {

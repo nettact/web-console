@@ -39,6 +39,9 @@ const baseAgent: Agent = {
   policy_hash: 'test',
   last_seen_at: '2026-07-13T01:00:00Z',
   created_at: '2026-07-13T00:00:00Z',
+  first_connected_at: '2026-07-13T00:00:00Z',
+  last_disconnect_kind: '',
+  connectivity_alerts_muted: false,
 }
 
 const connected: AgentInterfaces = {

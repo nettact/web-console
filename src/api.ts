@@ -46,6 +46,119 @@ export interface Agent {
   policy_hash: string
   last_seen_at: string | null
   created_at: string
+  // Connectivity provenance (AGENT-001/002). null first_connected_at = the agent
+  // enrolled but never completed a Hello (distinct from offline).
+  first_connected_at: string | null
+  last_disconnect_kind: string // '' | clean | error | superseded | revoked | server_shutdown | unsupported_schema
+  connectivity_alerts_muted: boolean
+}
+
+// --- Agent status list (AGENT-001) ---
+
+// The single authoritative overall status, computed server-side. Order here is
+// the sort/severity priority (offline worst, ok best).
+export type AgentOverallStatus = 'offline' | 'abnormal' | 'never_connected' | 'ok'
+
+export interface AgentGroupRef {
+  id: string
+  name: string
+}
+
+// The firing connectivity alert embedded in an agent's status row.
+export interface AgentConnAlertRef {
+  id: string
+  reason: string // unexpected | clean_shutdown | version_incompatible
+  opened_at: string
+  offline_since: string
+}
+
+export interface ScalarSample {
+  value: number
+  unit: string
+  ts: string
+  stale: boolean
+}
+export interface MemSample {
+  pct: number
+  used: number // bytes
+  total: number // bytes
+  ts: string
+  stale: boolean
+}
+export interface DiskSample {
+  pct: number
+  used: number // bytes
+  total: number // bytes
+  mount: string // worst mount (highest pct)
+  mounts: number
+  ts: string
+  stale: boolean
+}
+export interface NetSample {
+  rx_bps: number
+  tx_bps: number
+  ts: string
+  stale: boolean
+}
+export interface LoadSample {
+  load1: number
+  load5: number
+  load15: number
+  ts: string
+  stale: boolean
+}
+// A nil field = no data (permission denied for that family, or never reported).
+export interface AgentResources {
+  cpu: ScalarSample | null
+  memory: MemSample | null
+  disk: DiskSample | null
+  net: NetSample | null
+  load: LoadSample | null
+  uptime: ScalarSample | null // host uptime, unit "s"
+}
+
+export interface AgentStatusRow {
+  id: string
+  display_name: string
+  hostname: string
+  platform: string
+  agent_version: string
+  status: AgentOverallStatus
+  presence: string // online | offline (raw registry status)
+  status_since: string | null
+  last_seen_at: string | null
+  first_connected_at: string | null
+  last_disconnect_kind: string
+  connectivity_alerts_muted: boolean
+  groups: AgentGroupRef[]
+  firing_alerts: number
+  active_issues: number
+  connectivity_alert: AgentConnAlertRef | null
+  resources: AgentResources
+  created_at: string
+}
+
+export interface SiteAgentStatuses {
+  generated_at: string
+  site_id: string
+  agents: AgentStatusRow[]
+}
+
+// --- Agent connectivity alerts (AGENT-002) ---
+
+export interface AgentConnAlert {
+  id: string
+  site_id: string
+  agent_id: string
+  status: 'firing' | 'resolved'
+  reason: string // unexpected | clean_shutdown | version_incompatible
+  severity: string
+  agent_display_name: string
+  agent_hostname: string
+  offline_since: string
+  opened_at: string
+  resolved_at: string | null
+  resolve_reason?: string
 }
 
 // One requested snapshot scope and how it resolved. `denied` = permission not
@@ -738,6 +851,8 @@ export interface ChannelTestResult {
 export interface StatusEvent {
   status: string
   changed_at: string
+  // Disconnect kind for offline transitions ('' for online) — AGENT-002.
+  reason?: string
 }
 
 export type AgentAlertScope =
@@ -945,9 +1060,24 @@ export const api = {
   sites: () => req<Site[]>('GET', '/api/v1/sites'),
   agents: () => req<Agent[]>('GET', '/api/v1/agents'),
   agent: (id: string) => req<Agent>('GET', `/api/v1/agents/${encodeURIComponent(id)}`),
-  updateAgent: (id: string, displayName: string) =>
-    req<Agent>('PUT', `/api/v1/agents/${encodeURIComponent(id)}`, { display_name: displayName }),
+  // Patch an agent: display_name and/or the connectivity-alert mute switch.
+  // Omitted fields are left untouched (pointer semantics on the server).
+  updateAgent: (id: string, patch: { display_name?: string; connectivity_alerts_muted?: boolean }) =>
+    req<Agent>('PUT', `/api/v1/agents/${encodeURIComponent(id)}`, patch),
   deleteAgent: (id: string) => req<unknown>('DELETE', `/api/v1/agents/${encodeURIComponent(id)}`),
+  // Per-agent health + resource rollup for the Agent status list (AGENT-001).
+  agentStatuses: (siteID: string) =>
+    req<SiteAgentStatuses>('GET', `/api/v1/sites/${encodeURIComponent(siteID)}/agent-statuses`),
+  // Agent connectivity-alert history (AGENT-002). status: firing|resolved|all
+  // (default firing); scope to a single agent with `agent`.
+  agentConnAlerts: (opts: { status?: 'firing' | 'resolved' | 'all'; agent?: string; limit?: number } = {}) => {
+    const p = new URLSearchParams()
+    if (opts.status) p.set('status', opts.status)
+    if (opts.agent) p.set('agent', opts.agent)
+    if (opts.limit) p.set('limit', String(opts.limit))
+    const qs = p.toString()
+    return req<AgentConnAlert[]>('GET', `/api/v1/agent-alerts${qs ? '?' + qs : ''}`)
+  },
   // Live host snapshot: ask the agent for the given scopes (POST), then poll for
   // the result (GET). The POST may return an inline denial (request_id null).
   requestSnapshot: (id: string, scopes: string[]) =>

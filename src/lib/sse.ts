@@ -23,9 +23,16 @@ export interface TargetStatusChanged {
   target_ids: string[]
 }
 
+// Payload of an `agent.status.changed` frame: signal-only (the affected site).
+// The client always refetches the whole site's agent-status list.
+export interface AgentStatusChanged {
+  site_id: string
+}
+
 export interface EventStreamHandlers {
   onIssues?: (state: IssueStreamState) => void
   onTargetStatus?: (ev: TargetStatusChanged) => void
+  onAgentStatus?: (ev: AgentStatusChanged) => void
   onOpen?: () => void
 }
 
@@ -53,7 +60,7 @@ function releaseEventSource(es: EventSource) {
   }
 }
 
-export function openEventStream({ onIssues, onTargetStatus, onOpen }: EventStreamHandlers): EventStream {
+export function openEventStream({ onIssues, onTargetStatus, onAgentStatus, onOpen }: EventStreamHandlers): EventStream {
   const es = acquireEventSource()
 
   const listeners: Array<[string, EventListener]> = []
@@ -80,6 +87,17 @@ export function openEventStream({ onIssues, onTargetStatus, onOpen }: EventStrea
       try {
         const data = JSON.parse((ev as MessageEvent).data) as TargetStatusChanged
         onTargetStatus({ site_id: data.site_id ?? '', target_ids: data.target_ids ?? [] })
+      } catch {
+        /* ignore — a full refresh on the next event/focus/reconnect converges */
+      }
+    })
+  }
+
+  if (onAgentStatus) {
+    listen('agent.status.changed', (ev) => {
+      try {
+        const data = JSON.parse((ev as MessageEvent).data) as AgentStatusChanged
+        onAgentStatus({ site_id: data.site_id ?? '' })
       } catch {
         /* ignore — a full refresh on the next event/focus/reconnect converges */
       }

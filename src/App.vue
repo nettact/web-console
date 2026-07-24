@@ -6,6 +6,7 @@ import { auth, logout } from './auth'
 import { showResumeBanner, saveOnboarding } from './onboarding'
 import { initNotifications, stopNotifications } from './notifications'
 import { initTargetStatus, stopTargetStatus } from './targetStatus'
+import { initAgentStatus, stopAgentStatus } from './agentStatus'
 import LangSwitch from './components/LangSwitch.vue'
 import ThemeSwitch from './components/ThemeSwitch.vue'
 import NotificationBell from './components/NotificationBell.vue'
@@ -26,9 +27,11 @@ function syncLiveStreams(): void {
   if (auth.user && document.visibilityState === 'visible') {
     initNotifications()
     initTargetStatus()
+    initAgentStatus()
   } else {
     stopNotifications()
     stopTargetStatus()
+    stopAgentStatus()
   }
 }
 
@@ -51,6 +54,7 @@ onBeforeUnmount(() => {
   document.removeEventListener('visibilitychange', onVisibilityChange)
   stopNotifications()
   stopTargetStatus()
+  stopAgentStatus()
 })
 
 // `label` is an i18n key resolved at render time so nav + breadcrumb re-translate live.
@@ -202,7 +206,7 @@ async function dismissBanner(): Promise<void> {
 
       <div class="content">
         <RouterView v-slot="{ Component }">
-          <KeepAlive :include="['TargetStatus']">
+          <KeepAlive :include="['TargetStatus', 'Agents']">
             <component :is="Component" />
           </KeepAlive>
         </RouterView>

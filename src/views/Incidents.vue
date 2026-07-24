@@ -11,10 +11,19 @@ import { api, type Incident, type Alert } from '../api'
 import { toDateLocale } from '../i18n'
 import { useIncidentLabels, severityTone } from '../composables/useIncidentLabels'
 import IncidentDetail from '../components/incident/IncidentDetail.vue'
+import { agentStatus } from '../agentStatus'
 
 const { t, locale } = useI18n()
 const route = useRoute()
 const { sevLabel, layerLabel } = useIncidentLabels()
+
+// Firing agent connectivity alerts (AGENT-002), sourced from the shared
+// agent-status store so it stays in lockstep with the Agent list — no extra fetch.
+const connAlerts = computed(() =>
+  agentStatus.agents
+    .filter((a) => a.connectivity_alert)
+    .map((a) => ({ agent: a, alert: a.connectivity_alert! })),
+)
 
 const incidents = ref<Incident[]>([])
 const alerts = ref<Alert[]>([])
@@ -112,6 +121,35 @@ onBeforeUnmount(() => {
       <p class="sub">{{ t('incidents.sub') }}</p>
     </div>
     <p v-if="error" class="err">{{ error }}</p>
+
+    <section v-if="connAlerts.length" class="panel">
+      <div class="panel-head">
+        <h3>{{ t('agentStatus.connAlertsTitle') }}</h3>
+        <span class="count hot">{{ connAlerts.length }}</span>
+      </div>
+      <div class="table-wrap">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>{{ t('agentStatus.thName') }}</th>
+              <th>{{ t('agentStatus.thReason') }}</th>
+              <th>{{ t('agentStatus.thOfflineSince') }}</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="c in connAlerts" :key="c.alert.id">
+              <td>
+                <router-link class="link" :to="`/agents/${encodeURIComponent(c.agent.id)}`">
+                  {{ c.agent.display_name || c.agent.hostname || c.agent.id }}
+                </router-link>
+              </td>
+              <td>{{ t(`agentStatus.reason.${c.alert.reason}`) }}</td>
+              <td class="hint">{{ fmtDateTime(c.alert.offline_since) }}</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
 
     <section class="panel">
       <div class="panel-head">

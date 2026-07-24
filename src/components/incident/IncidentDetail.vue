@@ -24,11 +24,20 @@ import { useMetricMeta } from '../../composables/useMetricMeta'
 import { usePolling } from '../../composables/usePolling'
 import SnapshotSection from './SnapshotSection.vue'
 import TraceCard from './TraceCard.vue'
+import { agentIndex } from '../../agentStatus'
 
 const props = defineProps<{ incidentId: string }>()
 const emit = defineEmits<{ close: [] }>()
 
 const { t, locale } = useI18n()
+
+// A member agent's live presence (online/offline) from the shared agent-status
+// store, so the incident view shows the same liveness as the Agent list.
+function presenceOf(agentId: string): 'online' | 'offline' | '' {
+  const row = agentIndex.value.get(agentId)
+  if (!row) return ''
+  return row.presence === 'online' ? 'online' : 'offline'
+}
 const { sevLabel, layerLabel, kindLabel, resolveReasonLabel, comparatorSymbol, comparatorLabel } =
   useIncidentLabels()
 const { metricLabel } = useMetricMeta()
@@ -213,7 +222,15 @@ onBeforeUnmount(() => {
                 {{ memberStateLabel(m) }}
               </span>
               <span class="badge" :class="severityTone(m.severity)">{{ sevLabel(m.severity) }}</span>
-              <span class="hint">{{ m.agent_host || m.agent_id }}</span>
+              <span class="hint agent-name">
+                <span
+                  v-if="presenceOf(m.agent_id)"
+                  class="presence-dot"
+                  :class="presenceOf(m.agent_id)"
+                  :title="presenceOf(m.agent_id) === 'online' ? t('agents.statusOnline') : t('agents.statusOffline')"
+                ></span>
+                {{ m.agent_host || m.agent_id }}
+              </span>
             </div>
             <div class="table-scroll">
               <table class="mini-table">
@@ -385,6 +402,23 @@ onBeforeUnmount(() => {
   gap: 10px;
   flex-wrap: wrap;
   margin-bottom: 8px;
+}
+.agent-name {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+.presence-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  display: inline-block;
+}
+.presence-dot.online {
+  background: #34d399;
+}
+.presence-dot.offline {
+  background: #f87171;
 }
 .pill.abnormal {
   color: var(--danger);

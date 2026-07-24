@@ -180,6 +180,73 @@ async function saveDiag() {
   }
 }
 
+// Agent connectivity alerts (AGENT-002): enable + grace/recovery/stale timings +
+// severity + which channels the offline/recovery notifications go to.
+const agentAlert = reactive({
+  enabled: true,
+  graceS: 60, // agent_alert_grace_seconds
+  recoverS: 30, // agent_alert_recover_seconds
+  staleS: 120, // agent_status_stale_seconds
+  severity: '', // agent_alert_severity ('' = warn)
+  channelIds: [] as string[], // agent_alert_channel_ids ([] = all enabled)
+})
+const AGENT_ALERT_BOUNDS: Record<string, [number, number]> = {
+  graceS: [15, 3600],
+  recoverS: [5, 600],
+  staleS: [30, 3600],
+}
+const AGENT_SEVERITIES = ['', 'info', 'warn', 'error', 'critical']
+const agentAlertSaved = ref(false)
+const agentAlertError = ref('')
+
+function populateAgentAlert(s: Record<string, string>) {
+  const num = (k: string, def: number) => {
+    const v = parseInt(s[k] ?? '', 10)
+    return Number.isFinite(v) ? v : def
+  }
+  agentAlert.enabled = num('agent_alert_enabled', 1) !== 0
+  agentAlert.graceS = num('agent_alert_grace_seconds', 60)
+  agentAlert.recoverS = num('agent_alert_recover_seconds', 30)
+  agentAlert.staleS = num('agent_status_stale_seconds', 120)
+  agentAlert.severity = s['agent_alert_severity'] ?? ''
+  try {
+    const ids = JSON.parse(s['agent_alert_channel_ids'] || '[]')
+    agentAlert.channelIds = Array.isArray(ids) ? ids : []
+  } catch {
+    agentAlert.channelIds = []
+  }
+}
+function toggleAlertChannel(id: string) {
+  const i = agentAlert.channelIds.indexOf(id)
+  if (i >= 0) agentAlert.channelIds.splice(i, 1)
+  else agentAlert.channelIds.push(id)
+}
+async function saveAgentAlert() {
+  agentAlertError.value = ''
+  const inRange = Object.entries(AGENT_ALERT_BOUNDS).every(([k, [min, max]]) => {
+    const v = (agentAlert as unknown as Record<string, number>)[k]
+    return Number.isFinite(v) && v >= min && v <= max
+  })
+  if (!inRange) {
+    agentAlertError.value = t('settings.agentAlert.rangeErr')
+    return
+  }
+  try {
+    await api.updateSettings({
+      agent_alert_enabled: agentAlert.enabled ? '1' : '0',
+      agent_alert_grace_seconds: String(agentAlert.graceS),
+      agent_alert_recover_seconds: String(agentAlert.recoverS),
+      agent_status_stale_seconds: String(agentAlert.staleS),
+      agent_alert_severity: agentAlert.severity,
+      agent_alert_channel_ids: JSON.stringify(agentAlert.channelIds),
+    })
+    agentAlertSaved.value = true
+    setTimeout(() => (agentAlertSaved.value = false), 2000)
+  } catch (e) {
+    agentAlertError.value = String((e as Error).message || e)
+  }
+}
+
 async function load() {
   try {
     const [q, s, ch, si, settings] = await Promise.all([
@@ -194,6 +261,7 @@ async function load() {
     // a value but saves empty). Entering the console also auto-sets it (see auth).
     consoleUrl.value = settings['console_base_url'] || window.location.origin
     populateDiag(settings)
+    populateAgentAlert(settings)
     populateListen()
   } catch (e) {
     error.value = String((e as Error).message || e)
@@ -546,6 +614,68 @@ onMounted(load)
             </template>
           </tbody>
         </table>
+      </div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-head"><h3>{{ t('settings.agentAlert.title') }}</h3></div>
+      <div class="panel-body">
+        <p class="hint">{{ t('settings.agentAlert.hint') }}</p>
+        <label class="toggle-row">
+          <input type="checkbox" v-model="agentAlert.enabled" />
+          <span>{{ t('settings.agentAlert.enable') }}</span>
+        </label>
+        <div class="knob-grid">
+          <label class="knob">
+            <span class="knob-label">{{ t('settings.agentAlert.grace') }}</span>
+            <span class="knob-input">
+              <input type="number" v-model.number="agentAlert.graceS" min="15" max="3600" step="1" :disabled="!agentAlert.enabled" />
+              <span class="unit">{{ t('settings.unit.seconds') }}</span>
+            </span>
+            <span class="knob-help hint">{{ t('settings.agentAlert.graceHelp') }}</span>
+          </label>
+          <label class="knob">
+            <span class="knob-label">{{ t('settings.agentAlert.recover') }}</span>
+            <span class="knob-input">
+              <input type="number" v-model.number="agentAlert.recoverS" min="5" max="600" step="1" :disabled="!agentAlert.enabled" />
+              <span class="unit">{{ t('settings.unit.seconds') }}</span>
+            </span>
+            <span class="knob-help hint">{{ t('settings.agentAlert.recoverHelp') }}</span>
+          </label>
+          <label class="knob">
+            <span class="knob-label">{{ t('settings.agentAlert.stale') }}</span>
+            <span class="knob-input">
+              <input type="number" v-model.number="agentAlert.staleS" min="30" max="3600" step="1" />
+              <span class="unit">{{ t('settings.unit.seconds') }}</span>
+            </span>
+            <span class="knob-help hint">{{ t('settings.agentAlert.staleHelp') }}</span>
+          </label>
+          <label class="knob">
+            <span class="knob-label">{{ t('settings.agentAlert.severity') }}</span>
+            <span class="knob-input">
+              <select v-model="agentAlert.severity" :disabled="!agentAlert.enabled">
+                <option v-for="sv in AGENT_SEVERITIES" :key="sv" :value="sv">
+                  {{ sv === '' ? t('settings.agentAlert.sevDefault') : t(`mform.sev_${sv}`) }}
+                </option>
+              </select>
+            </span>
+            <span class="knob-help hint">{{ t('settings.agentAlert.severityHelp') }}</span>
+          </label>
+        </div>
+        <div class="alert-channels">
+          <span class="knob-label">{{ t('settings.agentAlert.channels') }}</span>
+          <p class="hint tiny">{{ t('settings.agentAlert.channelsHint') }}</p>
+          <div v-if="!channels.length" class="hint tiny">{{ t('settings.noChannels') }}</div>
+          <label v-for="c in channels" :key="c.id" class="member-chip">
+            <input type="checkbox" :checked="agentAlert.channelIds.includes(c.id)" :disabled="!agentAlert.enabled" @change="toggleAlertChannel(c.id)" />
+            <span>{{ c.name || c.type }}</span>
+          </label>
+        </div>
+        <div class="row field-row">
+          <button class="btn btn-primary" @click="saveAgentAlert">{{ t('common.save') }}</button>
+          <span v-if="agentAlertSaved" class="hint saved">✓ {{ t('common.saved') }}</span>
+        </div>
+        <p v-if="agentAlertError" class="err inline">{{ agentAlertError }}</p>
       </div>
     </section>
     </div><!-- /notifications -->
