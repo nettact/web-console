@@ -38,6 +38,11 @@ export function useIncidentLabels() {
     // so callers can hide the line rather than showing a raw code.
     traceReasonDetail: (r: string) => (r && te(`incidents.trace.reasonDetail.${r}`) ? t(`incidents.trace.reasonDetail.${r}`) : ''),
     modeLabel: (m: string) => tr(`incidents.trace.mode.${m}`, m),
+    // Long-form explanation of why a report's mode was auto-switched (e.g. TCP
+    // traceroute falling back to ICMP because the Agent lacks admin rights or the
+    // grant). Empty when fallback_reason is unset/unknown, so callers can hide it.
+    fallbackReasonDetail: (r: string) =>
+      r && te(`incidents.trace.fallbackDetail.${r}`) ? t(`incidents.trace.fallbackDetail.${r}`) : '',
 
     // Evidence comparator, as symbol (compact) and as words (accessible).
     comparatorSymbol: (c: string) => CMP_SYMBOL[c] ?? c,

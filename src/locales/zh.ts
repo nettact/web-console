@@ -522,6 +522,13 @@ export default {
         deadline_exceeded: '在截止时间内未能确认到达目标：目标或中间设备可能过滤了探测包（并不代表目标真的不可达）；若网络较慢，可适当调大诊断总超时。',
         canceled: '诊断被中断（Agent 重连或关闭），未能完成。',
       },
+      // Auto-fallback: the requested mode couldn't run and the Agent transparently
+      // re-ran the diagnostic in another mode (currently TCP → ICMP only).
+      fallbackDetail: {
+        raw_socket_unavailable:
+          '检测 Agent 未以管理员身份运行，无法执行 TCP 路由追踪，本次已自动回退为 ICMP 模式。以管理员身份重新运行 Agent 后可启用 TCP 模式。',
+        permission_denied: 'Agent 的权限策略未授予 TCP 路由追踪，本次已自动回退为 ICMP 模式。',
+      },
     },
   },
 
@@ -1129,6 +1136,7 @@ export default {
     permSupported: '支持',
     permGranted: '已授予',
     permEffective: '生效',
+    permBlocked: '受阻',
     policySource: '权限来源',
     policyHash: '策略指纹',
     activeIssues: '{n} 个问题',
@@ -1596,6 +1604,10 @@ export default {
     host_connection_local_read: '本地地址',
     host_connection_remote_read: '远程地址',
     host_connection_owner_read: '连接所属进程',
+    diagnostic_traceroute_icmp: 'ICMP 路径诊断',
+    diagnostic_traceroute_tcp: 'TCP 路径诊断',
+    // 受阻权限（已授予但平台/运行方式不支持，因此永远不会生效）的 title 提示。
+    blockedTitle: '已授予但当前不受支持：{name}',
   },
 
   permissionSource: {
@@ -1603,6 +1615,12 @@ export default {
     environment: '环境变量',
     desktop_full_access: '桌面完全访问',
     desktopFullAccessExplain: '该 agent 以桌面完全访问模式运行，授予其平台支持的全部权限（通常用于个人电脑上的本机监控）。',
+  },
+
+  // 针对受阻权限的可见（非仅 tooltip）补救提示，按权限 id 查找（点换下划线）。
+  // 缺失时不渲染任何提示。
+  permissionHint: {
+    diagnostic_traceroute_tcp: 'TCP 路由追踪需要以管理员身份运行 Agent',
   },
 
   selector: {

@@ -515,6 +515,14 @@ export default {
         deadline_exceeded: 'The destination could not be confirmed as reached before the deadline: the target or an intermediate device may filter probes (this does not prove the target is unreachable); if the network is slow, try raising the total diagnostic timeout.',
         canceled: 'The diagnostic was interrupted (the Agent reconnected or shut down) before it could finish.',
       },
+      // Auto-fallback: the requested mode couldn't run and the Agent transparently
+      // re-ran the diagnostic in another mode (currently TCP -> ICMP only).
+      fallbackDetail: {
+        raw_socket_unavailable:
+          'The Agent was detected running without Administrator privileges, so TCP traceroute could not run; this run automatically fell back to ICMP mode. Re-run the Agent as Administrator to enable TCP mode.',
+        permission_denied:
+          "The Agent's permission policy does not grant TCP traceroute, so this run automatically fell back to ICMP mode.",
+      },
     },
   },
 
@@ -1114,6 +1122,7 @@ export default {
     permSupported: 'Supported',
     permGranted: 'Granted',
     permEffective: 'Effective',
+    permBlocked: 'Blocked',
     policySource: 'Policy source',
     policyHash: 'Policy hash',
     activeIssues: '{n} issues',
@@ -1582,6 +1591,11 @@ export default {
     host_connection_local_read: 'Local address',
     host_connection_remote_read: 'Remote address',
     host_connection_owner_read: 'Connection owner',
+    diagnostic_traceroute_icmp: 'ICMP path diagnostics',
+    diagnostic_traceroute_tcp: 'TCP path diagnostics',
+    // Tooltip for a blocked permission (granted but not supported by this
+    // platform/run mode, so the grant can never take effect).
+    blockedTitle: 'Granted but not supported: {name}',
   },
 
   permissionSource: {
@@ -1589,6 +1603,12 @@ export default {
     environment: 'Environment',
     desktop_full_access: 'Desktop full access',
     desktopFullAccessExplain: 'This agent runs in desktop full-access mode, granting every permission its platform supports (typically for local monitoring on a personal computer).',
+  },
+
+  // Visible (non-tooltip-only) remediation hints for blocked permissions, looked
+  // up by permission id (dots swapped for underscores). Missing = no hint shown.
+  permissionHint: {
+    diagnostic_traceroute_tcp: 'TCP traceroute requires running the Agent as Administrator',
   },
 
   selector: {

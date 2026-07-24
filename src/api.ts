@@ -35,9 +35,11 @@ export interface Agent {
   platform: string
   agent_version: string
   status: string
-  // Local permission policy. `supported` is everything the agent build can do on
-  // its platform; `granted` is what the operator's policy allows; `effective` is
-  // the usable intersection. `policy_source` says where the grant came from and
+  // Local permission policy. `supported` is everything the agent can do in its
+  // current build + platform + run mode — runtime capability included, e.g. an
+  // agent not running as Administrator omits diagnostic.traceroute.tcp;
+  // `granted` is what the operator's policy allows; `effective` is the usable
+  // intersection. `policy_source` says where the grant came from and
   // `policy_hash` fingerprints it for issue correlation.
   supported: string[]
   granted: string[]
@@ -790,6 +792,11 @@ export interface TraceSummary {
   started_at: string | null
   completed_at: string | null
   deadline_at: string
+  // Present when the requested mode couldn't run and the Agent transparently
+  // fell back to another mode (currently tcp -> icmp only, when the Agent lacks
+  // admin rights or policy grant for TCP traceroute but can still run ICMP).
+  fallback_from?: string // '' | 'tcp' — the mode this report was originally requested as
+  fallback_reason?: string // raw_socket_unavailable | permission_denied
 }
 // GET /trace-reports/{id}: a full shared report with its per-attempt hops.
 export interface TraceReportView extends TraceSummary {

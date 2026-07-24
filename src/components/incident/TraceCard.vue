@@ -14,11 +14,26 @@ import { toDateLocale } from '../../i18n'
 const props = defineProps<{ report: TraceReportView }>()
 
 const { t, locale } = useI18n()
-const { traceStatusLabel, traceReasonLabel, traceReasonDetail, modeLabel } = useIncidentLabels()
+const { traceStatusLabel, traceReasonLabel, traceReasonDetail, fallbackReasonDetail, modeLabel } = useIncidentLabels()
 
 // Long-form "why it couldn't trace" text, shown when the run ended on a terminal
 // failure reason (report.reason is only set for non-success terminal states).
 const reasonDetail = computed(() => (props.report.reason ? traceReasonDetail(props.report.reason) : ''))
+
+// TCP -> ICMP auto-fallback (the only kind currently supported): the Agent
+// couldn't run the requested TCP traceroute (no admin rights or no grant) and
+// transparently re-ran it as ICMP. report.mode already reflects the mode that
+// actually executed.
+const isTcpFallback = computed(() => props.report.fallback_from === 'tcp')
+// "TCP:80" / "TCP" — the mode+port the run was originally requested as.
+const fallbackFromLabel = computed(() => {
+  const r = props.report
+  const from = modeLabel(r.fallback_from || '')
+  return r.port ? `${from}:${r.port}` : from
+})
+const fallbackDetail = computed(() =>
+  props.report.fallback_reason ? fallbackReasonDetail(props.report.fallback_reason) : '',
+)
 
 const fmtDateTime = (s: string | null) =>
   s ? new Date(s).toLocaleString(toDateLocale(locale.value), { hour12: false }) : '—'
@@ -61,12 +76,16 @@ function attemptAt(hop: TraceReportView['hops'][number], idx: number) {
     <div class="trace-head">
       <div class="th-left">
         <span class="badge" :class="statusTone(report.status)">{{ traceStatusLabel(report.status) }}</span>
-        <span class="mode badge neutral">{{ modeLabel(report.mode) }}<template v-if="report.port">:{{ report.port }}</template></span>
+        <span class="mode badge neutral">{{ modeLabel(report.mode) }}<template v-if="report.port && !isTcpFallback">:{{ report.port }}</template></span>
+        <span v-if="isTcpFallback" class="badge warn" :title="fallbackDetail || undefined">
+          {{ fallbackFromLabel }} → {{ modeLabel(report.mode) }}
+        </span>
         <span v-if="report.reason" class="hint reason">{{ traceReasonLabel(report.reason) }}</span>
       </div>
       <code class="rid" :title="report.report_id">{{ report.report_id }}</code>
     </div>
 
+    <p v-if="fallbackDetail" class="fallback-detail" role="note">{{ fallbackDetail }}</p>
     <p v-if="reasonDetail" class="reason-detail" role="note">{{ reasonDetail }}</p>
 
     <dl class="facts">
@@ -191,6 +210,18 @@ function attemptAt(hop: TraceReportView['hops'][number], idx: number) {
   color: var(--text-dim);
   background: var(--surface-2);
   border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+/* Same treatment as .reason-detail, but in the warn palette (matches .badge.warn)
+   since a mode fallback isn't a failure — the trace still completed. */
+.fallback-detail {
+  margin: 10px 0 2px;
+  padding: 8px 11px;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--warning);
+  background: var(--warning-soft);
+  border: 1px solid rgba(251, 191, 36, 0.3);
   border-radius: var(--radius-sm);
 }
 .table-wrap {

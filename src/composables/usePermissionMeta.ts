@@ -13,6 +13,14 @@ export function usePermissionMeta() {
     return te(key) ? t(key) : id
   }
 
+  // Optional per-permission remediation hint (e.g. "needs Administrator"), shown
+  // as visible text rather than just a tooltip. Empty when no hint is defined for
+  // this ID, so callers can skip rendering it.
+  const permHint = (id: string): string => {
+    const key = `permissionHint.${id.replace(/\./g, '_')}`
+    return te(key) ? t(key) : ''
+  }
+
   const sourceLabel = (source: string): string => {
     const key = `permissionSource.${source}`
     return te(key) ? t(key) : source
@@ -31,5 +39,5 @@ export function usePermissionMeta() {
     return te(key) ? t(key) : scope
   }
 
-  return { permLabel, sourceLabel, selectorLabel }
+  return { permLabel, permHint, sourceLabel, selectorLabel }
 }

@@ -13,6 +13,7 @@ import {
 import { toDateLocale } from '../i18n'
 import { agentStatus, agentIndex, refreshAgentStatus } from '../agentStatus'
 import { targetStatus } from '../targetStatus'
+import { usePermissionMeta } from '../composables/usePermissionMeta'
 import MonitorStateBadge from '../components/status/MonitorStateBadge.vue'
 import PermissionChips from '../components/status/PermissionChips.vue'
 import OsIcon from '../components/agents/OsIcon.vue'
@@ -22,6 +23,7 @@ import AlertsTable from '../components/AlertsTable.vue'
 const { t, locale } = useI18n()
 const route = useRoute()
 const router = useRouter()
+const { permHint } = usePermissionMeta()
 
 const id = computed(() => String(route.params.id || ''))
 const agent = ref<Agent | null>(null)
@@ -44,6 +46,18 @@ const firingConn = computed(() => row.value?.connectivity_alert || null)
 const associatedTargets = computed(() =>
   targetStatus.targets.filter((tt) => tt.agents.some((a) => a.agent_id === id.value)),
 )
+
+// Blocked permissions: granted by policy but not supported by this Agent's
+// platform/build/run-mode (e.g. TCP traceroute granted but the Agent isn't
+// running as Administrator), so the grant can never take effect.
+const blockedPermissions = computed(() => {
+  if (!agent.value) return []
+  const supported = new Set(agent.value.supported)
+  return agent.value.granted.filter((permId) => !supported.has(permId))
+})
+// Visible (non-tooltip-only) remediation hints for blocked permissions that have
+// one defined — looked up generically per permission id via permHint().
+const blockedHints = computed(() => blockedPermissions.value.map((permId) => permHint(permId)).filter(Boolean))
 
 const fmt = (s: string | null | undefined) => (s ? new Date(s).toLocaleString(toDateLocale(locale.value)) : '—')
 function agentName(): string {
@@ -159,6 +173,13 @@ onMounted(() => {
       </dl>
       <div class="perms">
         <PermissionChips :label="t('agents.permEffective')" :ids="agent.effective" tone="effective" />
+        <PermissionChips
+          v-if="blockedPermissions.length"
+          :label="t('agents.permBlocked')"
+          :ids="blockedPermissions"
+          tone="blocked"
+        />
+        <p v-for="(hint, i) in blockedHints" :key="i" class="perm-hint">{{ hint }}</p>
       </div>
     </section>
 
@@ -295,6 +316,14 @@ onMounted(() => {
   margin-top: 14px;
   padding-top: 12px;
   border-top: 1px dashed var(--border);
+}
+.perms > .perm-list + .perm-list {
+  margin-top: 8px;
+}
+.perm-hint {
+  margin: 8px 0 0;
+  font-size: 12px;
+  color: var(--danger);
 }
 .alert-banner {
   display: flex;
