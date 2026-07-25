@@ -284,7 +284,7 @@ onActivated(() => {
 </script>
 
 <template>
-  <main class="page target-status-page">
+  <main class="page">
     <div class="page-head status-head">
       <div>
         <h2>{{ t('targetStatus.title') }}</h2>
@@ -395,7 +395,6 @@ onActivated(() => {
 </template>
 
 <style scoped>
-.target-status-page { max-width: 1240px; }
 .status-head { align-items: flex-start; }
 .status-head > div:first-child { min-width: 0; flex: 1; }
 .status-head .sub { margin-top: 7px; }
@@ -517,7 +516,6 @@ onActivated(() => {
 }
 
 @media (max-width: 620px) {
-  .target-status-page { padding-left: 14px; padding-right: 14px; }
   .status-head { gap: 10px; }
   .snapshot { flex-basis: 100%; width: max-content; }
   .summary-grid { grid-template-columns: 1fr 1fr; gap: 8px; }

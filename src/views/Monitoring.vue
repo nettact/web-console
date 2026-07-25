@@ -184,7 +184,15 @@ onMounted(load)
       </div>
 
       <div class="table-wrap" v-if="targetsOf(g).length">
-        <table class="data-table">
+        <table class="data-table target-table">
+          <colgroup>
+            <col class="col-name" />
+            <col class="col-type" />
+            <col class="col-target" />
+            <col class="col-status" />
+            <col class="col-enabled" />
+            <col class="col-actions" />
+          </colgroup>
           <thead>
             <tr>
               <th>{{ tr('monitoring.thName') }}</th>
@@ -198,9 +206,9 @@ onMounted(load)
           <tbody>
             <template v-for="t in targetsOf(g)" :key="t.id">
               <tr>
-                <td>{{ t.name || tr('monitoring.unnamed') }}</td>
-                <td>{{ typeLabel(t, tr) }}</td>
-                <td class="mono">
+                <td class="name-cell" :title="t.name || tr('monitoring.unnamed')">{{ t.name || tr('monitoring.unnamed') }}</td>
+                <td class="type-cell" :title="typeLabel(t, tr)">{{ typeLabel(t, tr) }}</td>
+                <td class="mono target-cell" :title="targetLabel(t, tr)">
                   {{ targetLabel(t, tr) }}<span v-if="t.kind === 'tcp' && t.params?.port">:{{ t.params.port }}</span>
                 </td>
                 <td class="status">
@@ -233,11 +241,13 @@ onMounted(load)
                   <span v-else class="dim">—</span>
                 </td>
                 <td class="center"><span :class="['dot', t.enabled ? 'on' : 'off']"></span></td>
-                <td class="actions">
-                  <router-link :to="`/monitoring/${t.id}/edit`" class="link-btn">{{ tr('monitoring.editMonitor') }}</router-link>
-                  <button class="link-btn danger" :disabled="busy" @click="pendingDeleteTarget = t">
-                    {{ tr('common.delete') }}
-                  </button>
+                <td class="action-cell">
+                  <div class="actions">
+                    <router-link :to="`/monitoring/${t.id}/edit`" class="link-btn">{{ tr('monitoring.editMonitor') }}</router-link>
+                    <button class="link-btn danger" :disabled="busy" @click="pendingDeleteTarget = t">
+                      {{ tr('common.delete') }}
+                    </button>
+                  </div>
                 </td>
               </tr>
               <!-- Per-agent authoritative detail (execution / probe / rule + context). -->
@@ -324,9 +334,6 @@ onMounted(load)
 </template>
 
 <style scoped>
-.page {
-  max-width: 1000px;
-}
 .panel {
   margin-bottom: 20px;
 }
@@ -389,6 +396,32 @@ onMounted(load)
 }
 .table-wrap {
   overflow-x: auto;
+}
+.target-table {
+  min-width: 980px;
+  table-layout: fixed;
+}
+.target-table .col-name { width: 20%; }
+.target-table .col-type { width: 14%; }
+.target-table .col-target { width: 28%; }
+.target-table .col-status { width: 20%; }
+.target-table .col-enabled { width: 7%; }
+.target-table .col-actions { width: 11%; }
+.name-cell,
+.type-cell,
+.target-cell {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.action-cell {
+  white-space: nowrap;
+}
+.action-cell .actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
 }
 .count {
   min-width: 22px;
@@ -526,11 +559,6 @@ onMounted(load)
 }
 .pad {
   padding: 8px 2px;
-}
-.actions {
-  display: flex;
-  gap: 10px;
-  justify-content: flex-end;
 }
 .dot {
   display: inline-block;

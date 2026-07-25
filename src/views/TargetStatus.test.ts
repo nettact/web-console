@@ -98,10 +98,13 @@ describe('group-centric target-status page', () => {
     expect(wrapper.find('a[href="/monitoring/target-1/edit"]').exists()).toBe(false)
     expect(wrapper.find('a[href="/monitoring/new?group=group-1"]').exists()).toBe(false)
     expect(wrapper.find('.expand-short').exists()).toBe(false)
+    expect(wrapper.get('.group-expand-cue').text()).toContain(i18n.global.t('targetStatus.collapseGroup'))
+    expect(targetSummary.get('.target-detail-cue').text()).toContain(i18n.global.t('targetStatus.collapseTarget'))
     await targetSummary.find('.state-cell').trigger('click')
     await flushPromises()
     expect(router.currentRoute.value.query.target).toBeUndefined()
     expect(wrapper.find('.agent-details').exists()).toBe(false)
+    expect(wrapper.get('.target-detail-cue').text()).toContain(i18n.global.t('targetStatus.expandTarget'))
     expect(wrapper.text()).not.toContain('Agent 视图')
     expect(wrapper.text()).not.toContain('目标视图')
   })
@@ -135,6 +138,7 @@ describe('group-centric target-status page', () => {
     // next authoritative status object replacement.
     await heads[0].get('.group-facts').trigger('click')
     expect(heads[0].attributes('aria-expanded')).toBe('false')
+    expect(heads[0].get('.group-expand-cue').text()).toContain(i18n.global.t('targetStatus.expandGroup'))
     targetStatus.targets = [{ ...statusRow, last_observed_at: '2026-07-18T05:00:10Z' }]
     await flushPromises()
     expect(heads[0].attributes('aria-expanded')).toBe('false')

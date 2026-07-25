@@ -220,10 +220,11 @@ onBeforeUnmount(() => {
               <th>{{ t('incidents.thMembers') }}</th>
               <th>{{ t('incidents.thStartTime') }}</th>
               <th>{{ t('incidents.thResolvedTime') }}</th>
+              <th class="action-col">{{ t('incidents.thAction') }}</th>
             </tr>
           </thead>
           <tbody>
-            <tr v-if="!filteredIncidents.length"><td colspan="7" class="hint">{{ t('incidents.noIncidents') }}</td></tr>
+            <tr v-if="!filteredIncidents.length"><td colspan="8" class="hint">{{ t('incidents.noIncidents') }}</td></tr>
             <tr
               v-for="i in filteredIncidents"
               :key="i.id"
@@ -253,6 +254,12 @@ onBeforeUnmount(() => {
               <td class="mono">{{ i.active_member_count }} / {{ i.member_count }}</td>
               <td class="hint">{{ fmtDateTime(i.opened_at) }}</td>
               <td class="hint">{{ fmtDateTime(i.resolved_at) }}</td>
+              <td class="row-action-cell">
+                <span class="row-detail-cue" aria-hidden="true">
+                  {{ t('incidents.viewDetail') }}
+                  <span class="row-chevron">&rsaquo;</span>
+                </span>
+              </td>
             </tr>
           </tbody>
         </table>
@@ -336,6 +343,34 @@ onBeforeUnmount(() => {
 }
 tr.clickable {
   cursor: pointer;
+}
+.action-col,
+.row-action-cell {
+  text-align: right;
+  white-space: nowrap;
+}
+.row-detail-cue {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 5px 9px;
+  border: 1px solid var(--border-strong);
+  border-radius: 7px;
+  color: var(--primary);
+  background: var(--primary-soft);
+  font-size: 11px;
+  font-weight: 650;
+  transition: border-color 0.15s, background 0.15s, transform 0.15s;
+}
+.row-chevron {
+  font-size: 18px;
+  line-height: 0.7;
+}
+tr.clickable:hover .row-detail-cue,
+tr.clickable:focus-visible .row-detail-cue {
+  border-color: var(--primary);
+  background: color-mix(in srgb, var(--primary-soft) 78%, var(--surface-2));
+  transform: translateX(2px);
 }
 tr.clickable:focus-visible {
   outline: 2px solid var(--primary);

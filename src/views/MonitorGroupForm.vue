@@ -463,9 +463,6 @@ onMounted(load)
 </template>
 
 <style scoped>
-.page {
-  max-width: 900px;
-}
 .panel {
   margin-bottom: 18px;
 }

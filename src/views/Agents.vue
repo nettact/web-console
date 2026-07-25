@@ -258,7 +258,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <main class="page agents-page">
+  <main class="page">
     <header class="agents-hero">
       <div>
         <div class="eyebrow">NETTACT / AGENT FLEET</div>
@@ -475,10 +475,6 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
-.agents-page {
-  max-width: 1600px;
-  padding-top: 24px;
-}
 .agents-hero {
   display: flex;
   align-items: center;
@@ -922,7 +918,6 @@ onBeforeUnmount(() => {
   .agents-hero { align-items: flex-start; }
 }
 @media (max-width: 700px) {
-  .agents-page { padding: 20px 14px 44px; }
   .agents-hero { display: grid; }
   .hero-actions { justify-content: space-between; }
   .summary-grid { grid-template-columns: 1fr; }

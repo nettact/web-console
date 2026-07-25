@@ -241,7 +241,7 @@ async function dismissBanner(): Promise<void> {
   display: flex;
   align-items: center;
   gap: 12px;
-  margin: 12px 24px 0;
+  margin: 12px var(--page-edge) 0;
   padding: 10px 14px;
   border: 1px solid var(--primary);
   border-radius: 10px;
@@ -389,7 +389,7 @@ async function dismissBanner(): Promise<void> {
   align-items: center;
   gap: 12px;
   height: 60px;
-  padding: 0 30px;
+  padding: 0 var(--page-edge);
   border-bottom: 1px solid var(--border);
   background: var(--topbar-bg);
   backdrop-filter: blur(14px);
@@ -465,9 +465,6 @@ async function dismissBanner(): Promise<void> {
   }
 }
 @media (max-width: 560px) {
-  .topbar {
-    padding: 0 16px;
-  }
   .uname {
     display: none;
   }

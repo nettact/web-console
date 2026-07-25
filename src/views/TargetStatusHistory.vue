@@ -20,7 +20,7 @@ const backLocation = computed(() => ({
 </script>
 
 <template>
-  <main class="page target-history-page">
+  <main class="page">
     <router-link class="back-link" :to="backLocation">← {{ t('targetStatus.backToStatus') }}</router-link>
 
     <div v-if="!targetStatus.loaded && !targetStatus.error" class="card page-message">
@@ -59,7 +59,6 @@ const backLocation = computed(() => ({
 </template>
 
 <style scoped>
-.target-history-page { max-width: 1240px; }
 .back-link { display: inline-block; margin-bottom: 15px; color: var(--primary); font-size: 12px; text-decoration: none; }
 .history-head { align-items: flex-end; margin-bottom: 20px; }
 .history-head > div:first-child { min-width: 0; }
@@ -78,7 +77,6 @@ const backLocation = computed(() => ({
 .page-message p { margin-bottom: 18px; }
 
 @media (max-width: 760px) {
-  .target-history-page { padding-left: 14px; padding-right: 14px; }
   .history-head { align-items: flex-start; }
   .agent-context { flex-basis: 100%; flex-wrap: wrap; }
 }

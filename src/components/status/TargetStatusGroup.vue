@@ -61,7 +61,6 @@ function targetName(row: TargetStatusRow): string {
       @keydown.space.prevent="emit('toggleGroup')"
     >
       <div class="group-toggle">
-        <span class="chevron" :class="{ open: expanded }">›</span>
         <span class="group-icon" aria-hidden="true">⌘</span>
         <span class="group-title">
           <span class="group-name">
@@ -85,13 +84,18 @@ function targetName(row: TargetStatusRow): string {
         <span v-if="view.counts.inactive" class="count-chip neutral">{{ t('targetStatus.bucketCount', { n: view.counts.inactive, label: t('targetStatus.bucket.inactive') }) }}</span>
       </div>
 
-      <div v-if="view.group" class="group-actions">
+      <div class="group-actions">
         <router-link
+          v-if="view.group"
           :to="`/monitoring/groups/${view.id}/edit`"
           @click.stop
           @keydown.enter.stop
           @keydown.space.stop
         >{{ t('targetStatus.manageGroup') }}</router-link>
+        <span class="group-expand-cue" aria-hidden="true">
+          {{ expanded ? t('targetStatus.collapseGroup') : t('targetStatus.expandGroup') }}
+          <span class="detail-chevron" :class="{ open: expanded }">&rsaquo;</span>
+        </span>
       </div>
     </header>
 
@@ -107,7 +111,7 @@ function targetName(row: TargetStatusRow): string {
           <span>{{ t('targetStatus.agentImpact') }}</span>
           <span>{{ t('targetStatus.activeConditions') }}</span>
           <span>{{ t('targetStatus.lastObserved') }}</span>
-          <span></span>
+          <span class="action-column">{{ t('targetStatus.detailAction') }}</span>
         </div>
 
         <article v-for="row in view.targets" :id="`target-status-${row.target_id}`" :key="row.target_id" class="target-item" :class="{ selected: selectedTargetId === row.target_id }">
@@ -163,6 +167,10 @@ function targetName(row: TargetStatusRow): string {
               >
                 {{ t('targetStatus.incidentCount', { n: row.incident_ids.length }) }}
               </router-link>
+              <span class="target-detail-cue" aria-hidden="true">
+                {{ selectedTargetId === row.target_id ? t('targetStatus.collapseTarget') : t('targetStatus.expandTarget') }}
+                <span class="detail-chevron" :class="{ open: selectedTargetId === row.target_id }">&rsaquo;</span>
+              </span>
             </div>
           </div>
 
@@ -222,12 +230,6 @@ function targetName(row: TargetStatusRow): string {
   text-align: left;
   cursor: pointer;
 }
-.chevron {
-  color: var(--text-muted);
-  font-size: 18px;
-  transition: transform 0.15s;
-}
-.chevron.open { transform: rotate(90deg); }
 .group-icon {
   width: 34px;
   height: 34px;
@@ -315,11 +317,38 @@ function targetName(row: TargetStatusRow): string {
   font-size: 10.5px;
   text-decoration: none;
 }
+.group-expand-cue,
+.target-detail-cue {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 4px 8px;
+  border: 1px solid var(--border-strong);
+  border-radius: 7px;
+  color: var(--primary);
+  background: var(--primary-soft);
+  font-size: 10.5px;
+  font-weight: 650;
+  white-space: nowrap;
+}
+.detail-chevron {
+  display: inline-block;
+  font-size: 17px;
+  line-height: 0.7;
+  transition: transform 0.15s;
+}
+.detail-chevron.open { transform: rotate(90deg); }
+.group-head:hover .group-expand-cue,
+.group-head:focus-visible .group-expand-cue,
+.target-summary:hover .target-detail-cue,
+.target-summary:focus-visible .target-detail-cue { border-color: var(--primary); }
+.action-column { text-align: right; }
 .target-list { border-top: 1px solid var(--border); }
 .target-columns,
 .target-summary {
   display: grid;
-  grid-template-columns: minmax(230px, 1.45fr) 126px 140px 145px 135px minmax(100px, auto);
+  grid-template-columns: minmax(230px, 1.45fr) 126px 140px 145px 135px minmax(160px, auto);
   gap: 12px;
   align-items: center;
 }

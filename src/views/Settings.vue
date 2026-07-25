@@ -737,9 +737,6 @@ onMounted(load)
 </template>
 
 <style scoped>
-.page {
-  max-width: 900px;
-}
 .tabs {
   display: flex;
   gap: 6px;

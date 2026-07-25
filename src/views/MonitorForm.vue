@@ -584,9 +584,6 @@ onMounted(loadAll)
 </template>
 
 <style scoped>
-.page {
-  max-width: 860px;
-}
 .save-warn {
   margin-top: 14px;
   padding: 14px 16px;
