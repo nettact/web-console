@@ -406,9 +406,24 @@ export interface SaveWarning {
   blocked_agents: SaveWarningAgent[]
   capable_agent_list: SaveWarningAgent[]
 }
+// An alert condition dropped by a set-targets save because its monitor's kind
+// changed and the new kind can never emit the metric the condition watched. The
+// user MUST be told: the monitor now probes something else, and until the alarm
+// is reconfigured it can fail indefinitely without raising anything.
+export interface RuleCleanup {
+  monitor_id: string
+  monitor_name: string
+  old_kind: string
+  new_kind: string
+  rule_id: string
+  rule_name: string
+  metrics: string[]
+  rule_deleted: boolean
+}
 export interface SaveTargetsResult {
   ok: true
   warnings: SaveWarning[]
+  rule_cleanups: RuleCleanup[]
 }
 export interface Sample {
   ts: string

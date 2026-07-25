@@ -750,11 +750,13 @@ onMounted(load)
         <div class="alert-channels">
           <span class="knob-label">{{ t('settings.agentAlert.channels') }}</span>
           <p class="hint tiny">{{ t('settings.agentAlert.channelsHint') }}</p>
-          <div v-if="!channels.length" class="hint tiny">{{ t('settings.noChannels') }}</div>
-          <label v-for="c in channels" :key="c.id" class="member-chip">
-            <input type="checkbox" :checked="agentAlert.channelIds.includes(c.id)" :disabled="!agentAlert.enabled" @change="toggleAlertChannel(c.id)" />
-            <span>{{ c.name || c.type }}</span>
-          </label>
+          <div class="chip-row">
+            <div v-if="!channels.length" class="hint tiny">{{ t('settings.noChannels') }}</div>
+            <label v-for="c in channels" :key="c.id" class="member-chip">
+              <input type="checkbox" :checked="agentAlert.channelIds.includes(c.id)" :disabled="!agentAlert.enabled" @change="toggleAlertChannel(c.id)" />
+              <span>{{ c.name || c.type }}</span>
+            </label>
+          </div>
         </div>
         <div class="row field-row">
           <button class="btn btn-primary" @click="saveAgentAlert">{{ t('common.save') }}</button>
@@ -986,6 +988,34 @@ input.tiny-name {
 .knob-help {
   font-size: 12px;
   line-height: 1.45;
+}
+.alert-channels {
+  margin: 16px 0 4px;
+}
+.alert-channels .hint.tiny {
+  margin: 4px 0 0;
+}
+/* 渠道勾选项按内容宽度排布，避免继承全局 input 的 min-width 撑出大片空白。 */
+.chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 20px;
+  margin-top: 10px;
+}
+.member-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--text-dim);
+}
+.member-chip input {
+  min-width: 0;
+  width: auto;
+  flex: none;
+}
+.member-chip input:disabled {
+  opacity: 0.5;
 }
 .toggle-row {
   display: flex;

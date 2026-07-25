@@ -2,10 +2,13 @@
 import { ref, reactive, computed, onMounted, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
-import { api, type ProbeTarget, type ProbeParams, type MonitorGroup, type SaveWarning } from '../api'
+import { api, type ProbeTarget, type ProbeParams, type MonitorGroup, type RuleCleanup, type SaveWarning } from '../api'
 import ComboInput from '../components/ComboInput.vue'
+import { useMetricMeta } from '../composables/useMetricMeta'
+import { LEADING_SCHEME, paramsRangeError, retargetForKind, targetError } from '../lib/targetValidation'
 
 const { t: tr } = useI18n()
+const { metricLabel } = useMetricMeta()
 const route = useRoute()
 const router = useRouter()
 
@@ -62,6 +65,10 @@ const busy = ref(false)
 // Save warnings for THIS monitor: in-scope agents that cannot run it under their
 // current permission policy (per-agent, from the set-targets response).
 const saveWarning = ref<SaveWarning | null>(null)
+// Alert conditions this save dropped because the monitor's kind changed. Until
+// they are reconfigured the monitor probes something no alarm watches, so this is
+// shown as prominently as the permission warning above.
+const ruleCleanups = ref<RuleCleanup[]>([])
 const notFound = ref(false)
 // Guards a destructive save: setTargets is a full reconcile, so saving before the
 // existing target list has loaded would delete every other monitor.
@@ -117,6 +124,39 @@ const STUN_PRESETS = [
   'stun.voipstunt.com',
   'stun.miwifi.com',
 ]
+
+// An HTTP monitor's target is a URL and the agent can only dial http/https. A
+// scheme-less address ("www.example.com") is what an address bar accepts but what
+// the probe rejects outright, so mirror the server's normalization here — on blur
+// and again before submit — to keep the value the user sees identical to the one
+// that gets probed.
+// Only a LEADING scheme means "already schemed": a "://" further along belongs to
+// the path or query ("example.com/login?next=https://idp"), and treating that as
+// schemed would submit a URL the probe cannot dial.
+function httpURL(raw: string): string {
+  const s = raw.trim()
+  if (!s || LEADING_SCHEME.test(s)) return s
+  return `https://${s}`
+}
+function normalizeTargetURL() {
+  if (form.kind === 'http') form.target = httpURL(form.target)
+}
+
+// Live shape check for the target field, mirroring the server's rules so a value
+// the probe could only fail on is reported HERE, not after a save round trip and
+// a cycle of red "probe failed" with a generic error class. Empty is left to the
+// existing "target required" guard so the field is not red before it is typed in.
+const targetErrorKey = computed(() => {
+  if (isHostMode.value || isGatewayMode.value || !form.target.trim()) return ''
+  return targetError(form.kind, form.kind === 'http' ? httpURL(form.target) : form.target)
+})
+const targetErrorText = computed(() => (targetErrorKey.value ? tr(targetErrorKey.value) : ''))
+
+// The monitor-type labels live on the kind <select> (mform.typeIcmp, …); reuse
+// them so a report about a kind change names the same words the user picked.
+function kindLabel(kind: string): string {
+  return kind ? tr(`mform.type${kind.charAt(0).toUpperCase()}${kind.slice(1)}`) : kind
+}
 
 function placeholderFor(kind: string): string {
   if (kind === 'dns') return 'example.com'
@@ -204,12 +244,29 @@ async function save() {
     error.value = tr('mform.targetRequired')
     return
   }
+  // A target whose SHAPE is wrong for the kind (a URL in a DNS monitor, a port in
+  // a TCP host…) can never probe successfully. The server rejects it too; failing
+  // here keeps the message next to the field that caused it.
+  normalizeTargetURL()
+  if (targetErrorKey.value) {
+    error.value = targetErrorText.value
+    return
+  }
+  // The inputs' min/max are advisory: this form saves from a button click, so the
+  // browser never runs constraint validation. Check the ranges for real.
+  const range = paramsRangeError(form.kind, form.params as Record<string, unknown> | undefined)
+  if (range) {
+    error.value = tr('mform.errParamRange', { field: tr(range.labelKey), min: range.min, max: range.max })
+    return
+  }
   busy.value = true
   saved.value = false
   error.value = ''
   saveWarning.value = null
+  ruleCleanups.value = []
   try {
     if (form.kind === 'http') form.params!.headers = textToHeaders(headersText.value)
+    normalizeTargetURL()
     const target = isGatewayMode.value ? 'gateway' : form.target.trim()
     const current: ProbeTarget = { ...form, target, params: cleanParams(form.params) }
     // Rebuild the full set (setTargets is a full reconcile), upserting this one.
@@ -221,6 +278,12 @@ async function save() {
     const beforeIds = new Set(others.map((x) => x.id))
     const payload = [...others, current]
     const res = await api.setTargets(SITE, payload)
+    // The save has landed and those alert conditions are already deleted server
+    // side, so publish that BEFORE the reload below — which can fail and jump to
+    // catch. Re-saving would report nothing (the conditions are gone), so a lost
+    // notice is lost for good. Only an existing monitor can have had conditions
+    // invalidated, and its id is known here; a create has none to report.
+    ruleCleanups.value = (res.rule_cleanups ?? []).filter((c) => c.monitor_id === form.id)
     // Reload so a freshly-created monitor gets its server-assigned id; locate it by
     // id (edit) or the one new id (create).
     all.value = await api.listTargets(SITE)
@@ -232,11 +295,12 @@ async function save() {
       : all.value.find((x) => x.id && !beforeIds.has(x.id))
     if (match) form.id = match.id
     saved.value = true
-    // The save-time warning for THIS monitor (which in-scope agents cannot run it
-    // and why) is actionable, so a warned save stays on the form to show it; a
-    // clean save goes straight back to the monitor list.
+    // Two save-time findings are actionable for THIS monitor: which in-scope
+    // agents cannot run it and why, and which of its alert conditions this save
+    // had to drop because the monitor's kind changed. Either one keeps the form
+    // open so the user sees it; a clean save goes straight back to the list.
     const warning = res.warnings.find((wgn) => wgn.monitor_id === form.id) ?? null
-    if (!warning) {
+    if (!warning && !ruleCleanups.value.length) {
       router.push('/monitoring')
       return
     }
@@ -250,16 +314,22 @@ async function save() {
   }
 }
 
-// Ensure params exist on kind change, and drop the http-only keyword when leaving
-// http so a stale keyword can't misclassify the monitor.
+// Ensure params exist on kind change, carry the target across into the shape the
+// new kind needs, and drop the http-only keyword when leaving http so a stale
+// keyword can't misclassify the monitor.
 watch(
   () => form.kind,
-  (k) => {
+  (k, prev) => {
     if (!form.params) form.params = {}
     if (k !== 'http') {
       form.params.keyword = ''
       form.params.keyword_invert = false
     }
+    // Switching the kind keeps whatever was in the target field — which is how a
+    // URL ends up in a DNS monitor that can then only fail. Convert it (a URL
+    // becomes its hostname); anything unconvertible stays put and the inline
+    // error names it.
+    form.target = retargetForKind(form.target, prev, k)
     applyKindDefaults()
   },
 )
@@ -328,7 +398,8 @@ onMounted(loadAll)
           <label class="field wide" v-else>
             <span>{{ form.kind === 'http' ? tr('mform.url') : (form.kind === 'nat' ? tr('mform.stunServer') : (form.kind === 'tcp' || form.kind === 'dns' ? tr('mform.hostname') : tr('mform.target'))) }}</span>
             <ComboInput v-if="form.kind === 'nat'" v-model="form.target" :options="STUN_PRESETS" :placeholder="placeholderFor('nat')" />
-            <input v-else v-model="form.target" :placeholder="placeholderFor(form.kind)" />
+            <input v-else v-model="form.target" :placeholder="placeholderFor(form.kind)" :class="{ invalid: !!targetErrorKey }" @blur="normalizeTargetURL" />
+            <small v-if="targetErrorText" class="field-err">{{ targetErrorText }}</small>
           </label>
           <label class="field" v-if="form.kind === 'tcp'">
             <span>{{ tr('mform.port') }}</span>
@@ -383,10 +454,12 @@ onMounted(loadAll)
         <div class="panel-head"><h3>{{ tr('mform.secAdvanced') }}</h3></div>
         <div class="form-grid">
           <template v-if="form.kind === 'icmp' || form.kind === 'gateway'">
-            <label class="field"><span>{{ tr('mform.packetCount') }}</span><input type="number" v-model.number="form.params!.packet_count" placeholder="3" /></label>
-            <label class="field"><span>{{ tr('mform.packetSize') }}</span><input type="number" v-model.number="form.params!.packet_size" placeholder="56" /></label>
-            <label class="field"><span>{{ tr('mform.perPingTimeout') }}</span><input type="number" v-model.number="form.params!.timeout_ms" placeholder="2000" /></label>
-            <label class="field"><span>{{ tr('mform.globalTimeout') }}</span><input type="number" v-model.number="form.params!.global_timeout_ms" placeholder="10000" /></label>
+            <!-- min/max mirror the server bounds (server-core/api/probevalidate.go)
+                 so the browser blocks the obvious garbage before a round trip. -->
+            <label class="field"><span>{{ tr('mform.packetCount') }}</span><input type="number" min="0" max="100" v-model.number="form.params!.packet_count" placeholder="3" /></label>
+            <label class="field"><span>{{ tr('mform.packetSize') }}</span><input type="number" min="0" max="65500" v-model.number="form.params!.packet_size" placeholder="56" /></label>
+            <label class="field"><span>{{ tr('mform.perPingTimeout') }}</span><input type="number" min="0" max="300000" v-model.number="form.params!.timeout_ms" placeholder="2000" /></label>
+            <label class="field"><span>{{ tr('mform.globalTimeout') }}</span><input type="number" min="0" max="300000" v-model.number="form.params!.global_timeout_ms" placeholder="10000" /></label>
           </template>
           <template v-else-if="form.kind === 'dns'">
             <label class="field">
@@ -400,7 +473,7 @@ onMounted(loadAll)
               </select>
             </label>
             <label class="field"><span>{{ tr('mform.resolverServer') }}</span><input v-model="form.params!.resolver_server" :placeholder="resolverServerPlaceholder" /></label>
-            <label class="field" v-if="dnsProto !== 'doh'"><span>{{ tr('mform.resolverPort') }}</span><input type="number" v-model.number="form.params!.resolver_port" :placeholder="resolverPortPlaceholder" /></label>
+            <label class="field" v-if="dnsProto !== 'doh'"><span>{{ tr('mform.resolverPort') }}</span><input type="number" min="0" max="65535" v-model.number="form.params!.resolver_port" :placeholder="resolverPortPlaceholder" /></label>
             <label class="field">
               <span>{{ tr('mform.recordType') }}</span>
               <select v-model="form.params!.record_type">
@@ -429,8 +502,8 @@ onMounted(loadAll)
             </select>
           </label>
           <label class="field"><span>{{ tr('mform.acceptedStatuses') }}</span><input v-model="form.params!.accepted_statuses" placeholder="200-299,301" /></label>
-          <label class="field"><span>{{ tr('mform.maxRedirects') }}</span><input type="number" v-model.number="form.params!.max_redirects" placeholder="10" /></label>
-          <label class="field" v-if="form.params!.keyword"><span>{{ tr('mform.maxResponseBytes') }}</span><input type="number" v-model.number="form.params!.max_response_bytes" placeholder="1024" /></label>
+          <label class="field"><span>{{ tr('mform.maxRedirects') }}</span><input type="number" min="-1" max="20" v-model.number="form.params!.max_redirects" placeholder="10" /></label>
+          <label class="field" v-if="form.params!.keyword"><span>{{ tr('mform.maxResponseBytes') }}</span><input type="number" min="0" max="10485760" v-model.number="form.params!.max_response_bytes" placeholder="1024" /></label>
           <label class="field check"><input type="checkbox" v-model="form.params!.ignore_tls" /><span>{{ tr('mform.ignoreTls') }}</span></label>
           <p class="hint tiny wide">{{ tr('mform.acceptedStatusesHint') }}</p>
           <label class="field wide"><span>{{ tr('mform.requestHeaders') }}</span><textarea v-model="headersText" rows="3" placeholder="X-Api-Key: abc"></textarea></label>
@@ -484,6 +557,28 @@ onMounted(loadAll)
           <span class="warn-capable-names">{{ saveWarning.capable_agent_list.map((a) => a.agent_name || a.agent_id).join(', ') }}</span>
         </p>
       </div>
+
+      <!-- Alert conditions dropped by a monitor-type change. Until they are
+           rebuilt this monitor can fail indefinitely without raising anything. -->
+      <div v-if="ruleCleanups.length" class="card save-warn rule-cleanup">
+        <h4>{{ tr('mform.ruleCleanupTitle') }}</h4>
+        <p class="hint">
+          {{ tr('mform.ruleCleanupIntro', {
+            from: kindLabel(ruleCleanups[0].old_kind),
+            to: kindLabel(ruleCleanups[0].new_kind),
+          }) }}
+        </p>
+        <ul class="warn-list">
+          <li v-for="c in ruleCleanups" :key="c.rule_id">
+            <span class="warn-agent">{{ c.rule_name }}</span>
+            <span v-if="c.rule_deleted" class="warn-state">{{ tr('mform.ruleCleanupRuleDeleted') }}</span>
+            <span class="warn-perms mono">{{ c.metrics.map((m) => metricLabel(m)).join('、') }}</span>
+          </li>
+        </ul>
+        <p class="warn-capable">
+          <router-link :to="`/monitoring/groups/${form.group_id}/edit`">{{ tr('mform.ruleCleanupAction') }}</router-link>
+        </p>
+      </div>
     </template>
   </main>
 </template>
@@ -496,6 +591,15 @@ onMounted(loadAll)
   margin-top: 14px;
   padding: 14px 16px;
   border-left: 3px solid var(--warning, #fbbf24);
+}
+/* Shape error on the target field: the value can never probe successfully. */
+.field input.invalid {
+  border-color: var(--danger, #f87171);
+}
+.field-err {
+  margin-top: 4px;
+  color: var(--danger, #f87171);
+  font-size: 11.5px;
 }
 .save-warn h4 {
   margin: 0 0 4px;

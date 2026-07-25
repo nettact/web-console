@@ -162,7 +162,7 @@ describe('MonitorForm select defaults', () => {
 
 describe('MonitorForm save navigation', () => {
   it('returns to the monitor list after a clean save', async () => {
-    apiMock.setTargets.mockResolvedValue({ ok: true, warnings: [] })
+    apiMock.setTargets.mockResolvedValue({ ok: true, warnings: [], rule_cleanups: [] })
     const page = await render()
     await targetInput(page).setValue('1.1.1.1')
 
@@ -173,6 +173,162 @@ describe('MonitorForm save navigation', () => {
     expect(state.push).toHaveBeenCalledWith('/monitoring')
   })
 
+  // A scheme-less URL is what Go's HTTP client refuses outright, so the form
+  // normalizes it the way the server does — and shows the user the result.
+  it('normalizes a scheme-less HTTP url on blur and on save', async () => {
+    apiMock.setTargets.mockResolvedValue({ ok: true, warnings: [], rule_cleanups: [] })
+    const page = await render()
+    await page.get('select').setValue('http')
+    const input = targetInput(page)
+    await input.setValue('www.yahoo.co.jp')
+    await input.trigger('blur')
+
+    expect((input.element as HTMLInputElement).value).toBe('https://www.yahoo.co.jp')
+
+    await page.get('button.btn.btn-primary').trigger('click')
+    await flushPromises()
+
+    const saved = apiMock.setTargets.mock.calls[0][1] as ProbeTarget[]
+    expect(saved[saved.length - 1].target).toBe('https://www.yahoo.co.jp')
+  })
+
+  // "://" further along the URL belongs to the path or query — the target itself
+  // is still scheme-less and must be normalized.
+  it('normalizes a scheme-less url that embeds an absolute url', async () => {
+    apiMock.setTargets.mockResolvedValue({ ok: true, warnings: [], rule_cleanups: [] })
+    const page = await render()
+    await page.get('select').setValue('http')
+    const input = targetInput(page)
+    await input.setValue('example.com/login?next=https://idp.example')
+    await input.trigger('blur')
+
+    expect((input.element as HTMLInputElement).value).toBe('https://example.com/login?next=https://idp.example')
+  })
+
+  // The reported bug: switching http → dns kept the URL, saved happily, and then
+  // failed every probe. The target is now carried across into the new kind's shape.
+  it('converts the url to a hostname when switching from http to dns', async () => {
+    apiMock.setTargets.mockResolvedValue({ ok: true, warnings: [], rule_cleanups: [] })
+    const page = await render()
+    await page.get('select').setValue('http')
+    const input = targetInput(page)
+    await input.setValue('www.yahoo.co.jp')
+    await input.trigger('blur')
+    expect((input.element as HTMLInputElement).value).toBe('https://www.yahoo.co.jp')
+
+    await page.get('select').setValue('dns')
+
+    expect((targetInput(page).element as HTMLInputElement).value).toBe('www.yahoo.co.jp')
+    expect(page.find('.field-err').exists()).toBe(false)
+  })
+
+  // A shape the probe could never dial must be reported at the field, and must
+  // not reach the server as a monitor that fails forever.
+  it('blocks the save and flags the field when the target shape is wrong for the kind', async () => {
+    apiMock.setTargets.mockResolvedValue({ ok: true, warnings: [], rule_cleanups: [] })
+    const page = await render()
+    await page.get('select').setValue('dns')
+    // Typed by hand rather than carried over, so no conversion applies.
+    await targetInput(page).setValue('example.com/health')
+    await flushPromises()
+
+    expect(page.get('.field-err').text()).toBe(en.mform.errHostPath)
+
+    await page.get('button.btn.btn-primary').trigger('click')
+    await flushPromises()
+
+    expect(apiMock.setTargets).not.toHaveBeenCalled()
+    expect(state.push).not.toHaveBeenCalled()
+  })
+
+  // min/max on the inputs are advisory only — this form saves from a button
+  // click, so the browser never runs constraint validation.
+  it('blocks the save when a numeric param is out of the range the server accepts', async () => {
+    apiMock.setTargets.mockResolvedValue({ ok: true, warnings: [], rule_cleanups: [] })
+    const page = await render()
+    await targetInput(page).setValue('1.1.1.1') // icmp is the default kind
+    await page.get('input[placeholder="3"]').setValue('101') // packet_count, max 100
+    await flushPromises()
+
+    await page.get('button.btn.btn-primary').trigger('click')
+    await flushPromises()
+
+    expect(apiMock.setTargets).not.toHaveBeenCalled()
+    const shown = page.get('.err').text()
+    expect(shown).toContain(en.mform.packetCount) // names the offending field
+    expect(shown).toContain('100') // and the bound it broke
+  })
+
+  it('leaves an already-schemed url untouched', async () => {
+    apiMock.setTargets.mockResolvedValue({ ok: true, warnings: [], rule_cleanups: [] })
+    const page = await render()
+    await page.get('select').setValue('http')
+    const input = targetInput(page)
+    await input.setValue('http://example.com/a')
+    await input.trigger('blur')
+
+    expect((input.element as HTMLInputElement).value).toBe('http://example.com/a')
+  })
+
+  // Re-typing a monitor drops the alert conditions its new kind can never
+  // satisfy. That must never be silent: the user has to rebuild the alarm.
+  it('stays on the form and reports alert conditions dropped by a kind change', async () => {
+    const saved: ProbeTarget = {
+      id: 'mon-1', kind: 'http', name: 'Yahoo', target: 'https://www.yahoo.co.jp', params: {},
+      enabled: true, group_id: 'group-default',
+    }
+    apiMock.setTargets.mockResolvedValue({
+      ok: true,
+      warnings: [],
+      rule_cleanups: [{
+        monitor_id: 'mon-1', monitor_name: 'Yahoo', old_kind: 'dns', new_kind: 'http',
+        rule_id: 'rule-1', rule_name: 'Resolve failed', metrics: ['probe.dns.ok'], rule_deleted: true,
+      }],
+    })
+    state.route.path = '/monitoring/mon-1/edit'
+    state.route.params = { id: 'mon-1' }
+    const page = await render([{ ...saved, kind: 'dns', target: 'www.yahoo.co.jp' }])
+    await page.get('select').setValue('http')
+
+    await page.get('button.btn.btn-primary').trigger('click')
+    await flushPromises()
+
+    expect(state.push).not.toHaveBeenCalled()
+    const notice = page.get('.rule-cleanup')
+    expect(notice.text()).toContain('Resolve failed')
+    expect(notice.text()).toContain(en.mform.ruleCleanupRuleDeleted)
+  })
+
+  // The save already committed the rule deletions, so a failure in the reload that
+  // follows must not swallow the notice — re-saving would report nothing, since
+  // the conditions are gone by then.
+  it('still reports dropped conditions when the post-save reload fails', async () => {
+    apiMock.setTargets.mockResolvedValue({
+      ok: true,
+      warnings: [],
+      rule_cleanups: [{
+        monitor_id: 'mon-1', monitor_name: 'Yahoo', old_kind: 'dns', new_kind: 'http',
+        rule_id: 'rule-1', rule_name: 'Resolve failed', metrics: ['probe.dns.ok'], rule_deleted: true,
+      }],
+    })
+    state.route.path = '/monitoring/mon-1/edit'
+    state.route.params = { id: 'mon-1' }
+    const page = await render([{
+      id: 'mon-1', kind: 'dns', name: 'Yahoo', target: 'www.yahoo.co.jp', params: {},
+      enabled: true, group_id: 'group-default',
+    }])
+    await page.get('select').setValue('http')
+    // The reconcile reload after the committed save fails.
+    apiMock.listTargets.mockRejectedValue(new Error('network down'))
+
+    await page.get('button.btn.btn-primary').trigger('click')
+    await flushPromises()
+
+    expect(page.find('.rule-cleanup').exists()).toBe(true)
+    expect(page.get('.rule-cleanup').text()).toContain('Resolve failed')
+    expect(state.push).not.toHaveBeenCalled()
+  })
+
   it('stays on the form when the save reports a permission warning', async () => {
     const saved: ProbeTarget = {
       id: 'new-1', kind: 'icmp', name: '', target: '1.1.1.1', params: {},
@@ -180,6 +336,7 @@ describe('MonitorForm save navigation', () => {
     }
     apiMock.setTargets.mockResolvedValue({
       ok: true,
+      rule_cleanups: [],
       warnings: [{
         monitor_id: 'new-1', monitor_name: '1.1.1.1', status: 'permission_blocked',
         affected_agents: 1, capable_agents: 0, missing_permissions: ['icmp'],
