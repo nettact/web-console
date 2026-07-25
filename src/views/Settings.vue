@@ -6,6 +6,7 @@ import { api, ApiError, AuthError, type Quota, type Channel, type ServerInfo, ty
 import { auth } from '../auth'
 import { pushToast } from '../toasts'
 import WebhookChannelForm from '../components/WebhookChannelForm.vue'
+import ChannelAddForm from '../components/ChannelAddForm.vue'
 import DataCleanup from '../components/DataCleanup.vue'
 
 const { t } = useI18n()
@@ -22,29 +23,10 @@ const serverInfo = ref<ServerInfo | null>(null)
 const error = ref('')
 
 const channels = ref<Channel[]>([])
-// 通知渠道按类型添加：先选类型，再展示对应表单。新增类型时在此登记即可。
-// 「系统通知」仅当 server 运行于 Windows/macOS（native_notify）时才提供。
-const CHANNEL_TYPES = computed(() => {
-  const types = [
-    { value: 'webhook', label: 'Webhook' },
-    { value: 'email', label: 'Email' },
-  ]
-  if (serverInfo.value?.native_notify) {
-    types.push({ value: 'system', label: t('settings.sysNotify') })
-  }
-  return types
-})
-const addType = ref('webhook')
-// 通知渠道语言：决定该渠道推送的告警文案用中文还是英文（服务端在投递时渲染）。
-const LANGS = [
-  { value: 'zh', label: '中文' },
-  { value: 'en', label: 'English' },
-]
-const email = reactive({ name: '', host: '', port: '587', from: '', to: '', username: '', password: '', lang: 'zh' })
+// 添加渠道的表单（含类型选择）在 ChannelAddForm 中，与初始化引导共用。
 // Webhook add/edit is delegated to WebhookChannelForm; editingId marks which
 // existing channel row is expanded for editing ('' = none).
 const editingId = ref('')
-const system = reactive({ name: '', lang: 'zh' })
 
 // 控制台地址：通知里深链回本事故详情页的基础 URL（如 http://localhost:12450）。
 const consoleUrl = ref('')
@@ -356,17 +338,6 @@ async function applyChannelToAll(c: Channel) {
     applyingId.value = ''
   }
 }
-async function addEmail() {
-  if (!email.host || !email.from || !email.to) return
-  const { name, ...cfg } = email
-  await api.createChannel(name || 'Email', 'email', { ...cfg })
-  await load()
-}
-async function addSystem() {
-  await api.createChannel(system.name || 'System', 'system', { lang: system.lang })
-  system.name = ''
-  await load()
-}
 async function toggleChannel(c: Channel) {
   await api.updateChannel(c.id, { name: c.name, enabled: !c.enabled })
   await load()
@@ -620,44 +591,7 @@ onMounted(load)
       <div class="panel-body">
         <p class="hint">{{ t('settings.channelsHint') }}</p>
 
-        <div class="type-tabs" role="tablist">
-          <span class="type-label">{{ t('settings.addChannelType') }}</span>
-          <button
-            v-for="ct in CHANNEL_TYPES" :key="ct.value"
-            class="type-tab" :class="{ active: addType === ct.value }"
-            @click="addType = ct.value">
-            {{ ct.label }}
-          </button>
-        </div>
-
-        <div v-if="addType === 'webhook'" class="wh-add">
-          <WebhookChannelForm mode="add" @saved="onWebhookSaved" />
-        </div>
-
-        <div v-else-if="addType === 'email'" class="row field-row wrap">
-          <b class="ftag">Email</b>
-          <input v-model="email.name" :placeholder="t('settings.namePlaceholder')" class="tiny-name" />
-          <input v-model="email.host" :placeholder="t('settings.smtpHost')" />
-          <input v-model="email.port" :placeholder="t('settings.port')" class="tiny" />
-          <input v-model="email.from" :placeholder="t('settings.from')" />
-          <input v-model="email.to" :placeholder="t('settings.to')" />
-          <input v-model="email.username" :placeholder="t('settings.usernameOpt')" />
-          <input v-model="email.password" type="password" :placeholder="t('settings.passwordOpt')" />
-          <select v-model="email.lang" :title="t('settings.langLabel')">
-            <option v-for="l in LANGS" :key="l.value" :value="l.value">{{ l.label }}</option>
-          </select>
-          <button class="btn btn-primary" @click="addEmail">{{ t('settings.addBtn') }}</button>
-        </div>
-
-        <div v-else-if="addType === 'system'" class="row field-row">
-          <b class="ftag">{{ t('settings.sysNotify') }}</b>
-          <input v-model="system.name" :placeholder="t('settings.namePlaceholder')" class="tiny-name" />
-          <select v-model="system.lang" :title="t('settings.langLabel')">
-            <option v-for="l in LANGS" :key="l.value" :value="l.value">{{ l.label }}</option>
-          </select>
-          <span class="hint">{{ t('settings.sysNotifyHint') }}</span>
-          <button class="btn btn-primary" @click="addSystem">{{ t('settings.addBtn') }}</button>
-        </div>
+        <ChannelAddForm :native-notify="serverInfo?.native_notify === true" @added="load" />
         <p v-if="applyMsg" class="hint saved">✓ {{ applyMsg }}</p>
       </div>
       <div class="table-wrap">
@@ -862,9 +796,6 @@ onMounted(load)
 .panel-body .row {
   margin: 12px 0 0;
 }
-.wh-add {
-  margin: 12px 0 0;
-}
 .wh-edit-row td {
   background: var(--surface-2);
   padding: 12px 16px;
@@ -885,55 +816,12 @@ onMounted(load)
 .storage-note {
   margin: -8px 0 22px;
 }
-.type-tabs {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin: 4px 0 2px;
-}
-.type-label {
-  font-size: 13px;
-  color: var(--text-dim);
-  margin-right: 4px;
-}
-.type-tab {
-  padding: 6px 16px;
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--text-dim);
-  background: var(--surface-2);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-pill);
-  cursor: pointer;
-  transition: background 0.16s, color 0.16s, border-color 0.16s;
-}
-.type-tab:hover {
-  color: var(--text);
-}
-.type-tab.active {
-  color: var(--primary);
-  background: var(--primary-soft);
-  border-color: rgba(56, 189, 248, 0.35);
-}
-.field-row .ftag {
-  min-width: 62px;
-  font-size: 13px;
-  color: var(--text-dim);
-}
 input {
   min-width: 140px;
 }
 input.wide {
   min-width: 320px;
   flex: 1;
-}
-input.tiny {
-  min-width: 64px;
-  width: 64px;
-}
-input.tiny-name {
-  min-width: 96px;
-  width: 96px;
 }
 .name-in {
   min-width: 120px;

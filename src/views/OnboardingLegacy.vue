@@ -1,14 +1,14 @@
 <script setup lang="ts">
 // First-run onboarding wizard. A full-screen bare view (rendered outside the app
 // shell, like Login) that walks the user through: welcome → region select →
-// recommended targets → enroll an agent (hidden in desktop mode, which embeds the
-// agent) → done. Every step is skippable and the whole flow is interruptible:
-// progress is persisted server-side (src/onboarding.ts) so it resumes on the next
-// login, on any device, at the saved step.
+// recommended targets → notification channel → enroll an agent (hidden in desktop
+// mode, which embeds the agent) → done. Every step is skippable and the whole flow
+// is interruptible: progress is persisted server-side (src/onboarding.ts) so it
+// resumes on the next login, on any device, at the saved step.
 import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
-import { api, type MonitorGroup, type ProbeTarget, type RuleConditionInput, type ServerInfo } from '../api'
+import { api, type Channel, type MonitorGroup, type ProbeTarget, type RuleConditionInput, type ServerInfo } from '../api'
 import { onboarding, loadOnboarding, saveOnboarding } from '../onboarding'
 import {
   REGIONS,
@@ -25,17 +25,28 @@ import {
 } from '../lib/onboardingPresets'
 import { unavailablePreset } from '../lib/conditionPresets'
 import EnrollExamples from '../components/EnrollExamples.vue'
+import ChannelAddForm from '../components/ChannelAddForm.vue'
 
 const SITE = 'site_default'
-const { t } = useI18n()
+const { t, locale } = useI18n()
 const router = useRouter()
 
-type Step = 'welcome' | 'region' | 'targets' | 'enroll' | 'done'
+type Step = 'welcome' | 'region' | 'targets' | 'notify' | 'enroll' | 'done'
 
 const serverInfo = ref<ServerInfo | null>(null)
 const desktop = computed(() => serverInfo.value?.listen?.desktop === true)
+// Whether the server can raise an OS-native toast (Windows/macOS only) — gates
+// the "system" channel type.
+const nativeNotify = computed(() => serverInfo.value?.native_notify === true)
 // Enroll step is dropped in desktop mode (the desktop app embeds the agent).
-const steps = computed<Step[]>(() => ['welcome', 'region', 'targets', ...(desktop.value ? [] : ['enroll'] as Step[]), 'done'])
+const steps = computed<Step[]>(() => [
+  'welcome',
+  'region',
+  'targets',
+  'notify',
+  ...(desktop.value ? [] : ['enroll'] as Step[]),
+  'done',
+])
 
 const step = ref<Step>('welcome')
 const stepIndex = computed(() => Math.max(0, steps.value.indexOf(step.value)))
@@ -80,10 +91,11 @@ onMounted(async () => {
     selectedRegions.value = new Set(s.regions.filter(isRegionID))
     const resumeStep = steps.value.includes(s.step as Step) ? (s.step as Step) : 'welcome'
     step.value = resumeStep
-    // The targets step's data is normally loaded on entry from the region step;
-    // when we land on it directly (e.g. refresh), load it here too or it stays
-    // stuck on "Loading…" with the Next button disabled.
+    // The targets/notify steps' data is normally loaded on entry from the previous
+    // step; when we land on one directly (e.g. refresh), load it here too or it
+    // stays stuck on "Loading…" with the Next button disabled.
     if (resumeStep === 'targets') await loadTargets()
+    if (resumeStep === 'notify') await loadChannels()
   }
   ready.value = true
 })
@@ -114,6 +126,9 @@ async function goNext(): Promise<void> {
   if (!next) return
   step.value = next
   await persist(next)
+  // Reload on every entry (also when arriving via Back) so the step reflects
+  // channels added elsewhere in the meantime.
+  if (next === 'notify') await loadChannels()
 }
 
 async function goBack(): Promise<void> {
@@ -122,6 +137,8 @@ async function goBack(): Promise<void> {
   if (!prev) return
   step.value = prev
   await persist(prev)
+  if (prev === 'notify') await loadChannels()
+  if (prev === 'targets') await loadTargets()
 }
 
 async function skipAll(): Promise<void> {
@@ -328,6 +345,135 @@ async function goNextFromRegion(): Promise<void> {
   await enterTargets()
 }
 
+// ---- notify step ----
+// Alert rules are created with an empty channel list, which the server resolves as
+// "deliver to every enabled channel" — so this step only has to make sure at least
+// one channel exists; nothing needs to be wired back into the rules.
+const channels = ref<Channel[]>([])
+const channelsLoaded = ref(false)
+const notifyError = ref('')
+const notifyApplying = ref(false)
+// A channel only receives alerts while it is enabled — notification.Notify filters
+// on enabled=1 regardless of the rule's channel list — so a *disabled* system
+// channel is not a working destination and must not suppress the recommendation.
+const systemChannel = computed(() => channels.value.find((c) => c.type === 'system'))
+const hasEnabledSystem = computed(() => systemChannel.value?.enabled === true)
+// Desktop runs the server on the user's own machine, so an OS toast needs no setup
+// and is the recommended default there. Elsewhere the server is on some other box,
+// so a local toast would go unseen — the user supplies their own channel instead.
+const suggestSystem = computed(() => desktop.value && nativeNotify.value)
+// Whether to create the recommended system channel on "next" (pre-checked; the
+// user can opt out). Only meaningful while the recommendation card is showing.
+// sysTouched keeps an explicit opt-out from being undone when the step reloads
+// (e.g. coming back from the enroll step) — same pattern as stunTouched above.
+const sysWanted = ref(false)
+const sysTouched = ref(false)
+const sysLang = ref(locale.value.toLowerCase().startsWith('zh') ? 'zh' : 'en')
+const showSysCard = computed(() => suggestSystem.value && !hasEnabledSystem.value)
+
+function onSysToggle(v: boolean): void {
+  sysWanted.value = v
+  sysTouched.value = true
+}
+
+async function loadChannels(): Promise<void> {
+  notifyError.value = ''
+  let loaded: Channel[]
+  try {
+    loaded = await api.channels()
+  } catch (e) {
+    // Best-effort: a read failure must not trap the user on an optional step.
+    // Show the reason and still offer the add form, but don't pre-check the
+    // recommendation — we can't tell whether a system channel already exists.
+    notifyError.value = String((e as Error).message || e)
+    channels.value = []
+    channelsLoaded.value = true
+    sysWanted.value = false
+    sysTouched.value = true
+    return
+  }
+  channels.value = loaded
+  channelsLoaded.value = true
+  // Carry over the language of a disabled system channel we're about to re-enable,
+  // so the card shows what it will actually be set to.
+  const lang = systemChannel.value?.config.lang
+  if (lang === 'zh' || lang === 'en') sysLang.value = lang
+  if (!sysTouched.value) sysWanted.value = showSysCard.value
+}
+
+// wireChannelsToRules records the enabled channels on the outage rules this wizard
+// created, so the routing is explicit and visible in the rule editor instead of
+// relying on the server's "empty list = every enabled channel" fallback.
+//
+// Scoped by rule name to the wizard's own rules: a hand-made rule keeps whatever
+// routing its author chose. Channels are merged in rather than assigned, so a
+// re-run never drops a channel the user ticked by hand. With no enabled channel
+// there is nothing to point at, and the rules are left empty — the fallback is the
+// right behavior there.
+async function wireChannelsToRules(): Promise<void> {
+  const ids = channels.value.filter((c) => c.enabled).map((c) => c.id)
+  if (!ids.length) return
+  const name = t('setup.ruleUnavailable')
+  for (const g of await api.monitorGroups(SITE)) {
+    for (const r of await api.groupRules(g.id)) {
+      if (r.name !== name) continue
+      const merged = [...r.channel_ids, ...ids.filter((id) => !r.channel_ids.includes(id))]
+      if (merged.length === r.channel_ids.length) continue
+      await api.updateGroupRule(r.id, {
+        name: r.name,
+        op: r.op,
+        layer: r.layer,
+        severity: r.severity,
+        channel_ids: merged,
+        enabled: r.enabled,
+        conditions: r.conditions.map((c) => ({
+          target_id: c.target_id,
+          metric_kind: c.metric_kind,
+          comparator: c.comparator,
+          threshold: c.threshold,
+          fail_threshold: c.fail_threshold,
+          for_seconds: c.for_seconds,
+        })),
+      })
+    }
+  }
+}
+
+// applyNotifyAndNext turns on the recommended system notification when it is still
+// checked, points the wizard's outage rules at the resulting channels, then
+// advances. A failure keeps the user on the step with the reason; every step here
+// is idempotent, so pressing the button again resumes rather than duplicates.
+// A disabled system channel is re-enabled rather than duplicated.
+async function applyNotifyAndNext(): Promise<void> {
+  notifyApplying.value = true
+  notifyError.value = ''
+  try {
+    if (showSysCard.value && sysWanted.value) {
+      const existing = systemChannel.value
+      if (existing) {
+        await api.updateChannel(existing.id, {
+          name: existing.name,
+          enabled: true,
+          config: { lang: sysLang.value },
+        })
+      } else {
+        await api.createChannel(t('settings.sysNotify'), 'system', { lang: sysLang.value })
+      }
+      // Re-read so the new channel's id is available to wireChannelsToRules, and
+      // so coming back doesn't re-offer the card.
+      channels.value = await api.channels()
+      sysTouched.value = true
+    }
+    await wireChannelsToRules()
+  } catch (e) {
+    notifyError.value = String((e as Error).message || e)
+    return
+  } finally {
+    notifyApplying.value = false
+  }
+  await goNext()
+}
+
 // ---- enroll step ----
 const enrollToken = ref('')
 const enrollError = ref('')
@@ -465,6 +611,53 @@ async function genToken(): Promise<void> {
         </div>
       </section>
 
+      <!-- notify -->
+      <section v-else-if="step === 'notify'" class="panel step">
+        <h1>{{ t('setup.notifyTitle') }}</h1>
+        <p class="lead">{{ t('setup.notifyHint') }}</p>
+        <p v-if="notifyError" class="err">{{ notifyError }}</p>
+        <p v-if="!channelsLoaded && !notifyError" class="muted">{{ t('setup.loading') }}</p>
+
+        <!-- Desktop: the OS toast needs no configuration, so it's pre-checked. -->
+        <label v-if="showSysCard" class="sys-card" :class="{ picked: sysWanted }">
+          <input
+            type="checkbox"
+            :checked="sysWanted"
+            @change="onSysToggle(($event.target as HTMLInputElement).checked)"
+          />
+          <span class="sys-body">
+            <span class="sys-title">
+              {{ t('settings.sysNotify') }}
+              <span class="badge badge-rec">{{ t('setup.recommended') }}</span>
+            </span>
+            <span class="sys-hint">{{ t('setup.notifySystemHint') }}</span>
+          </span>
+          <select v-model="sysLang" class="sys-lang" :title="t('settings.langLabel')" @click.stop>
+            <option value="zh">中文</option>
+            <option value="en">English</option>
+          </select>
+        </label>
+
+        <div v-if="channels.length" class="ch-existing">
+          <h3>{{ t('setup.notifyExisting') }}</h3>
+          <span v-for="c in channels" :key="c.id" class="ch-chip" :class="{ off: !c.enabled }">
+            <b>{{ c.type }}</b>{{ c.name }}
+            <em v-if="!c.enabled">{{ t('setup.notifyDisabled') }}</em>
+          </span>
+        </div>
+
+        <h3 v-if="channelsLoaded" class="ch-add-title">
+          {{ showSysCard || channels.length ? t('setup.notifyAddOther') : t('setup.notifyAdd') }}
+        </h3>
+        <ChannelAddForm
+          v-if="channelsLoaded"
+          :native-notify="nativeNotify"
+          :exclude="showSysCard ? ['system'] : []"
+          @added="loadChannels"
+        />
+        <p class="muted skip-hint">{{ t('setup.notifySkipHint') }}</p>
+      </section>
+
       <!-- enroll (skipped in desktop mode) -->
       <section v-else-if="step === 'enroll'" class="panel step">
         <h1>{{ t('setup.enrollTitle') }}</h1>
@@ -503,6 +696,11 @@ async function genToken(): Promise<void> {
         <template v-else-if="step === 'targets'">
           <button class="btn btn-primary" :disabled="applying || !targetsLoaded" @click="applyAndNext">
             {{ applying ? t('setup.applying') : anySelected ? t('setup.applyNext') : t('setup.next') }}
+          </button>
+        </template>
+        <template v-else-if="step === 'notify'">
+          <button class="btn btn-primary" :disabled="notifyApplying || !channelsLoaded" @click="applyNotifyAndNext">
+            {{ notifyApplying ? t('setup.applying') : showSysCard && sysWanted ? t('setup.applyNext') : t('setup.next') }}
           </button>
         </template>
         <template v-else-if="step === 'enroll'">
@@ -776,6 +974,85 @@ async function genToken(): Promise<void> {
 .badge-exists {
   background: var(--border);
   color: var(--text-muted);
+}
+.sys-card {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 16px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  cursor: pointer;
+}
+.sys-card.picked {
+  border-color: var(--primary);
+  background: var(--surface-2, rgba(56, 189, 248, 0.06));
+}
+.sys-body {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  flex: 1;
+  min-width: 0;
+}
+.sys-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 600;
+}
+.sys-hint {
+  color: var(--text-muted);
+  font-size: 12.5px;
+}
+.sys-lang {
+  flex: 0 0 auto;
+  font-size: 12.5px;
+  padding: 3px 6px;
+}
+.ch-existing {
+  margin-top: 16px;
+}
+.ch-existing h3,
+.ch-add-title {
+  font-size: 13px;
+  color: var(--text-dim);
+  margin: 0 0 6px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.ch-add-title {
+  margin-top: 20px;
+}
+.ch-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  margin: 0 8px 8px 0;
+  padding: 5px 12px 5px 6px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill, 999px);
+  font-size: 12.5px;
+}
+.ch-chip.off {
+  opacity: 0.6;
+}
+.ch-chip em {
+  color: var(--text-muted);
+  font-size: 11px;
+  font-style: normal;
+}
+.ch-chip b {
+  padding: 1px 7px;
+  border-radius: var(--radius-pill, 999px);
+  background: var(--surface-2, rgba(148, 163, 184, 0.12));
+  color: var(--text-dim);
+  font-size: 10.5px;
+  font-weight: 650;
+  text-transform: uppercase;
+}
+.skip-hint {
+  margin-top: 16px;
 }
 .enroll-actions {
   display: flex;

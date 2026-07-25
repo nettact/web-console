@@ -648,6 +648,58 @@ const copy = computed(() => {
   background-color: #0b1727;
 }
 
+/* notify step: the shared channel form is built for the light app shell, so its
+   controls need the same dark treatment as the rest of the wizard. */
+:deep(.sys-card) {
+  border-color: rgba(148, 199, 232, 0.13);
+  background: rgba(11, 20, 33, 0.54);
+  transition: border-color 0.16s, background 0.16s;
+}
+:deep(.sys-card:hover) { border-color: rgba(125, 211, 252, 0.34); }
+:deep(.sys-card.picked) {
+  border-color: rgba(56, 189, 248, 0.72);
+  background: linear-gradient(145deg, rgba(56, 189, 248, 0.13), rgba(59, 130, 246, 0.06));
+}
+:deep(.ch-existing h3),
+:deep(.ch-add-title) { color: #8796aa; font-size: 10.5px; letter-spacing: 0.1em; }
+:deep(.ch-chip) { border-color: rgba(148, 199, 232, 0.13); }
+:deep(.ch-chip b) { color: #7dd3fc; background: rgba(56, 189, 248, 0.07); }
+
+:deep(.type-tab) {
+  color: #9aa8bd;
+  border-color: rgba(148, 199, 232, 0.16);
+  background: rgba(11, 20, 33, 0.54);
+}
+:deep(.type-tab:hover) { color: #e8eef8; }
+:deep(.type-tab.active) {
+  color: #7dd3fc;
+  border-color: rgba(56, 189, 248, 0.45);
+  background: rgba(56, 189, 248, 0.1);
+}
+
+/* Inputs/selects/textareas inside the channel form (and the system card's
+   language select) — dark surfaces with a dark native dropdown/caret. */
+:deep(.sys-lang),
+:deep(.ch-add input),
+:deep(.ch-add select),
+:deep(.ch-add textarea) {
+  color: #e8eef8;
+  border-color: rgba(148, 199, 232, 0.18);
+  background-color: var(--input-bg);
+  color-scheme: dark;
+}
+:deep(.sys-lang option),
+:deep(.ch-add option) {
+  color: #e8eef8;
+  background-color: #0b1727;
+}
+:deep(.ch-add input:focus),
+:deep(.ch-add select:focus),
+:deep(.ch-add textarea:focus) {
+  border-color: rgba(56, 189, 248, 0.55);
+  background-color: var(--input-bg-focus);
+}
+
 :deep(.wiz-nav) {
   margin-top: auto;
   padding-top: 20px;
