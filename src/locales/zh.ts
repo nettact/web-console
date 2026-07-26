@@ -1791,12 +1791,15 @@ export default {
   },
 
   onboarding: {
-    tab_powershell: 'PowerShell',
-    tab_systemd: 'systemd',
-    tab_container: '容器',
-    calloutReplace: '设置 NETTACT_AGENT_PERMISSIONS 会完全替换默认权限策略（而非在其基础上追加）。',
-    calloutTokenFile: '推荐使用令牌文件（NETTACT_AGENT_ENROLL_TOKEN_FILE）而非内联令牌，避免令牌出现在进程列表或日志中。',
-    calloutRestart: '修改环境变量后需重启 agent 才能生效。',
+    tab_windows: 'Windows',
+    tab_macos: 'macOS',
+    tab_linux: 'Linux',
+    tab_docker: 'Docker',
+    autoUpdate: '启用自动更新',
+    autoUpdateHint: '每天检查一次新版本；更新后会自动重启 Agent。',
+    calloutAdmin: '原生安装需使用管理员或 root 权限；Docker 安装需有 Docker daemon 访问权限。',
+    calloutInstall: '命令会下载安装 Agent、写入安全配置，并注册为开机自动运行的后台服务。',
+    calloutTokenHistory: '一次性令牌会出现在当前命令和 shell 历史中；注册成功后令牌立即失效。',
   },
 
   setup: {

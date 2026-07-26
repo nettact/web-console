@@ -1,69 +1,50 @@
 <script setup lang="ts">
-// Enrollment examples for bringing an agent online, one tab per deployment style
-// (PowerShell / systemd / container). The agent reads its server URL and a
-// one-time enroll token from the environment; a token FILE is preferred over an
-// inline value. All three share the same callouts: permissions are a complete
-// replacement of the default policy, prefer the token file, and a restart is
-// required to pick up config.
-import { ref, computed } from 'vue'
+// One-command Agent installers, grouped by target platform.
+import { computed, ref } from 'vue'
 
 const props = defineProps<{ serverUrl: string; token: string }>()
 
-type Tab = 'powershell' | 'systemd' | 'container'
-const tab = ref<Tab>('powershell')
+type Tab = 'windows' | 'macos' | 'linux' | 'docker'
+const tabs: Tab[] = ['windows', 'macos', 'linux', 'docker']
+const tab = ref<Tab>('windows')
+const autoUpdate = ref(true)
 
 // A real token when one was just generated, else a clear placeholder.
 const tok = computed(() => props.token || '<enrollment-token>')
 const url = computed(() => props.serverUrl || 'https://nettact.example:12450')
 
-const powershell = computed(
+function shellQuote(value: string) {
+  return `'${value.replace(/'/g, `'"'"'`)}'`
+}
+
+function powershellQuote(value: string) {
+  return `'${value.replace(/'/g, "''")}'`
+}
+
+const windows = computed(
   () =>
-    `$env:NETTACT_AGENT_SERVER_URL = "${url.value}"
-# Write the one-time token to a file (preferred over an inline value).
-# -Encoding ascii is required: the default writes UTF-16 with a BOM, which the
-# agent would read as a corrupt token.
-New-Item -ItemType Directory -Force C:\\ProgramData\\nettact | Out-Null
-Set-Content -Path C:\\ProgramData\\nettact\\enroll.token -Value "${tok.value}" -Encoding ascii -NoNewline
-$env:NETTACT_AGENT_ENROLL_TOKEN_FILE = "C:\\ProgramData\\nettact\\enroll.token"
-.\\nettact-agent.exe`,
+    `& ([scriptblock]::Create((irm https://d.nettact.org/agent/install.ps1))) -ServerUrl ${powershellQuote(url.value)} -Token ${powershellQuote(tok.value)}${autoUpdate.value ? ' -AutoUpdate' : ''}`,
 )
 
-const systemd = computed(
+const nativeUnix = computed(
   () =>
-    `# Create the config directory, then the one-time token file (root-owned, 0600):
-sudo mkdir -p /etc/nettact
-sudo install -m 0600 /dev/null /etc/nettact/enroll.token
-printf '%s' '${tok.value}' | sudo tee /etc/nettact/enroll.token >/dev/null
-
-# /etc/nettact/agent.env   (chmod 0600, root-owned)
-NETTACT_AGENT_SERVER_URL=${url.value}
-NETTACT_AGENT_ENROLL_TOKEN_FILE=/etc/nettact/enroll.token
-# Optional — replace the default policy with an explicit grant:
-# NETTACT_AGENT_PERMISSIONS=host.cpu.read,host.memory.read,probe.icmp
-
-# /etc/systemd/system/nettact-agent.service
-[Service]
-EnvironmentFile=/etc/nettact/agent.env
-ExecStart=/usr/local/bin/nettact-agent`,
+    `curl -fsSL https://d.nettact.org/agent/install.sh | sudo bash -s -- \\\n  --server-url ${shellQuote(url.value)} \\\n  --token ${shellQuote(tok.value)}${autoUpdate.value ? ' --auto-update' : ''}`,
 )
 
-const container = computed(
+const docker = computed(
   () =>
-    `docker run -d --name nettact-agent \\
-  -e NETTACT_AGENT_SERVER_URL=${url.value} \\
-  -e NETTACT_AGENT_ENROLL_TOKEN=${tok.value} \\
-  -e NETTACT_AGENT_DATA_DIR=/data \\
-  -v nettact-agent-data:/data \\
-  ghcr.io/nettact/agent:latest`,
+    `curl -fsSL https://d.nettact.org/agent/install.sh | bash -s -- --docker \\\n  --server-url ${shellQuote(url.value)} \\\n  --token ${shellQuote(tok.value)}${autoUpdate.value ? ' --auto-update' : ''}`,
 )
 
-const snippet = computed(() =>
-  tab.value === 'powershell' ? powershell.value : tab.value === 'systemd' ? systemd.value : container.value,
-)
+const snippet = computed(() => {
+  if (tab.value === 'windows') return windows.value
+  if (tab.value === 'docker') return docker.value
+  return nativeUnix.value
+})
 
 const copied = ref(false)
-function copy() {
-  navigator.clipboard?.writeText(snippet.value)
+async function copy() {
+  await navigator.clipboard?.writeText(snippet.value)
   copied.value = true
   window.setTimeout(() => (copied.value = false), 1500)
 }
@@ -73,7 +54,7 @@ function copy() {
   <div class="enroll">
     <div class="tabs" role="tablist">
       <button
-        v-for="k in (['powershell', 'systemd', 'container'] as Tab[])"
+        v-for="k in tabs"
         :key="k"
         class="tab"
         role="tab"
@@ -85,15 +66,23 @@ function copy() {
       </button>
     </div>
 
+    <label class="auto-update">
+      <input v-model="autoUpdate" type="checkbox" />
+      <span>
+        <strong>{{ $t('onboarding.autoUpdate') }}</strong>
+        <small>{{ $t('onboarding.autoUpdateHint') }}</small>
+      </span>
+    </label>
+
     <div class="code-wrap">
       <button class="copy" @click="copy">{{ copied ? $t('common.saved') : $t('agents.copy') }}</button>
       <pre><code>{{ snippet }}</code></pre>
     </div>
 
     <ul class="callouts">
-      <li>{{ $t('onboarding.calloutReplace') }}</li>
-      <li>{{ $t('onboarding.calloutTokenFile') }}</li>
-      <li>{{ $t('onboarding.calloutRestart') }}</li>
+      <li>{{ $t('onboarding.calloutAdmin') }}</li>
+      <li>{{ $t('onboarding.calloutInstall') }}</li>
+      <li>{{ $t('onboarding.calloutTokenHistory') }}</li>
     </ul>
   </div>
 </template>
@@ -106,6 +95,7 @@ function copy() {
 }
 .tabs {
   display: flex;
+  flex-wrap: wrap;
   gap: 6px;
   border-bottom: 1px solid var(--border);
 }
@@ -127,6 +117,29 @@ function copy() {
 .tab.active {
   color: var(--primary);
   border-bottom-color: var(--primary);
+}
+.auto-update {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  width: fit-content;
+  color: var(--text);
+  cursor: pointer;
+}
+.auto-update input {
+  margin-top: 3px;
+}
+.auto-update span {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.auto-update strong {
+  font-size: 13px;
+}
+.auto-update small {
+  color: var(--text-dim);
+  font-size: 12px;
 }
 .code-wrap {
   position: relative;

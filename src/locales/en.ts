@@ -1780,12 +1780,15 @@ export default {
   },
 
   onboarding: {
-    tab_powershell: 'PowerShell',
-    tab_systemd: 'systemd',
-    tab_container: 'Container',
-    calloutReplace: 'Setting NETTACT_AGENT_PERMISSIONS completely REPLACES the default permission policy (it does not add to it).',
-    calloutTokenFile: 'Prefer the token file (NETTACT_AGENT_ENROLL_TOKEN_FILE) over an inline token so it never appears in the process list or logs.',
-    calloutRestart: 'Restart the agent after changing environment variables for them to take effect.',
+    tab_windows: 'Windows',
+    tab_macos: 'macOS',
+    tab_linux: 'Linux',
+    tab_docker: 'Docker',
+    autoUpdate: 'Enable automatic updates',
+    autoUpdateHint: 'Check daily for a new version and restart the Agent after updating.',
+    calloutAdmin: 'Native installation requires administrator or root access; Docker installation requires access to the Docker daemon.',
+    calloutInstall: 'The command downloads the Agent, writes a protected configuration, and registers it as an auto-starting background service.',
+    calloutTokenHistory: 'The one-time token appears in this command and your shell history; it becomes invalid immediately after enrollment.',
   },
 
   setup: {

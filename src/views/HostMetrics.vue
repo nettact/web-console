@@ -49,12 +49,12 @@ type Collection = 'cpu' | 'disk' | 'iface' | 'wifi' | 'netio'
 // (memory/network/load/uptime) share the overview group; the agent uptime
 // counter is its own runtime group.
 const SECTION_ORDER: Record<string, number> = {
-  'host::cpu': 0,
-  'host::disk': 1,
-  'iface::all': 2,
-  'wifi::all': 3,
-  'host::network': 4,
-  'host::overview': 5,
+  'host::overview': 0,
+  'host::cpu': 1,
+  'host::disk': 2,
+  'iface::all': 3,
+  'wifi::all': 4,
+  'host::network': 5,
   'agent::runtime': 6,
 }
 function classify(s: SeriesInfo): { key: string; label: string; collection?: Collection } {
