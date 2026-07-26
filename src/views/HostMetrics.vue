@@ -16,6 +16,7 @@ import { useMetricMeta } from '../composables/useMetricMeta'
 import { useMetricCards } from '../composables/useMetricCards'
 import { FALLBACK, HIDDEN_KINDS, INFO_KINDS, familyOf, isStatusKind, kindColor, orderOf } from '../lib/metricMeta'
 import { fmtBytes } from '../lib/format'
+import { agentLabel } from '../lib/agentLabel'
 
 const { t } = useI18n()
 const route = useRoute()
@@ -441,7 +442,7 @@ onMounted(async () => {
         <label class="fg">
           <span>Agent</span>
           <select v-model="agentId" @change="onAgentChange">
-            <option v-for="a in agents" :key="a.id" :value="a.id">{{ a.hostname || a.id }} ({{ a.platform }})</option>
+            <option v-for="a in agents" :key="a.id" :value="a.id">{{ agentLabel(a) }} ({{ a.platform }})</option>
           </select>
         </label>
 

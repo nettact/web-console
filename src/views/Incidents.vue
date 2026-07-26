@@ -12,6 +12,7 @@ import { toDateLocale } from '../i18n'
 import { useIncidentLabels, severityTone } from '../composables/useIncidentLabels'
 import IncidentDetail from '../components/incident/IncidentDetail.vue'
 import { agentStatus } from '../agentStatus'
+import { agentLabel } from '../lib/agentLabel'
 
 const { t, locale } = useI18n()
 const route = useRoute()
@@ -33,7 +34,7 @@ let timer: number | undefined
 
 // Active-alert row helpers: who fired (agent hostname → short id) and why
 // (server-rendered fault text in the current language, else first evidence).
-const agentLabel = (a: Alert) => a.agent_host || a.agent_id.slice(0, 14) + '…'
+const alertAgentLabel = (a: Alert) => a.agent_host || a.agent_id.slice(0, 14) + '…'
 const alertReason = (a: Alert) =>
   (locale.value === 'en' ? a.desc_en : a.desc_zh) ||
   a.evidence[0]?.target_name ||
@@ -140,7 +141,7 @@ onBeforeUnmount(() => {
             <tr v-for="c in connAlerts" :key="c.alert.id">
               <td>
                 <router-link class="link" :to="`/agents/${encodeURIComponent(c.agent.id)}`">
-                  {{ c.agent.display_name || c.agent.hostname || c.agent.id }}
+                  {{ agentLabel(c.agent) }}
                 </router-link>
               </td>
               <td>{{ t(`agentStatus.reason.${c.alert.reason}`) }}</td>
@@ -171,7 +172,7 @@ onBeforeUnmount(() => {
             <tr v-if="!alerts.length"><td colspan="5" class="hint">{{ t('incidents.noActiveAlerts') }}</td></tr>
             <tr v-for="a in alerts" :key="a.id">
               <td>{{ a.rule_name }}</td>
-              <td :title="a.agent_id">{{ agentLabel(a) }}</td>
+              <td :title="a.agent_id">{{ alertAgentLabel(a) }}</td>
               <td>{{ alertReason(a) }}</td>
               <td><span class="badge neutral">{{ layerLabel(a.layer) }}</span></td>
               <td class="hint">{{ fmtTime(a.started_at) }}</td>

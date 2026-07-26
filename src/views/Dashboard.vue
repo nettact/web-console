@@ -30,6 +30,7 @@ import {
   type DashboardLayoutPresetID,
 } from '../lib/dashboardLayout'
 import { fmtBps, fmtBytes } from '../lib/format'
+import { agentLabel } from '../lib/agentLabel'
 import { natCodeLabel, natTone } from '../lib/metricMeta'
 import { PROBE_TONE } from '../lib/targetStatus'
 import { targetStatus } from '../targetStatus'
@@ -799,7 +800,7 @@ onBeforeUnmount(() => {
           <span>{{ t('dashboard.viewingAgent') }}</span>
           <select v-model="selected" @change="changeAgent">
             <option v-for="agent in agents" :key="agent.id" :value="agent.id">
-              {{ agent.display_name || agent.hostname || agent.id }}
+              {{ agentLabel(agent) }}
             </option>
           </select>
         </label>
@@ -904,7 +905,7 @@ onBeforeUnmount(() => {
           </div>
           <div>
             <div class="agent-line">
-              <h3>{{ currentAgent?.display_name || currentAgent?.hostname || currentAgent?.id }}</h3>
+              <h3>{{ currentAgent ? agentLabel(currentAgent) : '' }}</h3>
               <span class="status-chip" :class="currentAgent?.status === 'online' ? 'online' : 'offline'">
                 <i></i>{{ currentAgent?.status === 'online' ? t('dashboard.statusOnline') : t('dashboard.statusOffline') }}
               </span>

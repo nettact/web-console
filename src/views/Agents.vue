@@ -4,6 +4,7 @@ import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
 import { api, type AgentGroup, type AgentStatusRow, type EnrollmentToken } from '../api'
 import { toDateLocale } from '../i18n'
+import { agentLabel } from '../lib/agentLabel'
 import { agentStatus, refreshAgentStatus } from '../agentStatus'
 import {
   countStatuses,
@@ -98,9 +99,6 @@ const filtersActive = computed(() => !!search.value.trim() || statusFilter.value
 
 // ---- per-row helpers ----
 const fmtDateTime = (s: string | null) => (s ? new Date(s).toLocaleString(toDateLocale(locale.value)) : '—')
-function agentName(r: AgentStatusRow): string {
-  return r.display_name || r.hostname || r.id
-}
 // The reason text shown under the status badge.
 function reasonText(r: AgentStatusRow): string {
   if (r.status === 'offline' && r.connectivity_alert) {
@@ -131,7 +129,7 @@ async function toggleMute(r: AgentStatusRow) {
   }
 }
 async function removeAgent(r: AgentStatusRow) {
-  if (!confirm(t('agents.confirmDelete', { name: agentName(r) }))) return
+  if (!confirm(t('agents.confirmDelete', { name: agentLabel(r) }))) return
   busy.value = true
   error.value = ''
   try {
@@ -159,9 +157,9 @@ async function loadTokens() {
     error.value = String((e as Error).message || e)
   }
 }
-function agentLabel(id: string): string {
+function groupAgentLabel(id: string): string {
   const a = agentStatus.agents.find((x) => x.id === id)
-  return a ? agentName(a) : id
+  return a ? agentLabel(a) : id
 }
 function toggleMember(g: AgentGroup, agentId: string) {
   const i = g.agent_ids.indexOf(agentId)
@@ -365,7 +363,7 @@ onBeforeUnmount(() => {
               <div class="identity-cell">
                 <span class="device-orbit"><OsIcon :platform="r.platform" :size="21" /></span>
                 <div class="name-lines">
-                  <strong>{{ agentName(r) }}</strong>
+                  <strong>{{ agentLabel(r) }}</strong>
                   <span class="mono">{{ r.hostname || r.id }}</span>
                 </div>
               </div>
@@ -432,7 +430,7 @@ onBeforeUnmount(() => {
             <span v-if="!agentStatus.agents.length" class="hint tiny">{{ t('agents.noAgents') }}</span>
             <label v-for="a in agentStatus.agents" :key="a.id" class="member-chip">
               <input type="checkbox" :checked="g.agent_ids.includes(a.id)" @change="toggleMember(g, a.id)" />
-              <span>{{ agentLabel(a.id) }}</span>
+              <span>{{ groupAgentLabel(a.id) }}</span>
             </label>
           </div>
         </div>

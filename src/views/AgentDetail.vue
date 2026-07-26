@@ -11,6 +11,7 @@ import {
   type StatusEvent,
 } from '../api'
 import { toDateLocale } from '../i18n'
+import { agentLabel } from '../lib/agentLabel'
 import { agentStatus, agentIndex, refreshAgentStatus } from '../agentStatus'
 import { targetStatus } from '../targetStatus'
 import { blockedCategory } from '../composables/usePermissionMeta'
@@ -68,7 +69,7 @@ function openRemediation(permId: string) {
 
 const fmt = (s: string | null | undefined) => (s ? new Date(s).toLocaleString(toDateLocale(locale.value)) : '—')
 function agentName(): string {
-  return agent.value?.display_name || agent.value?.hostname || row.value?.display_name || row.value?.hostname || id.value
+  return agentLabel(agent.value || row.value || { id: id.value })
 }
 
 async function loadAll() {

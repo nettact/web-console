@@ -1,4 +1,5 @@
 import type { AgentOverallStatus, AgentStatusRow } from '../api'
+import { agentLabel } from './agentLabel'
 
 // Pure filter/search/sort/count helpers for the Agent status list (AGENT-001),
 // mirroring targetStatusPage.ts. No i18n or Vue here — the view resolves labels
@@ -57,15 +58,11 @@ export function matchesAgentSearch(row: AgentStatusRow, rawSearch: string): bool
   return values.some((v) => v.toLocaleLowerCase().includes(search))
 }
 
-function agentName(row: AgentStatusRow): string {
-  return row.display_name || row.hostname || row.id
-}
-
 // Stable sort: status rank → name (display→hostname) → id tiebreak.
 export function sortAgents(rows: AgentStatusRow[]): AgentStatusRow[] {
   return [...rows].sort((a, b) =>
     statusRank(a.status) - statusRank(b.status)
-    || agentName(a).localeCompare(agentName(b))
+    || agentLabel(a).localeCompare(agentLabel(b))
     || a.id.localeCompare(b.id),
   )
 }

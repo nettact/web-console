@@ -6,7 +6,7 @@
 // (historical), overlaying one line/row per agent.
 import { ref, computed, watch, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { api, type Agent, type Alert, type KindSummary, type Sample, type TargetAgentStatusRow } from '../../api'
+import { api, type Alert, type KindSummary, type Sample, type TargetAgentStatusRow } from '../../api'
 import MetricChart from '../MetricChart.vue'
 import StatusBand from '../StatusBand.vue'
 import MetricStatCards from '../MetricStatCards.vue'
@@ -27,6 +27,7 @@ import { bandSeriesFor, type Prober } from '../../lib/targetGroups'
 import { availability, toPoints } from '../../lib/timeline'
 import { targetIndex } from '../../targetStatus'
 import { fmtByUnit, isByteUnit } from '../../lib/format'
+import { agentLabel } from '../../lib/agentLabel'
 
 const props = defineProps<{
   family: string
@@ -54,7 +55,6 @@ let dataSeq = 0
 let alertSeq = 0
 
 const skey = (agentId: string, kind: string) => `${agentId}::${kind}`
-const agentName = (a: Agent) => a.display_name || a.hostname || a.id
 
 // Authoritative current status for this target across agents (batch).
 const storeRow = computed(() => (props.monitorId ? targetIndex.value.get(props.monitorId) : undefined))
@@ -113,7 +113,7 @@ const samplesFor = (agentId: string, kind: string) => samples.value[skey(agentId
 function chartMetrics(kind: string) {
   return props.probers.map((p, i) => ({
     key: p.agent.id,
-    label: agentName(p.agent),
+    label: agentLabel(p.agent),
     kind,
     unit: kindUnit.value.get(kind) || '',
     color: FALLBACK[i % FALLBACK.length],
@@ -138,7 +138,7 @@ function statusRows(kind: string) {
     const pts = toPoints(raw).map((x) => ({ t: x.t, v: toUp(x.v) }))
     const avail = pts.length ? availability(pts, now) * 100 : null
     return {
-      agent: agentName(p.agent),
+      agent: agentLabel(p.agent),
       id: p.agent.id,
       samples: raw,
       toUp,
@@ -155,7 +155,7 @@ function agentCards(kind: string): { agent: string; card: Card }[] {
   return props.probers
     .filter((p) => p.series.some((s) => s.kind === kind))
     .map((p) => ({
-      agent: agentName(p.agent),
+      agent: agentLabel(p.agent),
       card: CODE_KINDS.has(kind)
         ? buildCodeCard({ label: metricLabel(kind), color: kindColor(kind), kind }, summaries.value[skey(p.agent.id, kind)])
         : buildCard({ label: metricLabel(kind), color: kindColor(kind), kind, unit: kindUnit.value.get(kind) || 'code', samples: samplesFor(p.agent.id, kind) }),
@@ -185,7 +185,7 @@ const summary = computed<SummaryRow[]>(() => {
     ? storeRow.value?.agents.filter((agent) => allowedAgents.has(agent.agent_id))
     : storeRow.value?.agents
   const rows = currentAgents?.map((a) => ({ id: a.agent_id, agent: a.agent_name || a.agent_id, online: a.agent_online, row: a as TargetAgentStatusRow | undefined }))
-    ?? props.probers.map((p) => ({ id: p.agent.id, agent: agentName(p.agent), online: p.agent.status === 'online', row: undefined }))
+    ?? props.probers.map((p) => ({ id: p.agent.id, agent: agentLabel(p.agent), online: p.agent.status === 'online', row: undefined }))
   return rows.map((base) => {
     let avail: number | null = null
     let outages = 0

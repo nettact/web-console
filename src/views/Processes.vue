@@ -12,6 +12,7 @@ import {
   type Remediation,
 } from '../api'
 import { fmtBytes } from '../lib/format'
+import { agentLabel } from '../lib/agentLabel'
 import { quickAddQuery } from '../lib/netaddr'
 import {
   hasProcessScopes,
@@ -382,7 +383,7 @@ onBeforeUnmount(stopPoll)
         <label>Agent</label>
         <select v-model="selected" @change="onAgentChange">
           <option v-for="a in agents" :key="a.id" :value="a.id">
-            {{ a.hostname || a.id }} ({{ a.platform }}) — {{ a.status }}
+            {{ agentLabel(a) }} ({{ a.platform }}) — {{ a.status }}
           </option>
         </select>
         <button class="btn" :disabled="loading" @click="requestSnapshot">
