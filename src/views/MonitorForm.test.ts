@@ -172,6 +172,29 @@ describe('MonitorForm select defaults', () => {
   })
 })
 
+describe('MonitorForm section order', () => {
+  it.each([
+    ['icmp', '1.1.1.1'],
+    ['http', 'https://example.com'],
+    ['tcp', 'example.com'],
+    ['dns', 'example.com'],
+    ['nat', 'stun.example.com'],
+    ['gateway', 'gateway'],
+    ['host', 'host'],
+  ])('places the monitor group last when editing a %s target', async (kind, target) => {
+    state.route.path = '/monitoring/t1/edit'
+    state.route.params = { id: 't1' }
+    const existing: ProbeTarget = {
+      id: 't1', kind, name: 'Existing', target, params: {},
+      enabled: true, group_id: 'group-default',
+    }
+    const page = await render([existing])
+    const headings = page.findAll('section.panel h3').map((heading) => heading.text())
+
+    expect(headings[headings.length - 1]).toBe('Monitor group')
+  })
+})
+
 describe('MonitorForm save navigation', () => {
   it('returns to the monitor list after a clean save', async () => {
     apiMock.setTargets.mockResolvedValue({ ok: true, warnings: [] })
@@ -329,15 +352,16 @@ describe('MonitorForm detection sensitivity', () => {
     expect(apiMock.deleteNotificationPolicy).not.toHaveBeenCalled()
   })
 
-  it('is the final settings panel for every supported monitor type', async () => {
+  it('places detection sensitivity immediately before the final monitor group panel', async () => {
     const page = await render()
     for (const kind of ['icmp', 'gateway', 'http', 'tcp', 'dns', 'nat']) {
       await page.get('select').setValue(kind)
       await flushPromises()
 
       const panels = page.findAll('section.panel')
-      expect(panels.length).toBeGreaterThan(0)
-      expect(panels[panels.length - 1].find('.det-summary').exists()).toBe(true)
+      expect(panels.length).toBeGreaterThan(1)
+      expect(panels[panels.length - 2].find('.det-summary').exists()).toBe(true)
+      expect(panels[panels.length - 1].get('h3').text()).toBe('Monitor group')
     }
   })
 

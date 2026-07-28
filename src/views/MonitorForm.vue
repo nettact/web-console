@@ -536,28 +536,6 @@ onMounted(loadAll)
         </div>
       </section>
 
-      <!-- Monitor group: a target belongs to exactly one. The group owns the Agent
-           execution scope and incident-merge policy shared by all its targets. -->
-      <section class="panel">
-        <div class="panel-head"><h3>{{ tr('mform.secGroup') }}</h3></div>
-        <p class="hint panel-hint">{{ tr('mform.groupHint') }}</p>
-        <div class="panel-body">
-          <label class="field group-field">
-            <span>{{ tr('mform.monitorGroup') }}</span>
-            <select v-model="form.group_id">
-              <option value="" disabled>{{ tr('mform.groupPick') }}</option>
-              <option v-for="g in groups" :key="g.id" :value="g.id">
-                {{ g.name }}<template v-if="g.is_default"> · {{ tr('monitoring.defaultTag') }}</template>
-              </option>
-            </select>
-          </label>
-          <p class="hint tiny">
-            {{ tr('mform.groupManageHint') }}
-            <router-link to="/monitoring/groups/new">{{ tr('mform.groupCreate') }}</router-link>
-          </p>
-        </div>
-      </section>
-
       <!-- Advanced / per-type -->
       <section class="panel" v-if="form.kind === 'icmp' || form.kind === 'gateway' || form.kind === 'dns' || form.kind === 'tcp'">
         <div class="panel-head"><h3>{{ tr('mform.secAdvanced') }}</h3></div>
@@ -645,7 +623,7 @@ onMounted(loadAll)
         </div>
       </section>
 
-      <!-- Detection sensitivity is the final settings panel for every supported
+      <!-- Detection sensitivity is available for every supported
            probe type. Fault recording itself is not configurable: only the
            confirmation and recovery thresholds can be tuned. -->
       <section class="panel" v-if="showDetection">
@@ -683,6 +661,29 @@ onMounted(loadAll)
             </div>
           </div>
         </details>
+      </section>
+
+      <!-- Monitor group is the final settings panel for every target type. A
+           target belongs to exactly one group, which owns the Agent execution
+           scope and incident-merge policy shared by all its targets. -->
+      <section class="panel">
+        <div class="panel-head"><h3>{{ tr('mform.secGroup') }}</h3></div>
+        <p class="hint panel-hint">{{ tr('mform.groupHint') }}</p>
+        <div class="panel-body">
+          <label class="field group-field">
+            <span>{{ tr('mform.monitorGroup') }}</span>
+            <select v-model="form.group_id">
+              <option value="" disabled>{{ tr('mform.groupPick') }}</option>
+              <option v-for="g in groups" :key="g.id" :value="g.id">
+                {{ g.name }}<template v-if="g.is_default"> · {{ tr('monitoring.defaultTag') }}</template>
+              </option>
+            </select>
+          </label>
+          <p class="hint tiny">
+            {{ tr('mform.groupManageHint') }}
+            <router-link to="/monitoring/groups/new">{{ tr('mform.groupCreate') }}</router-link>
+          </p>
+        </div>
       </section>
 
       <div class="form-foot">
