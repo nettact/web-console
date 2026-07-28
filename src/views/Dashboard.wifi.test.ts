@@ -18,7 +18,7 @@ const apiMock = vi.hoisted(() => ({
   listDevices: vi.fn(),
   agentStatusHistory: vi.fn(),
   agentInterfaces: vi.fn(),
-  alerts: vi.fn(),
+  faultSignals: vi.fn(),
   agentMonitorStatus: vi.fn(),
   incidents: vi.fn(),
 }))
@@ -75,7 +75,7 @@ async function render(
   apiMock.latest.mockResolvedValue(latest)
   apiMock.listDevices.mockResolvedValue([])
   apiMock.agentStatusHistory.mockResolvedValue(history)
-  apiMock.alerts.mockResolvedValue([])
+  apiMock.faultSignals.mockResolvedValue([])
   apiMock.agentMonitorStatus.mockResolvedValue([])
   apiMock.incidents.mockResolvedValue({ items: [], total: 0, page: 1, page_size: 1, summary: { open: 0, opened_24h: 0, resolved_24h: 0, top_layer: '' } })
   apiMock.dashboardLayout.mockResolvedValue(layout)
@@ -338,10 +338,16 @@ describe('Dashboard network adapter list', () => {
   })
 
   it('renders the action, freshness, wireless, trend, and incident widgets', async () => {
-    apiMock.alerts.mockResolvedValueOnce([{
-      id: 'alert-1', rule_name: 'Public loss', agent_id: 'agent-1', agent_host: 'host-1',
-      target: '1.1.1.1', layer: 'internet', severity: 'critical', state: 'firing', value: 100,
-      started_at: '2026-07-16T01:00:00Z', desc_en: 'Packet loss is critical',
+    apiMock.faultSignals.mockResolvedValueOnce([{
+      id: 'sig-1', title: 'ICMP probe unreachable', agent_id: 'agent-1', agent_name: 'host-1',
+      target_id: 'icmp-1', target_name: 'Public anchor', target_addr: '1.1.1.1',
+      detector_key: 'availability', probe_kind: 'icmp', layer: 'internet', severity: 'critical',
+      state: 'firing', metric_kind: 'probe.icmp.loss_pct', comparator: 'gte', value: 100,
+      threshold: 100, reason_code: 3, reason_detail: 'no route to host',
+      observed_at: '2026-07-16T01:00:00Z', confirmed_at: '2026-07-16T01:00:30Z',
+      resolved_at: null, incident_id: 'inc-1', currently_abnormal: true,
+      fail_threshold: 3, recover_threshold: 2, group_name: '', site_id: 'site_default',
+      desc_en: 'Packet loss is critical',
     }])
     apiMock.agentMonitorStatus.mockResolvedValueOnce([
       {
@@ -390,7 +396,7 @@ describe('Dashboard network adapter list', () => {
       ...history('host.net.tx_bps', 1024, 'bps'),
     ])
 
-    expect(wrapper!.get('.alert-summary-card').text()).toContain('Public loss')
+    expect(wrapper!.get('.alert-summary-card').text()).toContain('ICMP probe unreachable')
     expect(wrapper!.get('[data-layout-card="monitor-health"]').text()).toContain('Probe failed')
     expect(wrapper!.get('[data-layout-card="monitor-health"]').text()).toContain('Permission / target blocked')
     expect(wrapper!.get('[data-layout-card="network-quality"]').text()).toContain('42.0 ms')

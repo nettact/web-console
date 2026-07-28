@@ -4,8 +4,8 @@ export type StatusBucket = 'abnormal' | 'attention' | 'healthy' | 'inactive'
 export type StatusFilter = 'all' | StatusBucket | DisplayState
 
 export const DISPLAY_STATE_ORDER: DisplayState[] = [
-  'alerting',
-  'breaching',
+  'faulted',
+  'confirming',
   'partial_failure',
   'probe_failed',
   'blocked',

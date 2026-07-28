@@ -14,12 +14,11 @@ const agent = (id: string, name = id): TargetAgentStatusRow => ({
   agent_online: true,
   execution_state: 'collecting',
   probe_state: 'healthy',
-  rule_state: 'normal',
+  fault_state: 'normal',
   reason_code: 'ok',
   missing_permissions: [],
   matched_selector: 'all',
   block_reason: '',
-  active_conditions: [],
 })
 
 const target = (id: string, groupID: string, state: DisplayState, agents = [agent('agent-a')]): TargetStatusRow => ({
@@ -32,9 +31,7 @@ const target = (id: string, groupID: string, state: DisplayState, agents = [agen
   display_state: state,
   applicable_agents: agents.length,
   affected_agents: state === 'healthy' || state === 'disabled' ? 0 : agents.length,
-  active_condition_count: 0,
-  rule_ids: [],
-  alert_ids: [],
+  signal_ids: [],
   incident_ids: [],
   agents,
 })
@@ -54,14 +51,14 @@ const filters = { search: '', groupId: '', status: 'all' as const, agentId: '' }
 
 describe('target-status page model', () => {
   it('uses explicit product buckets without treating disabled or unassigned as healthy', () => {
-    expect(statusBucket('alerting')).toBe('abnormal')
+    expect(statusBucket('faulted')).toBe('abnormal')
     expect(statusBucket('stale')).toBe('attention')
     expect(statusBucket('unassigned')).toBe('attention')
     expect(statusBucket('healthy')).toBe('healthy')
     expect(statusBucket('disabled')).toBe('inactive')
 
     const counts = countStatuses([
-      target('a', 'g', 'alerting'),
+      target('a', 'g', 'faulted'),
       target('b', 'g', 'stale'),
       target('c', 'g', 'healthy'),
       target('d', 'g', 'disabled'),
@@ -72,7 +69,7 @@ describe('target-status page model', () => {
   it('keeps configured empty groups, groups each target exactly once, and surfaces unknown group ids', () => {
     const views = buildStatusGroups(
       [group('healthy', 'Healthy'), group('empty', 'Empty'), group('bad', 'Bad', { is_default: true })],
-      [target('ok', 'healthy', 'healthy'), target('alarm', 'bad', 'alerting'), target('orphan', 'missing', 'no_data')],
+      [target('ok', 'healthy', 'healthy'), target('alarm', 'bad', 'faulted'), target('orphan', 'missing', 'no_data')],
       [],
       filters,
     )
@@ -86,7 +83,7 @@ describe('target-status page model', () => {
   it('filters by full state, summary bucket, group, search text, and stable Agent id', () => {
     const officeAgentGroups: AgentGroup[] = [{ id: 'ag-office', site_id: 'site_default', name: 'Office', agent_ids: ['agent-b'], created_at: '2026-07-18T00:00:00Z' }]
     const rows = [
-      target('dns-alert', 'core', 'alerting', [agent('agent-a', 'Taipei NUC')]),
+      target('dns-alert', 'core', 'faulted', [agent('agent-a', 'Taipei NUC')]),
       target('icmp-ok', 'core', 'healthy', [agent('agent-b', 'Office Mini')]),
       target('disabled', 'service', 'disabled', []),
     ]

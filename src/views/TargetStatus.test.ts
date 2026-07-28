@@ -17,14 +17,13 @@ const statusRow = {
   kind: 'dns',
   target: '1.1.1.1',
   enabled: true,
-  display_state: 'alerting' as const,
+  display_state: 'faulted' as const,
   applicable_agents: 1,
   affected_agents: 1,
   worst_severity: 'critical' as const,
   last_observed_at: '2026-07-18T05:00:00Z',
-  active_condition_count: 1,
-  rule_ids: ['rule-1'],
-  alert_ids: ['alert-1'],
+  availability_24h: 0.92,
+  signal_ids: ['signal-1'],
   incident_ids: ['incident-1'],
   agents: [{
     agent_id: 'agent-1',
@@ -32,8 +31,8 @@ const statusRow = {
     agent_online: true,
     execution_state: 'collecting' as const,
     probe_state: 'failed' as const,
-    rule_state: 'alerting' as const,
-    reason_code: 'alert_firing' as const,
+    fault_state: 'faulted' as const,
+    reason_code: 'fault_confirmed' as const,
     missing_permissions: [],
     matched_selector: 'all-agents',
     block_reason: '',
@@ -41,7 +40,15 @@ const statusRow = {
     last_metric_kind: 'probe.dns.duration_ms',
     last_unit: 'ms',
     last_observed_at: '2026-07-18T05:00:00Z',
-    active_conditions: [],
+    availability_24h: 0.92,
+    fault: {
+      signal_id: 'signal-1',
+      incident_id: 'incident-1',
+      severity: 'critical',
+      title: '「Public DNS」的 DNS 探测失败',
+      observed_at: '2026-07-18T04:55:00Z',
+      confirmed_at: '2026-07-18T04:58:00Z',
+    },
   }],
 }
 
@@ -92,6 +99,8 @@ describe('group-centric target-status page', () => {
     expect(wrapper.text()).toContain('Public DNS')
     expect(wrapper.text()).toContain('Taipei NUC')
     expect(wrapper.text()).toContain('Empty Group')
+    // 24h availability is a server ratio rendered as a percentage, never re-derived.
+    expect(wrapper.get('.availability-cell').text()).toBe('92%')
     expect(router.currentRoute.value.query).toEqual({ target: 'target-1', agent: 'agent-1' })
     expect(wrapper.findAll('.group-head[role="button"]')[0].attributes('aria-expanded')).toBe('true')
     const targetSummary = wrapper.get('.target-summary[role="button"]')

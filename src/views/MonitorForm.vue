@@ -2,13 +2,24 @@
 import { ref, reactive, computed, onMounted, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
-import { api, type ProbeTarget, type ProbeParams, type MonitorGroup, type RuleCleanup, type SaveWarning } from '../api'
+import {
+  api,
+  type Channel,
+  type DetectionProfile,
+  type DetectionSettingsInput,
+  type MonitorGroup,
+  type NotificationPolicy,
+  type NotificationPolicyInput,
+  type ProbeParams,
+  type ProbeTarget,
+  type SaveWarning,
+} from '../api'
 import ComboInput from '../components/ComboInput.vue'
-import { useMetricMeta } from '../composables/useMetricMeta'
+import PolicyFields from '../components/PolicyFields.vue'
+import { pushToast } from '../toasts'
 import { LEADING_SCHEME, paramsRangeError, retargetForKind, targetError } from '../lib/targetValidation'
 
 const { t: tr } = useI18n()
-const { metricLabel } = useMetricMeta()
 const route = useRoute()
 const router = useRouter()
 
@@ -65,11 +76,12 @@ const busy = ref(false)
 // Save warnings for THIS monitor: in-scope agents that cannot run it under their
 // current permission policy (per-agent, from the set-targets response).
 const saveWarning = ref<SaveWarning | null>(null)
-// Alert conditions this save dropped because the monitor's kind changed. Until
-// they are reconfigured the monitor probes something no alarm watches, so this is
-// shown as prominently as the permission warning above.
-const ruleCleanups = ref<RuleCleanup[]>([])
 const notFound = ref(false)
+// Whether the site has any notification channel at all. Empty is legal — faults
+// are still recorded — but the save confirmation says so instead of leaving the
+// user to assume something was sent.
+const hasChannels = ref(true)
+const channels = ref<Channel[]>([])
 // Guards a destructive save: setTargets is a full reconcile, so saving before the
 // existing target list has loaded would delete every other monitor.
 const loaded = ref(false)
@@ -101,6 +113,200 @@ function applyKindDefaults() {
     const unset = params[key] === undefined || params[key] === null || (params[key] === '' && value !== '')
     if (unset) params[key] = value
   }
+}
+
+// ---- built-in detection sensitivity ----
+// Every enabled target gets an availability detector; there is no off switch by
+// design. The only tunables are how many consecutive rounds confirm a fault and
+// how many confirm the recovery, plus the loss threshold for ICMP/gateway.
+// host targets carry no such detector, so the whole block is hidden for them.
+const DETECTION_PROFILES: DetectionProfile[] = ['balanced', 'fast', 'stable', 'custom']
+const PROFILE_ROUNDS: Record<string, { fail: number; recover: number }> = {
+  balanced: { fail: 3, recover: 2 },
+  fast: { fail: 2, recover: 2 },
+  stable: { fail: 5, recover: 3 },
+}
+const detection = reactive<DetectionSettingsInput>({
+  profile: 'balanced',
+  fail_rounds: 3,
+  recover_rounds: 2,
+  icmp_loss_pct: 100,
+})
+// Server state as last seen, so an untouched form never PATCHes (and never bumps
+// the settings revision) just because the target itself was saved.
+const detectionBaseline = ref<DetectionSettingsInput>({ ...detection })
+const detectionOpen = ref(false)
+const showDetection = computed(() => form.kind !== 'host')
+const showLossThreshold = computed(() => form.kind === 'icmp' || form.kind === 'gateway')
+
+function setProfile(p: DetectionProfile) {
+  detection.profile = p
+  const preset = PROFILE_ROUNDS[p]
+  if (preset) {
+    detection.fail_rounds = preset.fail
+    detection.recover_rounds = preset.recover
+  }
+}
+function detectionChanged(): boolean {
+  const b = detectionBaseline.value
+  return (
+    b.profile !== detection.profile ||
+    b.fail_rounds !== detection.fail_rounds ||
+    b.recover_rounds !== detection.recover_rounds ||
+    b.icmp_loss_pct !== detection.icmp_loss_pct
+  )
+}
+// The number inputs' min/max are advisory (this form saves from a button click),
+// so the bounds are enforced here too.
+function detectionRangeError(): string {
+  if (!showDetection.value) return ''
+  const ok = (v: number, min: number, max: number) => Number.isInteger(v) && v >= min && v <= max
+  if (
+    detection.profile === 'custom' &&
+    (!ok(detection.fail_rounds, 1, 20) || !ok(detection.recover_rounds, 1, 20))
+  ) {
+    return tr('detection.errRounds')
+  }
+  if (showLossThreshold.value && !ok(detection.icmp_loss_pct, 1, 100)) return tr('detection.errLoss')
+  return ''
+}
+async function loadDetection(id: string) {
+  try {
+    const d = await api.detectionSettings(id)
+    detection.profile = d.profile
+    detection.fail_rounds = d.fail_rounds
+    detection.recover_rounds = d.recover_rounds
+    detection.icmp_loss_pct = d.icmp_loss_pct
+  } catch {
+    // Not materialized yet — the defaults above are the ones the server applies.
+  }
+  detectionBaseline.value = { ...detection }
+}
+// Runs only after the target itself is saved, because the settings hang off its
+// id (a create has no id until then).
+async function saveDetection(): Promise<boolean> {
+  if (!showDetection.value || !form.id || !detectionChanged()) return true
+  try {
+    const d = await api.updateDetectionSettings(form.id, {
+      profile: detection.profile,
+      fail_rounds: detection.fail_rounds,
+      recover_rounds: detection.recover_rounds,
+      icmp_loss_pct: detection.icmp_loss_pct,
+    })
+    detection.profile = d.profile
+    detection.fail_rounds = d.fail_rounds
+    detection.recover_rounds = d.recover_rounds
+    detection.icmp_loss_pct = d.icmp_loss_pct
+    detectionBaseline.value = { ...detection }
+    return true
+  } catch (e) {
+    error.value = tr('mform.detectionSaveErr', { err: String((e as Error).message || e) })
+    return false
+  }
+}
+
+// ---- notification policy (target scope) ----
+// Detection is unconditional; this only decides whether/when/where a recorded
+// fault is announced. A target either inherits — from its group, or failing that
+// the site default — or owns exactly one override. Precedence is single-hit and
+// never stacks, so an override replaces the inherited policy rather than adding
+// to it. Host targets have no built-in detector, so they can never raise a fault
+// and are offered no policy.
+const policies = ref<NotificationPolicy[]>([])
+const targetPolicy = ref<NotificationPolicy | null>(null)
+const policyMode = ref<'inherit' | 'override'>('inherit')
+const showPolicy = computed(() => form.kind !== 'host')
+
+// What governs this target when it has no override of its own: its group's
+// policy if that group has an enabled one, otherwise the site default. This is
+// the server's precedence with the target level removed, which is exactly what
+// "inherit" means here — and because it keys off the group currently selected in
+// the form, switching groups updates the preview before anything is saved.
+const inheritedPolicy = computed<NotificationPolicy | null>(() => {
+  const grp = policies.value.find(
+    (p) => p.scope_kind === 'group' && p.scope_id === form.group_id && p.enabled,
+  )
+  return grp ?? policies.value.find((p) => p.is_default) ?? null
+})
+const inheritedFrom = computed(() => {
+  const p = inheritedPolicy.value
+  if (!p) return 'none'
+  return p.is_default ? 'site' : 'group'
+})
+// Declared after inheritedPolicy: the seed reads it.
+const policyDraft = ref<NotificationPolicyInput>(seedPolicyDraft())
+
+function seedPolicyDraft(): NotificationPolicyInput {
+  // A fresh override starts as a copy of whatever governs this target today, so
+  // switching to "override" changes nothing until a field is actually edited.
+  const base = targetPolicy.value ?? inheritedPolicy.value
+  return {
+    name:
+      targetPolicy.value?.name ||
+      tr('mform.policyDraftName', { name: form.name || form.target || tr('mform.policyTitle') }),
+    scope_kind: 'target',
+    scope_id: form.id || '',
+    enabled: base?.enabled ?? true,
+    min_severity: base?.min_severity || 'warn',
+    warn_delay_sec: base?.warn_delay_sec ?? 0,
+    critical_delay_sec: base?.critical_delay_sec ?? 0,
+    notify_recovery: base?.notify_recovery ?? true,
+    channel_ids: [...(base?.channel_ids ?? [])],
+  }
+}
+
+async function loadPolicies() {
+  try {
+    policies.value = await api.notificationPolicies(SITE)
+  } catch {
+    // Policy configuration is context, not a prerequisite: failing to read it
+    // must never block editing the monitor itself.
+    policies.value = []
+  }
+  targetPolicy.value = form.id
+    ? (policies.value.find((p) => p.scope_kind === 'target' && p.scope_id === form.id) ?? null)
+    : null
+  policyMode.value = targetPolicy.value ? 'override' : 'inherit'
+  policyDraft.value = seedPolicyDraft()
+}
+
+// Saved after the target, because a target-scoped policy is keyed by the target's
+// id and a newly created monitor has none until the server assigns one.
+async function savePolicy(): Promise<boolean> {
+  if (!showPolicy.value || !form.id) return true
+  try {
+    if (policyMode.value === 'override') {
+      const body: NotificationPolicyInput = {
+        ...policyDraft.value,
+        scope_kind: 'target',
+        scope_id: form.id,
+        name: policyDraft.value.name.trim() || (form.name || form.target).trim(),
+      }
+      targetPolicy.value = targetPolicy.value
+        ? await api.updateNotificationPolicy(targetPolicy.value.id, body)
+        : await api.createNotificationPolicy(SITE, body)
+      return true
+    }
+    // Back to inheriting: the override has to go, or it would keep winning.
+    if (targetPolicy.value) {
+      await api.deleteNotificationPolicy(targetPolicy.value.id)
+      targetPolicy.value = null
+    }
+    return true
+  } catch (e) {
+    error.value = tr('mform.policySaveErr', { err: String((e as Error).message || e) })
+    return false
+  }
+}
+
+function channelsLabel(ids: string[]): string {
+  if (!ids.length) return tr('notificationPolicy.recordOnlyShort')
+  return ids.map((id) => channels.value.find((c) => c.id === id)?.name || id).join(', ')
+}
+function delayLabel(sec: number): string {
+  if (!sec) return tr('notificationPolicy.delayImmediate')
+  if (sec % 60 === 0) return tr('common.durMinutes', { n: sec / 60 })
+  return tr('common.durSeconds', { n: sec })
 }
 
 const defaultGroupId = computed(() => groups.value.find((g) => g.is_default)?.id || '')
@@ -152,12 +358,6 @@ const targetErrorKey = computed(() => {
 })
 const targetErrorText = computed(() => (targetErrorKey.value ? tr(targetErrorKey.value) : ''))
 
-// The monitor-type labels live on the kind <select> (mform.typeIcmp, …); reuse
-// them so a report about a kind change names the same words the user picked.
-function kindLabel(kind: string): string {
-  return kind ? tr(`mform.type${kind.charAt(0).toUpperCase()}${kind.slice(1)}`) : kind
-}
-
 function placeholderFor(kind: string): string {
   if (kind === 'dns') return 'example.com'
   if (kind === 'http') return 'https://example.com'
@@ -167,14 +367,21 @@ function placeholderFor(kind: string): string {
 }
 
 async function loadAll() {
+  let chans: Channel[] = []
   try {
-    ;[all.value, groups.value] = await Promise.all([api.listTargets(SITE), api.monitorGroups(SITE)])
+    ;[all.value, groups.value, chans] = await Promise.all([
+      api.listTargets(SITE),
+      api.monitorGroups(SITE),
+      api.channels(),
+    ])
   } catch (e) {
     // Leave loaded=false so Save stays disabled — reconciling against an empty
     // list would wipe every existing monitor.
     error.value = String((e as Error).message || e)
     return
   }
+  channels.value = chans
+  hasChannels.value = chans.length > 0
   all.value.forEach((x) => {
     if (!x.params) x.params = {}
   })
@@ -188,6 +395,8 @@ async function loadAll() {
     Object.assign(form, JSON.parse(JSON.stringify(found)))
     applyKindDefaults()
     headersText.value = headersToText(form.params!.headers)
+    if (showDetection.value) await loadDetection(editingId.value)
+    if (showPolicy.value) await loadPolicies()
     return
   }
   if (!form.group_id) {
@@ -198,6 +407,7 @@ async function loadAll() {
   }
   // The kind watcher can't cover a kind set during setup (query prefill / new-host).
   applyKindDefaults()
+  if (showPolicy.value) await loadPolicies()
 }
 
 function headersToText(h?: Record<string, string>): string {
@@ -259,11 +469,15 @@ async function save() {
     error.value = tr('mform.errParamRange', { field: tr(range.labelKey), min: range.min, max: range.max })
     return
   }
+  const detErr = detectionRangeError()
+  if (detErr) {
+    error.value = detErr
+    return
+  }
   busy.value = true
   saved.value = false
   error.value = ''
   saveWarning.value = null
-  ruleCleanups.value = []
   try {
     if (form.kind === 'http') form.params!.headers = textToHeaders(headersText.value)
     normalizeTargetURL()
@@ -278,12 +492,6 @@ async function save() {
     const beforeIds = new Set(others.map((x) => x.id))
     const payload = [...others, current]
     const res = await api.setTargets(SITE, payload)
-    // The save has landed and those alert conditions are already deleted server
-    // side, so publish that BEFORE the reload below — which can fail and jump to
-    // catch. Re-saving would report nothing (the conditions are gone), so a lost
-    // notice is lost for good. Only an existing monitor can have had conditions
-    // invalidated, and its id is known here; a create has none to report.
-    ruleCleanups.value = (res.rule_cleanups ?? []).filter((c) => c.monitor_id === form.id)
     // Reload so a freshly-created monitor gets its server-assigned id; locate it by
     // id (edit) or the one new id (create).
     all.value = await api.listTargets(SITE)
@@ -295,16 +503,29 @@ async function save() {
       : all.value.find((x) => x.id && !beforeIds.has(x.id))
     if (match) form.id = match.id
     saved.value = true
-    // Two save-time findings are actionable for THIS monitor: which in-scope
-    // agents cannot run it and why, and which of its alert conditions this save
-    // had to drop because the monitor's kind changed. Either one keeps the form
-    // open so the user sees it; a clean save goes straight back to the list.
+    // Sensitivity hangs off the target's id, so it is written only once that id
+    // exists — right after the target itself was saved.
+    const detectionOK = await saveDetection()
+    const policyOK = await savePolicy()
+    // A save-time finding keeps the form open so the user sees it: which in-scope
+    // agents cannot run this monitor, or a sensitivity write that failed. A clean
+    // save goes straight back to the list, with the outcome carried in a toast.
     const warning = res.warnings.find((wgn) => wgn.monitor_id === form.id) ?? null
-    if (!warning && !ruleCleanups.value.length) {
+    saveWarning.value = warning
+    if (!warning && detectionOK && policyOK) {
+      pushToast({
+        tone: 'info',
+        title: tr('mform.saved'),
+        body: showDetection.value
+          ? tr('mform.savedDetectionOn', { fail: detection.fail_rounds, recover: detection.recover_rounds })
+          : undefined,
+      })
+      if (showDetection.value && !hasChannels.value) {
+        pushToast({ tone: 'warn', title: tr('mform.savedNoChannels') })
+      }
       router.push('/monitoring')
       return
     }
-    saveWarning.value = warning
     // Keep the URL on the monitor that was just created, so a reload re-opens it.
     if (!editingId.value && form.id) router.replace(`/monitoring/${form.id}/edit`)
   } catch (e) {
@@ -331,6 +552,17 @@ watch(
     // error names it.
     form.target = retargetForKind(form.target, prev, k)
     applyKindDefaults()
+  },
+)
+
+// Moving the target to another group changes what it inherits. Re-seed the
+// override draft from the new parent — but only while still inheriting, since
+// once the user is editing an override, silently rewriting their fields would
+// discard work they can see on screen.
+watch(
+  () => form.group_id,
+  () => {
+    if (policyMode.value === 'inherit') policyDraft.value = seedPolicyDraft()
   },
 )
 
@@ -449,6 +681,110 @@ onMounted(loadAll)
         </div>
       </section>
 
+      <!-- Detection sensitivity. Fault recording itself is not configurable: the
+           summary states what will happen, and only the thresholds can be tuned. -->
+      <section class="panel" v-if="showDetection">
+        <div class="panel-head"><h3>{{ tr('mform.detectionTitle') }}</h3></div>
+        <p class="hint panel-hint det-summary">
+          {{ tr('mform.detectionSummary', { fail: detection.fail_rounds, recover: detection.recover_rounds }) }}
+        </p>
+        <details class="advanced" :open="detectionOpen">
+          <summary @click.prevent="detectionOpen = !detectionOpen">{{ tr('mform.detectionAdvanced') }}</summary>
+          <div class="det-body">
+            <p class="hint tiny">{{ tr('detection.hint') }}</p>
+            <div class="profile-list">
+              <label v-for="p in DETECTION_PROFILES" :key="p" class="profile-opt">
+                <input type="radio" :value="p" v-model="detection.profile" @change="setProfile(p)" />
+                <span class="profile-name">{{ tr(`detection.profile_${p}`) }}</span>
+                <em class="profile-desc">{{ tr(`detection.profileDesc_${p}`) }}</em>
+              </label>
+            </div>
+            <div class="form-grid det-grid" v-if="detection.profile === 'custom'">
+              <label class="field">
+                <span>{{ tr('detection.failRounds') }}</span>
+                <input type="number" min="1" max="20" v-model.number="detection.fail_rounds" />
+              </label>
+              <label class="field">
+                <span>{{ tr('detection.recoverRounds') }}</span>
+                <input type="number" min="1" max="20" v-model.number="detection.recover_rounds" />
+              </label>
+            </div>
+            <div class="form-grid det-grid" v-if="showLossThreshold">
+              <label class="field">
+                <span>{{ tr('detection.lossPct') }}</span>
+                <input type="number" min="1" max="100" v-model.number="detection.icmp_loss_pct" />
+              </label>
+              <p class="hint tiny wide">{{ tr('detection.lossHint') }}</p>
+            </div>
+          </div>
+        </details>
+      </section>
+
+      <!-- Notification policy: inherit (from the group, else the site default) or
+           override for this one target. Saved together with the monitor. -->
+      <section class="panel" v-if="showPolicy">
+        <div class="panel-head"><h3>{{ tr('mform.policyTitle') }}</h3></div>
+        <p class="hint panel-hint">{{ tr('mform.policyHint') }}</p>
+        <div class="pbody">
+          <label class="scope-opt">
+            <input type="radio" value="inherit" v-model="policyMode" />
+            <span>{{ tr(`mform.policyInherit_${inheritedFrom}`) }}</span>
+          </label>
+          <label class="scope-opt">
+            <input type="radio" value="override" v-model="policyMode" />
+            <span>{{ tr('mform.policyOverride') }}</span>
+          </label>
+
+          <div v-if="policyMode === 'inherit'" class="policy-view">
+            <p v-if="!inheritedPolicy" class="hint tiny">{{ tr('mform.policyNoneInherited') }}</p>
+            <template v-else>
+              <div class="sum-row">
+                <span class="sum-k">{{ tr('notificationPolicy.name') }}</span>
+                <span class="sum-v">
+                  {{ inheritedPolicy.name }}
+                  <em v-if="!inheritedPolicy.enabled" class="off">
+                    {{ tr('notificationPolicy.stateDisabled') }}
+                  </em>
+                </span>
+              </div>
+              <div class="sum-row">
+                <span class="sum-k">{{ tr('notificationPolicy.minSeverity') }}</span>
+                <span class="sum-v">{{ tr(`mform.sev_${inheritedPolicy.min_severity}`) }}</span>
+              </div>
+              <div class="sum-row">
+                <span class="sum-k">{{ tr('notificationPolicy.warnDelay') }}</span>
+                <span class="sum-v">{{ delayLabel(inheritedPolicy.warn_delay_sec) }}</span>
+              </div>
+              <div class="sum-row">
+                <span class="sum-k">{{ tr('notificationPolicy.criticalDelay') }}</span>
+                <span class="sum-v">{{ delayLabel(inheritedPolicy.critical_delay_sec) }}</span>
+              </div>
+              <div class="sum-row">
+                <span class="sum-k">{{ tr('notificationPolicy.notifyRecovery') }}</span>
+                <span class="sum-v">
+                  {{
+                    inheritedPolicy.notify_recovery
+                      ? tr('notificationPolicy.yes')
+                      : tr('notificationPolicy.no')
+                  }}
+                </span>
+              </div>
+              <div class="sum-row">
+                <span class="sum-k">{{ tr('notificationPolicy.channels') }}</span>
+                <span class="sum-v" :class="{ 'record-only': !inheritedPolicy.channel_ids.length }">
+                  {{ channelsLabel(inheritedPolicy.channel_ids) }}
+                </span>
+              </div>
+            </template>
+          </div>
+
+          <div v-else class="policy-edit">
+            <PolicyFields v-model="policyDraft" :channels="channels" />
+            <p class="hint tiny">{{ tr('mform.policyOverrideSaveHint') }}</p>
+          </div>
+        </div>
+      </section>
+
       <!-- Advanced / per-type -->
       <section class="panel" v-if="form.kind === 'icmp' || form.kind === 'gateway' || form.kind === 'dns' || form.kind === 'tcp'">
         <div class="panel-head"><h3>{{ tr('mform.secAdvanced') }}</h3></div>
@@ -542,6 +878,11 @@ onMounted(loadAll)
         <span v-if="saved" class="ok">{{ tr('mform.saved') }}</span>
       </div>
 
+      <p v-if="saved && showDetection" class="hint saved-note">
+        {{ tr('mform.savedDetectionOn', { fail: detection.fail_rounds, recover: detection.recover_rounds }) }}
+        <template v-if="!hasChannels"> {{ tr('mform.savedNoChannels') }}</template>
+      </p>
+
       <div v-if="saveWarning" class="card save-warn">
         <h4>{{ tr('mform.saveWarnTitle') }}</h4>
         <p class="hint">{{ tr('mform.saveWarnIntro', { blocked: saveWarning.affected_agents, capable: saveWarning.capable_agents }) }}</p>
@@ -558,27 +899,6 @@ onMounted(loadAll)
         </p>
       </div>
 
-      <!-- Alert conditions dropped by a monitor-type change. Until they are
-           rebuilt this monitor can fail indefinitely without raising anything. -->
-      <div v-if="ruleCleanups.length" class="card save-warn rule-cleanup">
-        <h4>{{ tr('mform.ruleCleanupTitle') }}</h4>
-        <p class="hint">
-          {{ tr('mform.ruleCleanupIntro', {
-            from: kindLabel(ruleCleanups[0].old_kind),
-            to: kindLabel(ruleCleanups[0].new_kind),
-          }) }}
-        </p>
-        <ul class="warn-list">
-          <li v-for="c in ruleCleanups" :key="c.rule_id">
-            <span class="warn-agent">{{ c.rule_name }}</span>
-            <span v-if="c.rule_deleted" class="warn-state">{{ tr('mform.ruleCleanupRuleDeleted') }}</span>
-            <span class="warn-perms mono">{{ c.metrics.map((m) => metricLabel(m)).join('、') }}</span>
-          </li>
-        </ul>
-        <p class="warn-capable">
-          <router-link :to="`/monitoring/groups/${form.group_id}/edit`">{{ tr('mform.ruleCleanupAction') }}</router-link>
-        </p>
-      </div>
     </template>
   </main>
 </template>
@@ -713,6 +1033,99 @@ onMounted(loadAll)
 }
 .panel-body {
   padding: 8px 18px 16px;
+}
+/* Notification-policy block, matching the group form's layout so the same
+   choice reads the same way at both scopes. */
+.pbody {
+  padding: 14px 18px;
+}
+.scope-opt {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  margin: 4px 0;
+}
+.scope-opt input {
+  width: auto;
+}
+.policy-view,
+.policy-edit {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px dashed var(--border);
+}
+.sum-row {
+  display: flex;
+  gap: 12px;
+  align-items: baseline;
+  padding: 3px 0;
+  font-size: 13px;
+}
+.sum-k {
+  flex: none;
+  min-width: 132px;
+  color: var(--text-dim);
+}
+.sum-v {
+  color: var(--text);
+}
+.sum-v.record-only {
+  color: var(--text-dim);
+}
+.sum-v .off {
+  margin-left: 8px;
+  font-style: normal;
+  font-size: 11.5px;
+  color: var(--warning);
+}
+.det-summary {
+  padding-bottom: 8px;
+  color: var(--text);
+}
+.advanced {
+  border-top: 1px solid var(--border);
+}
+.advanced summary {
+  cursor: pointer;
+  padding: 10px 18px;
+  font-size: 13px;
+  color: var(--text-dim);
+  user-select: none;
+}
+.det-body {
+  padding: 4px 18px 16px;
+}
+.det-grid {
+  padding: 12px 0 0;
+}
+.profile-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 10px;
+}
+.profile-opt {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--text);
+}
+.profile-opt input {
+  width: auto;
+}
+.profile-name {
+  font-weight: 600;
+}
+.profile-desc {
+  font-style: normal;
+  font-size: 11.5px;
+  color: var(--text-dim);
+}
+.saved-note {
+  margin: -12px 0 18px;
+  font-size: 12.5px;
 }
 .tiny {
   font-size: 11.5px;

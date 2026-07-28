@@ -12,7 +12,8 @@ const state = vi.hoisted(() => ({
   push: vi.fn(),
 }))
 const apiMock = vi.hoisted(() => ({
-  listTargets: vi.fn(), monitorGroups: vi.fn(), setTargets: vi.fn(),
+  listTargets: vi.fn(), monitorGroups: vi.fn(), setTargets: vi.fn(), channels: vi.fn(),
+  detectionSettings: vi.fn(), updateDetectionSettings: vi.fn(),
 }))
 
 vi.mock('../api', () => ({ api: apiMock }))
@@ -27,7 +28,8 @@ async function render(targets: ProbeTarget[] = []) {
     id: 'group-default', site_id: 'site_default', name: 'Default', is_default: true,
     merge_enabled: true, all_agents: true, agent_group_ids: [],
   }])
-  apiMock.setTargets.mockResolvedValue({ ok: true, warnings: [], rule_cleanups: [] })
+  apiMock.setTargets.mockResolvedValue({ ok: true, warnings: [] })
+  apiMock.channels.mockResolvedValue([])
   const i18n = createI18n({ legacy: false, locale: 'en', messages: { en } })
   const page = mount(MonitorForm, {
     global: { plugins: [i18n], stubs: { RouterLink: true } },
@@ -62,7 +64,7 @@ describe('MonitorForm Wi-Fi system-status subject', () => {
     ])
   })
 
-  it('restores host/* as the Wi-Fi subject without target-level rule controls', async () => {
+  it('restores host/* as the Wi-Fi subject without target-level alarm controls', async () => {
     state.route.path = '/monitoring/wifi-anchor/edit'
     state.route.params = { id: 'wifi-anchor' }
     const target: ProbeTarget = {
@@ -73,6 +75,7 @@ describe('MonitorForm Wi-Fi system-status subject', () => {
     const subject = page.get('select')
     expect((subject.element as HTMLSelectElement).value).toBe('wifi')
     expect(page.text()).not.toContain('+ New rule')
-    expect(page.text()).toContain('AND/OR alert rules are configured on the monitor group')
+    // Alarm behaviour is owned by the monitor group, never by the target form.
+    expect(page.text()).toContain(en.mform.groupManageHint)
   })
 })

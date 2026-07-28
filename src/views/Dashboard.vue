@@ -6,7 +6,7 @@ import {
   api,
   type Agent,
   type AgentInterfaces,
-  type Alert,
+  type FaultSignal,
   type Device,
   type IncidentSummary,
   type MetricsSummary,
@@ -45,7 +45,7 @@ const statusHistory = ref<StatusEvent[]>([])
 const snapshot = ref<Sample[]>([])
 const devices = ref<Device[]>([])
 const ifaceData = ref<AgentInterfaces | null>(null)
-const alerts = ref<Alert[]>([])
+const faults = ref<FaultSignal[]>([])
 const incidentSummary = ref<IncidentSummary | null>(null)
 const qualityRttHistory = ref<Sample[]>([])
 const qualityLossHistory = ref<Sample[]>([])
@@ -269,12 +269,15 @@ async function loadMetrics() {
   refreshing.value = true
   try {
     const id = selected.value
-    const [nextSnapshot, nextDevices, nextHistory, nextIfaces, nextAlerts, nextIncidentSummary] = await Promise.all([
+    const [nextSnapshot, nextDevices, nextHistory, nextIfaces, nextFaults, nextIncidentSummary] = await Promise.all([
       api.latest(id),
       api.listDevices(SITE),
       api.agentStatusHistory(id),
       api.agentInterfaces(id).catch(() => null),
-      api.alerts().catch(() => [] as Alert[]),
+      // Scoped to the selected Agent server-side. Fetching the fleet-wide top 50
+      // and filtering here would silently hide this Agent's faults the moment 50
+      // others are firing — and the health badge would then read "healthy".
+      api.faultSignals({ agent: id, state: 'firing', limit: 200 }).catch(() => [] as FaultSignal[]),
       api.incidents(1, 1).then((page) => page.summary).catch(() => null),
     ])
     if (sequence !== loadSequence) return
@@ -282,7 +285,7 @@ async function loadMetrics() {
     devices.value = nextDevices
     statusHistory.value = nextHistory
     ifaceData.value = nextIfaces
-    alerts.value = nextAlerts
+    faults.value = nextFaults
     incidentSummary.value = nextIncidentSummary
     error.value = ''
   } catch (e) {
@@ -613,14 +616,18 @@ const worstPublicRtt = computed(() => {
   const vals = byKind('probe.icmp.rtt_ms').filter((s) => s.target !== 'gateway').map((s) => s.value)
   return vals.length ? Math.max(...vals) : null
 })
-// Overall network health tracks the selected Agent's alert state — the authoritative
-// fault signal — instead of re-thresholding raw RTT/loss (which trips permanently on
-// naturally high-latency/lossy public anchors). An offline Agent is "attention" (its
-// probes stopped); any firing alert on this Agent is "attention"; otherwise "good".
-const agentAlerts = computed(() => alerts.value.filter((a) => a.agent_id === selected.value))
+// Overall network health tracks the selected Agent's confirmed faults — the
+// authoritative signal — instead of re-thresholding raw RTT/loss (which trips
+// permanently on naturally high-latency/lossy public anchors). An offline Agent is
+// "attention" (its probes stopped); any firing fault on this Agent is "attention";
+// otherwise "good".
+// The fetch is already scoped to the selected Agent; this filter only covers the
+// window between switching Agents and the new response landing, so the badge
+// never briefly reports the previous Agent's faults as this one's.
+const agentFaults = computed(() => faults.value.filter((f) => f.agent_id === selected.value))
 const networkHealth = computed(() => {
   if (currentAgent.value?.status !== 'online') return { tone: 'bad', label: t('dashboard.healthOffline') }
-  if (agentAlerts.value.length) return { tone: 'warn', label: t('dashboard.healthAttention') }
+  if (agentFaults.value.length) return { tone: 'warn', label: t('dashboard.healthAttention') }
   return { tone: 'good', label: t('dashboard.healthGood') }
 })
 
@@ -645,15 +652,12 @@ const worstAvailabilityTarget = computed(() => availabilityOffenders.value[0] ??
 const failureCount = computed(() => statusHistory.value.filter((event) => event.status === 'offline').length)
 
 const severityRank: Record<string, number> = { critical: 0, error: 1, warn: 2, info: 3 }
-const currentAlerts = computed(() => [...alerts.value].sort((a, b) =>
+const currentFaults = computed(() => [...agentFaults.value].sort((a, b) =>
   (severityRank[a.severity] ?? 9) - (severityRank[b.severity] ?? 9)
-    || new Date(a.started_at).getTime() - new Date(b.started_at).getTime(),
+    || new Date(a.confirmed_at).getTime() - new Date(b.confirmed_at).getTime(),
 ))
-const alertReason = (alert: Alert) =>
-  (locale.value === 'en' ? alert.desc_en : alert.desc_zh) ||
-  alert.evidence[0]?.target_name ||
-  alert.evidence[0]?.target_addr ||
-  alert.rule_name
+const faultReason = (f: FaultSignal) =>
+  (locale.value === 'en' ? f.desc_en : f.desc_zh) || f.target_name || f.target_addr
 
 // Monitor health for the selected Agent, counted from the authoritative
 // target-status batch (per-agent execution/probe state) — never re-inferred from
@@ -957,18 +961,18 @@ onBeforeUnmount(() => {
         <p>{{ t('dashboard.onlineAgentsFoot') }}</p>
       </article>
 
-      <section v-if="cardVisible('active-alerts')" class="surface overview-summary-card alert-summary-card dashboard-card-shell" :class="currentAlerts.length ? 'has-problem' : 'is-clear'" :style="cardGridStyle('active-alerts')" data-layout-card="active-alerts" :data-layout-editing="editingLayout || undefined" :data-dragging="draggingCardID === 'active-alerts' || undefined" :draggable="editingLayout" @dragstart="startCardDrag('active-alerts', $event)" @dragend="draggingCardID = ''" @dragover.prevent @drop="dropLayoutCard('active-alerts')">
+      <section v-if="cardVisible('active-alerts')" class="surface overview-summary-card alert-summary-card dashboard-card-shell" :class="currentFaults.length ? 'has-problem' : 'is-clear'" :style="cardGridStyle('active-alerts')" data-layout-card="active-alerts" :data-layout-editing="editingLayout || undefined" :data-dragging="draggingCardID === 'active-alerts' || undefined" :draggable="editingLayout" @dragstart="startCardDrag('active-alerts', $event)" @dragend="draggingCardID = ''" @dragover.prevent @drop="dropLayoutCard('active-alerts')">
         <DashboardCardControls v-if="editingLayout" :title="t(cardDefinition('active-alerts').titleKey)" :size="cardLayout('active-alerts')!.size" :sizes="cardDefinition('active-alerts').sizes" :first="visibleCardIndex('active-alerts') === 0" :last="visibleCardIndex('active-alerts') === visibleCardCount - 1" @resize="updateCardSize('active-alerts', $event)" @move="moveVisibleCard('active-alerts', $event)" @remove="removeWidget('active-alerts')" @pointer-drag="startPointerCardDrag('active-alerts', $event)" />
         <div class="summary-card-head">
-          <div><span class="section-kicker">SITE</span><h3>{{ t('dashboard.activeAlerts') }}</h3></div>
+          <div><span class="section-kicker">SITE</span><h3>{{ t('dashboard.activeFaults') }}</h3></div>
           <RouterLink class="text-link" to="/incidents">{{ t('dashboard.viewAll') }} →</RouterLink>
         </div>
-        <div v-if="!currentAlerts.length" class="summary-clear-state"><strong>✓</strong><span>{{ t('dashboard.noActiveAlerts') }}</span></div>
+        <div v-if="!currentFaults.length" class="summary-clear-state"><strong>✓</strong><span>{{ t('dashboard.noActiveFaults') }}</span></div>
         <div v-else class="summary-list">
-          <article v-for="alert in currentAlerts.slice(0, 3)" :key="alert.id" class="summary-list-row">
-            <i class="severity-dot" :class="`severity-${alert.severity}`"></i>
-            <span class="summary-row-copy"><strong>{{ alert.rule_name }}</strong><small>{{ alert.agent_host || alert.agent_id }} · {{ alertReason(alert) }}</small></span>
-            <time>{{ fmtAge((Date.now() - new Date(alert.started_at).getTime()) / 1000) }}</time>
+          <article v-for="f in currentFaults.slice(0, 3)" :key="f.id" class="summary-list-row">
+            <i class="severity-dot" :class="`severity-${f.severity}`"></i>
+            <span class="summary-row-copy"><strong>{{ f.title || faultReason(f) }}</strong><small>{{ f.agent_name || f.agent_id }} · {{ faultReason(f) }}</small></span>
+            <time>{{ fmtAge((Date.now() - new Date(f.observed_at).getTime()) / 1000) }}</time>
           </article>
         </div>
       </section>

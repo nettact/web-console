@@ -5,8 +5,7 @@ import { useRoute, useRouter } from 'vue-router'
 import {
   api,
   type Agent,
-  type AgentConnAlert,
-  type Alert,
+  type FaultSignal,
   type Sample,
   type StatusEvent,
 } from '../api'
@@ -21,7 +20,7 @@ import PermissionChips from '../components/status/PermissionChips.vue'
 import PermissionRemediationDialog from '../components/status/PermissionRemediationDialog.vue'
 import OsIcon from '../components/agents/OsIcon.vue'
 import MetricChart from '../components/MetricChart.vue'
-import AlertsTable from '../components/AlertsTable.vue'
+import FaultSignalsTable from '../components/FaultSignalsTable.vue'
 
 const { t, locale } = useI18n()
 const route = useRoute()
@@ -29,9 +28,9 @@ const router = useRouter()
 
 const id = computed(() => String(route.params.id || ''))
 const agent = ref<Agent | null>(null)
-const connAlerts = ref<AgentConnAlert[]>([])
+const connFaults = ref<FaultSignal[]>([])
 const history = ref<StatusEvent[]>([])
-const ruleAlerts = ref<Alert[]>([])
+const targetFaults = ref<FaultSignal[]>([])
 const cpu = ref<Sample[]>([])
 const mem = ref<Sample[]>([])
 const net = ref<Sample[]>([])
@@ -41,8 +40,8 @@ const loading = ref(true)
 // Live per-agent rollup from the shared store (status/resources/groups/alert).
 const row = computed(() => agentIndex.value.get(id.value) || null)
 // Derive the firing banner from the LIVE store row (SSE + poll fed), not the
-// once-fetched connAlerts, so it appears/clears as the alert opens or resolves
-// (including an immediate mute) without a page reload. connAlerts still backs the
+// once-fetched history, so it appears/clears as the fault opens or resolves
+// (including an immediate mute) without a page reload. connFaults still backs the
 // history table below.
 const firingConn = computed(() => row.value?.connectivity_alert || null)
 const associatedTargets = computed(() =>
@@ -76,11 +75,11 @@ async function loadAll() {
   loading.value = true
   error.value = ''
   try {
-    const [a, ca, hist, alerts, cpuS, memS, rxS, txS] = await Promise.all([
+    const [a, ca, hist, faults, cpuS, memS, rxS, txS] = await Promise.all([
       api.agent(id.value),
-      api.agentConnAlerts({ agent: id.value, status: 'all', limit: 50 }),
+      api.faultSignals({ agent: id.value, detector: 'agent_connectivity', limit: 50 }),
       api.agentStatusHistory(id.value),
-      api.alerts(),
+      api.faultSignals({ agent: id.value, detector: 'availability', limit: 50 }),
       // Explicit window + limit: the server truncates oldest-first (ORDER BY ts
       // LIMIT), so the cap must cover the whole 2h window at the fastest
       // supported collection interval (1s) or the charts silently lose their
@@ -92,9 +91,9 @@ async function loadAll() {
       api.metrics(id.value, 'host.net.tx_bps', { target: 'host', sinceSeconds: 7200, limit: 7201 }),
     ])
     agent.value = a
-    connAlerts.value = ca
+    connFaults.value = ca
     history.value = hist
-    ruleAlerts.value = alerts.filter((al) => al.agent_id === id.value)
+    targetFaults.value = faults
     cpu.value = cpuS
     mem.value = memS
     // Merge rx/tx into a single overlaid net series set.
@@ -235,23 +234,21 @@ onMounted(() => {
       </section>
     </div>
 
-    <!-- active rule alerts -->
-    <section class="card">
-      <AlertsTable :alerts="ruleAlerts" />
-    </section>
+    <!-- this Agent's target faults -->
+    <FaultSignalsTable :signals="targetFaults" />
 
-    <!-- connectivity alert history -->
-    <section class="card" v-if="connAlerts.length">
+    <!-- connectivity fault history -->
+    <section class="card" v-if="connFaults.length">
       <h3>{{ t('agentStatus.sectConnHistory') }}</h3>
       <table class="data-table">
         <thead>
           <tr><th>{{ t('agentStatus.thStatus') }}</th><th>{{ t('agentStatus.thReason') }}</th><th>{{ t('agentStatus.thOpened') }}</th><th>{{ t('agentStatus.thResolved') }}</th></tr>
         </thead>
         <tbody>
-          <tr v-for="a in connAlerts" :key="a.id">
-            <td><span class="badge" :class="a.status === 'firing' ? 'down' : 'up'">{{ a.status === 'firing' ? t('agentStatus.firing') : t('agentStatus.resolved') }}</span></td>
-            <td>{{ t(`agentStatus.reason.${a.reason}`) }}</td>
-            <td class="hint">{{ fmt(a.opened_at) }}</td>
+          <tr v-for="a in connFaults" :key="a.id">
+            <td><span class="badge" :class="a.state === 'firing' ? 'down' : 'up'">{{ a.state === 'firing' ? t('agentStatus.firing') : t('agentStatus.resolved') }}</span></td>
+            <td>{{ a.reason_detail ? t(`agentStatus.reason.${a.reason_detail}`) : '—' }}</td>
+            <td class="hint">{{ fmt(a.confirmed_at) }}</td>
             <td class="hint">{{ a.resolved_at ? fmt(a.resolved_at) : '—' }}<span v-if="a.resolve_reason"> ({{ t(`agentStatus.resolveReason.${a.resolve_reason}`) }})</span></td>
           </tr>
         </tbody>

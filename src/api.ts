@@ -66,7 +66,7 @@ export interface AgentGroupRef {
   name: string
 }
 
-// The firing connectivity alert embedded in an agent's status row.
+// The firing connectivity fault embedded in an agent's status row.
 export interface AgentConnAlertRef {
   id: string
   reason: string // unexpected | clean_shutdown | version_incompatible
@@ -133,7 +133,7 @@ export interface AgentStatusRow {
   last_disconnect_kind: string
   connectivity_alerts_muted: boolean
   groups: AgentGroupRef[]
-  firing_alerts: number
+  firing_faults: number
   active_issues: number
   connectivity_alert: AgentConnAlertRef | null
   resources: AgentResources
@@ -144,23 +144,6 @@ export interface SiteAgentStatuses {
   generated_at: string
   site_id: string
   agents: AgentStatusRow[]
-}
-
-// --- Agent connectivity alerts (AGENT-002) ---
-
-export interface AgentConnAlert {
-  id: string
-  site_id: string
-  agent_id: string
-  status: 'firing' | 'resolved'
-  reason: string // unexpected | clean_shutdown | version_incompatible
-  severity: string
-  agent_display_name: string
-  agent_hostname: string
-  offline_since: string
-  opened_at: string
-  resolved_at: string | null
-  resolve_reason?: string
 }
 
 // One requested snapshot scope and how it resolved. `denied` = permission not
@@ -282,14 +265,15 @@ export type ExecutionState =
   | 'agent_offline'
 // The freshness/result verdict of the latest current-generation probe sample.
 export type ProbeState = 'no_data' | 'healthy' | 'failed' | 'stale' | 'not_applicable'
-// Whether any current rule condition is breaching / firing for the pair.
-export type RuleState = 'normal' | 'breaching' | 'alerting'
+// Where the target's built-in detector stands for this pair. "confirming" is the
+// honest middle answer: failing right now, but not yet past its threshold.
+export type FaultState = 'normal' | 'confirming' | 'faulted'
 // The target-level rollup shown as the headline state (display priority order).
 export type DisplayState =
   | 'disabled'
   | 'unassigned'
-  | 'alerting'
-  | 'breaching'
+  | 'faulted'
+  | 'confirming'
   | 'partial_failure'
   | 'probe_failed'
   | 'blocked'
@@ -307,8 +291,8 @@ export type ReasonCode =
   | 'target_blocked'
   | 'unsupported'
   | 'awaiting_status_report'
-  | 'alert_firing'
-  | 'rule_breaching'
+  | 'fault_confirmed'
+  | 'fault_confirming'
   | 'probe_failed'
   | 'probe_stale'
   | 'probe_no_data'
@@ -316,23 +300,22 @@ export type ReasonCode =
   | 'ok'
 export type WorstSeverity = 'info' | 'warn' | 'error' | 'critical'
 
-// One currently-satisfied rule condition on a target×Agent pair. The display
-// label is derived by the frontend from metric_kind + comparator; the server
-// never invents display text. alert_id/incident_id are present only when the
-// condition's rule has a firing alert (rule_state = alerting).
-export interface ActiveCondition {
-  condition_id: string
-  rule_id: string
-  rule_name: string
+// How far a detector is from confirming a fault: consecutive failing rounds
+// against the number needed. Present whenever a failing streak is in progress.
+export interface ConfirmProgress {
+  fail_rounds: number
+  need_rounds: number
+  first_fail_at?: string
+}
+// The confirmed fault on a target×Agent pair, linked to the incident that owns it
+// so every status row can deep-link into the fault centre.
+export interface TargetFaultRef {
+  signal_id: string
+  incident_id: string
   severity: string
-  metric_kind: string
-  comparator: string // gt | gte | lt | lte | eq
-  threshold: number
-  last_value?: number
-  unit?: string
-  first_breach_at?: string
-  alert_id?: string
-  incident_id?: string
+  title: string
+  observed_at: string
+  confirmed_at: string
 }
 // One target's status as seen from one applicable Agent. The three dimensions are
 // independent: a pair may be execution_state=pending with probe_state=no_data.
@@ -342,7 +325,7 @@ export interface TargetAgentStatusRow {
   agent_online: boolean
   execution_state: ExecutionState
   probe_state: ProbeState
-  rule_state: RuleState
+  fault_state: FaultState
   reason_code: ReasonCode
   // Per-agent freshness window (reported effective schedule when confirmed, else
   // the desired-config fallback); omitted for host targets.
@@ -357,7 +340,9 @@ export interface TargetAgentStatusRow {
   last_metric_kind?: string
   last_unit?: string
   last_observed_at?: string
-  active_conditions: ActiveCondition[]
+  confirm?: ConfirmProgress
+  fault?: TargetFaultRef
+  availability_24h?: number
 }
 // One target's aggregated current status across every applicable Agent.
 export interface TargetStatusRow {
@@ -370,12 +355,13 @@ export interface TargetStatusRow {
   display_state: DisplayState
   applicable_agents: number
   affected_agents: number
-  // Present only for alerting/breaching targets.
+  // Present only for faulted targets.
   worst_severity?: WorstSeverity
   last_observed_at?: string
-  active_condition_count: number
-  rule_ids: string[]
-  alert_ids: string[]
+  // Share of verdict-reaching probe rounds in the last 24h that succeeded (0..1).
+  // Absent when the window holds no verdict at all — "unknown" is not "0%".
+  availability_24h?: number
+  signal_ids: string[]
   incident_ids: string[]
   agents: TargetAgentStatusRow[]
 }
@@ -406,24 +392,9 @@ export interface SaveWarning {
   blocked_agents: SaveWarningAgent[]
   capable_agent_list: SaveWarningAgent[]
 }
-// An alert condition dropped by a set-targets save because its monitor's kind
-// changed and the new kind can never emit the metric the condition watched. The
-// user MUST be told: the monitor now probes something else, and until the alarm
-// is reconfigured it can fail indefinitely without raising anything.
-export interface RuleCleanup {
-  monitor_id: string
-  monitor_name: string
-  old_kind: string
-  new_kind: string
-  rule_id: string
-  rule_name: string
-  metrics: string[]
-  rule_deleted: boolean
-}
 export interface SaveTargetsResult {
   ok: true
   warnings: SaveWarning[]
-  rule_cleanups: RuleCleanup[]
 }
 export interface Sample {
   ts: string
@@ -575,53 +546,61 @@ export interface Incident {
   trace_count: number
   member_count: number
   active_member_count: number
+  // Notification summary: how many records were actually sent, and how many are
+  // still waiting out their policy delay. Both 0 with an open incident means the
+  // fault is recorded but no channel is configured to hear about it.
+  notified_count: number
+  pending_notify_count: number
   opened_at: string
   resolved_at: string | null
 }
-// One immutable, frozen condition that contributed to a firing alert.
-export interface AlertEvidence {
+// A fault signal: one confirmed fault lifecycle for one (agent, target,
+// detector). Every display fact is frozen at confirmation time, so renaming or
+// deleting the target afterwards cannot rewrite what the fault said.
+export interface FaultSignal {
   id: string
-  condition_id: string
-  target_id: string
+  // Server-rendered standard statement, e.g. "「Router」的 ICMP 探测不可达".
+  title: string
+  site_id: string
+  agent_id: string
+  agent_name: string
+  target_id?: string
   target_name: string
   target_addr: string
+  target_port?: number
+  detector_key: 'availability' | 'agent_connectivity'
   probe_kind: string
-  metric_kind: string
-  comparator: string // gt | gte | lt | lte | eq
-  threshold: number
-  value: number
-  // Frozen probe failure reason (telemetry.ProbeReason* code): the underlying cause
-  // (unreachable / DNS-failed / timeout). 0 = none (a pure threshold breach).
-  reason_code: number
-  // Raw underlying error in English machine text (e.g. "dial tcp …: connection
-  // refused", "HTTP 503", "NXDOMAIN"); deliberately not localized. '' if unavailable.
-  reason_detail: string
-  observed_at: string
-  // Read-time overlay (STATUS-001): whether this evidence's condition is STILL
-  // currently satisfied on a firing alert. False ⇒ recovered historical evidence.
-  currently_abnormal: boolean
-}
-// An alert instance: one firing of a group rule on one Agent, keyed (rule,
-// agent), carrying the frozen evidence of every contributing condition. The
-// active-alerts endpoint additionally renders a bilingual fault description.
-export interface Alert {
-  id: string
-  rule_id: string
-  rule_name: string
-  group_id: string
+  group_id?: string
   group_name: string
-  agent_id: string
-  agent_host: string
-  site_id: string
   layer: string
   severity: string
   state: 'firing' | 'resolved'
-  resolve_reason?: string // recovered | configuration_changed
-  incident_id?: string
-  started_at: string
+  // recovered | configuration_changed | target_disabled | target_deleted |
+  // agent_scope_changed | agent_deleted | muted | disabled. Only "recovered"
+  // means the fault actually went away.
+  resolve_reason?: string
+  fail_threshold: number
+  recover_threshold: number
+  metric_kind: string
+  comparator: string // gte (icmp loss) | lt (probe ok)
+  value: number
+  threshold: number
+  // Frozen probe failure reason (telemetry.ProbeReason* code): the underlying
+  // cause (unreachable / DNS-failed / timeout). 0 = none.
+  reason_code: number
+  // Raw underlying error in English machine text (e.g. "dial tcp …: connection
+  // refused", "HTTP 503", "NXDOMAIN"); deliberately not localized. '' if absent.
+  reason_detail: string
+  // First failing round, the round that reached the threshold, and (once ended)
+  // when it ended. Duration is measured from observed_at.
+  observed_at: string
+  confirmed_at: string
   resolved_at: string | null
-  evidence: AlertEvidence[]
-  // Present only on the active-alerts list (/alerts): server-rendered fault text.
+  incident_id: string
+  // Read-time overlay: whether the detector still has an unbroken failing streak.
+  // False on a firing signal ⇒ it is answering again but has not yet recovered.
+  currently_abnormal: boolean
+  // Server-rendered fault description in both languages.
   desc_zh?: string
   desc_en?: string
 }
@@ -629,17 +608,32 @@ export interface TimelineEntry {
   ts: string
   kind: string
   message: string
-  // Entity the entry points at: an alert id, incident id or trace report id.
+  // Entity the entry points at: a fault signal id, incident id or trace report id.
   ref?: string
 }
-// GET /incidents/{id}: one incident with its member alert instances (evidence).
-// `abnormal_target_count` is computed read-time from CURRENT condition state — the
-// number of distinct targets still abnormal on this incident's firing alerts — and
-// is deliberately decoupled from the immutable evidence count.
+// GET /incidents/{id}: one incident with its member fault signals.
+// `abnormal_target_count` is computed read-time from CURRENT detector state — the
+// number of distinct targets still failing right now — and is deliberately
+// decoupled from the member count, whose evidence is immutable.
 export interface IncidentDetail {
   incident: Incident
-  members: Alert[]
+  members: FaultSignal[]
   abnormal_target_count: number
+}
+// Fault-centre filters. Every field is optional; the unset default is "every
+// incident, newest first".
+export interface IncidentFilter {
+  state?: 'open' | 'resolved'
+  severity?: string
+  group?: string
+  agent?: string
+  target?: string
+  // A probe kind (icmp | tcp | http | dns | nat | gateway) or a detector key
+  // (agent_connectivity).
+  kind?: string
+  q?: string
+  since?: string
+  until?: string
 }
 export interface IncidentPage {
   items: Incident[]
@@ -697,27 +691,27 @@ export interface SnapshotBase {
   targets: SnapshotBaseTarget[]
 }
 export interface SnapshotBaseMember {
-  alert_id: string
-  rule_id: string
-  rule_name: string
+  signal_id: string
+  detector_key: string
   agent_id: string
-  agent_name: string
+  agent_name?: string
   severity: string
   layer?: string
-  started_at: string
-  evidence: SnapshotBaseEvidence[]
+  observed_at: string
+  confirmed_at: string
+  evidence: SnapshotBaseEvidence
 }
 export interface SnapshotBaseEvidence {
-  condition_id: string
-  target_id: string
+  target_id?: string
   target_name?: string
   target_addr?: string
   probe_kind?: string
-  metric_kind: string
-  comparator: string
+  metric_kind?: string
+  comparator?: string
   threshold: number
   value: number
-  observed_at: string
+  reason_code?: number
+  reason_detail?: string
   recent_samples?: { ts: string; value: number }[]
 }
 export interface SnapshotBaseAgent {
@@ -834,52 +828,112 @@ export interface TraceAttemptView {
   rtt_ms?: number
   timeout: boolean
 }
-// A group-level alert rule: a one-layer AND/OR list of conditions, each bound to
-// a target in the rule's monitor group. It produces per-Agent alert instances.
-export interface GroupRule {
+// ---- notification policies (ALERT-002) ----
+// A policy decides whether, when and where a RECORDED fault is announced. It
+// takes no part in detecting one: detection always runs, so a policy with no
+// channels is a legal, meaningful state meaning "record everything, send
+// nothing". Exactly one policy applies to any incident, resolved by a fixed
+// precedence with no stacking: target > group > site default.
+export type PolicyScope = 'site' | 'group' | 'target'
+export interface NotificationPolicy {
   id: string
-  group_id: string
   site_id: string
   name: string
-  op: 'and' | 'or'
-  layer: string
-  severity: string
-  channel_ids: string[]
+  scope_kind: PolicyScope
+  scope_id: string
   enabled: boolean
-  conditions: RuleCondition[]
+  min_severity: string
+  warn_delay_sec: number
+  critical_delay_sec: number
+  notify_recovery: boolean
+  channel_ids: string[]
+  is_default: boolean
+  created_at: string
 }
-// One threshold test inside a group rule, bound to a target in the rule's group.
-// consecutive breaching evaluations (fail_threshold) and an extra dwell gate
-// (for_seconds) gate when the condition is considered satisfied.
-export interface RuleCondition {
-  id: string
-  rule_id: string
-  target_id: string
-  metric_kind: string
-  comparator: string // gt | gte | lt | lte | eq
-  threshold: number
-  fail_threshold: number
-  for_seconds: number
-  position: number
-}
-// Create/update payload for a group rule (ids/site are assigned server-side).
-export interface GroupRuleInput {
+export interface NotificationPolicyInput {
   name: string
-  op: 'and' | 'or'
-  layer: string
-  severity: string
-  channel_ids: string[]
+  scope_kind: PolicyScope
+  scope_id: string
   enabled: boolean
-  conditions: RuleConditionInput[]
+  min_severity: string
+  warn_delay_sec: number
+  critical_delay_sec: number
+  notify_recovery: boolean
+  channel_ids: string[]
 }
-export interface RuleConditionInput {
+// The one policy that governs a target, and the scope it came from — the same
+// resolver the delivery planner uses, so a preview can never disagree with what
+// actually happens.
+export interface EffectivePolicy {
+  policy: NotificationPolicy | null
+  source: PolicyScope | 'none'
+  chain: PolicyScope[]
+}
+// One planned or completed notification, so the console can show whether a fault
+// was announced, is still waiting out its delay, or was deliberately not sent.
+export interface NotificationDelivery {
+  id: string
+  incident_id: string
+  event_kind: 'incident.opened' | 'incident.resolved'
+  channel_id: string
+  channel_name?: string
+  policy_id?: string
+  status: 'pending' | 'sent' | 'failed' | 'canceled'
+  due_at: string
+  sent_at?: string
+}
+
+// ---- built-in detection sensitivity ----
+// The only tunables the built-in detector has. There is deliberately no "off":
+// fault recording is a product guarantee, so a user who does not want the probe
+// disables the target, and one who does not want to be disturbed edits the
+// notification policy.
+export type DetectionProfile = 'balanced' | 'fast' | 'stable' | 'custom'
+export interface DetectionSettings {
   target_id: string
-  metric_kind: string
-  comparator: string
-  threshold: number
-  fail_threshold: number
-  for_seconds: number
+  kind: string
+  profile: DetectionProfile
+  fail_rounds: number
+  recover_rounds: number
+  // Loss percentage at or above which an ICMP/gateway round counts as a failure.
+  // 100 = only total loss is a fault.
+  icmp_loss_pct: number
+  revision: number
+  updated_at?: string
 }
+export interface DetectionSettingsInput {
+  profile: DetectionProfile
+  fail_rounds: number
+  recover_rounds: number
+  icmp_loss_pct: number
+}
+
+// ---- availability ----
+// Share of verdict-reaching probe rounds that succeeded. Rounds that reached no
+// verdict (blocked permission, unsupported platform, agent offline) are absent
+// from the denominator rather than counted as failures.
+export interface AvailabilityRatio {
+  monitor_id: string
+  agent_id?: string
+  rounds: number
+  ok_rounds: number
+  ratio: number
+}
+export type AvailabilityWindow = '24h' | '7d' | '30d'
+export interface SiteAvailability {
+  window: string
+  targets: Record<string, AvailabilityRatio>
+}
+export interface TargetAvailabilityWindow {
+  window: AvailabilityWindow
+  total: AvailabilityRatio
+  agents: AvailabilityRatio[]
+}
+export interface TargetAvailability {
+  target_id: string
+  windows: TargetAvailabilityWindow[]
+}
+
 export interface Channel {
   id: string
   name: string
@@ -901,10 +955,6 @@ export interface StatusEvent {
   // Disconnect kind for offline transitions ('' for online) — AGENT-002.
   reason?: string
 }
-
-export type AgentAlertScope =
-  | { monitor: string; target?: never }
-  | { target: string; monitor?: never }
 
 export interface StorageStats {
   series: number
@@ -1108,6 +1158,14 @@ async function reqOrNull<T>(method: string, url: string): Promise<T | null> {
   return (await r.json()) as T
 }
 
+// incidentQuery serializes the fault-centre filter onto the incidents query.
+function incidentQuery(f: IncidentFilter): string {
+  const p = new URLSearchParams()
+  for (const [k, v] of Object.entries(f)) if (v) p.set(k, String(v))
+  const qs = p.toString()
+  return qs ? '&' + qs : ''
+}
+
 export const api = {
   login: (username: string, password: string) => req<User>('POST', '/api/v1/auth/login', { username, password }),
   logout: () => req<unknown>('POST', '/api/v1/auth/logout'),
@@ -1133,16 +1191,6 @@ export const api = {
   // Per-agent health + resource rollup for the Agent status list (AGENT-001).
   agentStatuses: (siteID: string) =>
     req<SiteAgentStatuses>('GET', `/api/v1/sites/${encodeURIComponent(siteID)}/agent-statuses`),
-  // Agent connectivity-alert history (AGENT-002). status: firing|resolved|all
-  // (default firing); scope to a single agent with `agent`.
-  agentConnAlerts: (opts: { status?: 'firing' | 'resolved' | 'all'; agent?: string; limit?: number } = {}) => {
-    const p = new URLSearchParams()
-    if (opts.status) p.set('status', opts.status)
-    if (opts.agent) p.set('agent', opts.agent)
-    if (opts.limit) p.set('limit', String(opts.limit))
-    const qs = p.toString()
-    return req<AgentConnAlert[]>('GET', `/api/v1/agent-alerts${qs ? '?' + qs : ''}`)
-  },
   // Live host snapshot: ask the agent for the given scopes (POST), then poll for
   // the result (GET). The POST may return an inline denial (request_id null).
   requestSnapshot: (id: string, scopes: string[]) =>
@@ -1252,9 +1300,9 @@ export const api = {
   // (that null is the console's auto-open signal). PUT persists the resume point.
   onboardingState: () => req<OnboardingState | null>('GET', '/api/v1/onboarding'),
   updateOnboardingState: (state: OnboardingState) => req<OnboardingState>('PUT', '/api/v1/onboarding', state),
-  incidents: (page = 1, pageSize = 15) =>
-    req<IncidentPage>('GET', `/api/v1/incidents?page=${page}&page_size=${pageSize}`),
-  // One incident with its member alert instances (each carrying frozen evidence).
+  incidents: (page = 1, pageSize = 15, filter: IncidentFilter = {}) =>
+    req<IncidentPage>('GET', `/api/v1/incidents?page=${page}&page_size=${pageSize}${incidentQuery(filter)}`),
+  // One incident with its member fault signals (each carrying frozen evidence).
   incident: (id: string) => req<IncidentDetail>('GET', `/api/v1/incidents/${encodeURIComponent(id)}`),
   timeline: (id: string) => req<TimelineEntry[]>('GET', `/api/v1/incidents/${encodeURIComponent(id)}/timeline`),
   // Immutable incident snapshot (server base + per-Agent scene entries). null when
@@ -1269,14 +1317,25 @@ export const api = {
   // reads the identical execution through this report id.
   traceReport: (reportId: string) =>
     req<TraceReportView>('GET', `/api/v1/trace-reports/${encodeURIComponent(reportId)}`),
-  alerts: () => req<Alert[]>('GET', '/api/v1/alerts'),
-  // Alarm history (firing + resolved) for one agent, newest first — scoped to
-  // a user-created monitor OR to a target string (host alerts).
-  agentAlerts: (id: string, scope: AgentAlertScope, limit = 10) => {
-    const p = new URLSearchParams({ limit: String(limit) })
-    if (scope.monitor) p.set('monitor', scope.monitor)
-    else if (scope.target) p.set('target', scope.target)
-    return req<Alert[]>('GET', `/api/v1/agents/${encodeURIComponent(id)}/alerts?${p.toString()}`)
+  // Notification records for one incident: what was sent, to where, when — or
+  // why nothing was.
+  incidentNotifications: (id: string) =>
+    req<NotificationDelivery[]>('GET', `/api/v1/incidents/${encodeURIComponent(id)}/notifications`),
+  // Fault signals: the one history surface for confirmed faults. Filter by agent,
+  // target, detector (availability | agent_connectivity) and state.
+  faultSignals: (
+    opts: {
+      agent?: string
+      target?: string
+      detector?: 'availability' | 'agent_connectivity'
+      state?: 'firing' | 'resolved'
+      limit?: number
+    } = {},
+  ) => {
+    const p = new URLSearchParams()
+    for (const [k, v] of Object.entries(opts)) if (v) p.set(k, String(v))
+    const qs = p.toString()
+    return req<FaultSignal[]>('GET', `/api/v1/fault-signals${qs ? '?' + qs : ''}`)
   },
   // Monitor groups own targets, their shared Agent execution scope and the
   // incident-merge policy. CRUD is site-scoped; the default group cannot be
@@ -1288,14 +1347,33 @@ export const api = {
   updateMonitorGroup: (id: string, body: MonitorGroupInput) =>
     req<unknown>('PUT', `/api/v1/monitor-groups/${encodeURIComponent(id)}`, body),
   deleteMonitorGroup: (id: string) => req<unknown>('DELETE', `/api/v1/monitor-groups/${encodeURIComponent(id)}`),
-  // Group-level one-layer AND/OR alert rules, configured on a monitor group.
-  groupRules: (groupID: string) =>
-    req<GroupRule[]>('GET', `/api/v1/monitor-groups/${encodeURIComponent(groupID)}/rules`),
-  createGroupRule: (groupID: string, rule: GroupRuleInput) =>
-    req<{ id: string }>('POST', `/api/v1/monitor-groups/${encodeURIComponent(groupID)}/rules`, rule),
-  updateGroupRule: (id: string, rule: GroupRuleInput) =>
-    req<unknown>('PUT', `/api/v1/group-rules/${encodeURIComponent(id)}`, rule),
-  deleteGroupRule: (id: string) => req<unknown>('DELETE', `/api/v1/group-rules/${encodeURIComponent(id)}`),
+  // Notification policies: whether/when/where a recorded fault is announced. The
+  // site default is created on first read and cannot be deleted.
+  notificationPolicies: (siteID: string) =>
+    req<NotificationPolicy[]>('GET', `/api/v1/sites/${encodeURIComponent(siteID)}/notification-policies`),
+  createNotificationPolicy: (siteID: string, body: NotificationPolicyInput) =>
+    req<NotificationPolicy>('POST', `/api/v1/sites/${encodeURIComponent(siteID)}/notification-policies`, body),
+  updateNotificationPolicy: (id: string, body: NotificationPolicyInput) =>
+    req<NotificationPolicy>('PATCH', `/api/v1/notification-policies/${encodeURIComponent(id)}`, body),
+  deleteNotificationPolicy: (id: string) =>
+    req<unknown>('DELETE', `/api/v1/notification-policies/${encodeURIComponent(id)}`),
+  // Preview which single policy governs a target, and through which scope.
+  effectiveNotificationPolicy: (targetID: string) =>
+    req<EffectivePolicy>('GET', `/api/v1/targets/${encodeURIComponent(targetID)}/effective-notification-policy`),
+  // Built-in detector sensitivity for one target.
+  detectionSettings: (targetID: string) =>
+    req<DetectionSettings>('GET', `/api/v1/targets/${encodeURIComponent(targetID)}/detection-settings`),
+  updateDetectionSettings: (targetID: string, body: DetectionSettingsInput) =>
+    req<DetectionSettings>('PATCH', `/api/v1/targets/${encodeURIComponent(targetID)}/detection-settings`, body),
+  // Availability over a window: every target of a site, or one target broken
+  // down per Agent.
+  siteAvailability: (siteID: string, window: AvailabilityWindow = '24h') =>
+    req<SiteAvailability>('GET', `/api/v1/sites/${encodeURIComponent(siteID)}/availability?window=${window}`),
+  targetAvailability: (targetID: string, windows: AvailabilityWindow[] = ['24h', '7d', '30d']) =>
+    req<TargetAvailability>(
+      'GET',
+      `/api/v1/targets/${encodeURIComponent(targetID)}/availability?windows=${windows.join(',')}`,
+    ),
   channels: () => req<Channel[]>('GET', '/api/v1/channels'),
   createChannel: (name: string, type: string, config: Record<string, string>) =>
     req<{ id: string }>('POST', '/api/v1/channels', { name, type, config }),
@@ -1305,7 +1383,4 @@ export const api = {
   // Send a sample incident to a webhook config without saving a channel.
   testChannel: (type: string, config: Record<string, string>) =>
     req<ChannelTestResult>('POST', '/api/v1/channels/test', { type, config }),
-  // Add this channel to every alert rule's notify list. Returns rules changed.
-  applyChannelToAll: (id: string) =>
-    req<{ updated: number }>('POST', `/api/v1/channels/${encodeURIComponent(id)}/apply-to-all`),
 }

@@ -1,16 +1,24 @@
 <script setup lang="ts">
 // By-target comparison: the same monitoring target as seen from several agents.
 // The summary table's current state comes from the authoritative target-status
-// batch (per-agent execution/probe/rule); the availability/outages/latest columns,
-// trend charts, per-agent status bands and NAT/TCP cards stay metric-based
-// (historical), overlaying one line/row per agent.
+// batch (per-agent execution/probe/fault) and its 24h/7d/30d availability from the
+// server's own verdict-round accounting; the range availability/outages/latest
+// columns, trend charts, per-agent status bands and NAT/TCP cards stay
+// metric-based (historical), overlaying one line/row per agent.
 import { ref, computed, watch, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { api, type Alert, type KindSummary, type Sample, type TargetAgentStatusRow } from '../../api'
+import {
+  api,
+  type AvailabilityWindow,
+  type FaultSignal,
+  type KindSummary,
+  type Sample,
+  type TargetAgentStatusRow,
+} from '../../api'
 import MetricChart from '../MetricChart.vue'
 import StatusBand from '../StatusBand.vue'
 import MetricStatCards from '../MetricStatCards.vue'
-import AlertsTable from '../AlertsTable.vue'
+import FaultSignalsTable from '../FaultSignalsTable.vue'
 import MonitorStateBadge from './MonitorStateBadge.vue'
 import { useMetricMeta } from '../../composables/useMetricMeta'
 import { useMetricCards, type Card } from '../../composables/useMetricCards'
@@ -25,6 +33,7 @@ import {
 } from '../../lib/metricMeta'
 import { bandSeriesFor, type Prober } from '../../lib/targetGroups'
 import { availability, toPoints } from '../../lib/timeline'
+import { availabilityTone, formatAvailability, type Tone } from '../../lib/targetStatus'
 import { targetIndex } from '../../targetStatus'
 import { fmtByUnit, isByteUnit } from '../../lib/format'
 import { agentLabel } from '../../lib/agentLabel'
@@ -44,15 +53,22 @@ const { t } = useI18n()
 const { metricLabel, unitLabel } = useMetricMeta()
 const { buildCard, buildCodeCard } = useMetricCards()
 
+// The fixed windows the server reports availability over, shown per Agent beside
+// the range-scoped historical figure.
+const AVAIL_WINDOWS: AvailabilityWindow[] = ['24h', '7d', '30d']
+
 const samples = ref<Record<string, Sample[]>>({}) // key: `${agentId}::${kind}`
 // Server-side aggregates for categorical code kinds (NAT / TCP error): the
 // cards only need latest (+ determinate fallback), so these come from the
 // summary endpoint instead of a raw sample window. key: `${agentId}::${kind}`.
 const summaries = ref<Record<string, KindSummary>>({})
-const alerts = ref<Alert[]>([])
+const faults = ref<FaultSignal[]>([])
+// window -> agent id -> success ratio. A missing entry is "unknown", never 0%.
+const availWindows = ref<Record<string, Map<string, number>>>({})
 const loading = ref(false)
 let dataSeq = 0
-let alertSeq = 0
+let faultSeq = 0
+let availSeq = 0
 
 const skey = (agentId: string, kind: string) => `${agentId}::${kind}`
 
@@ -266,25 +282,59 @@ async function loadData() {
   loading.value = false
 }
 
-async function loadAlerts() {
-  const seq = ++alertSeq
-  const scope = props.monitorId ? { monitor: props.monitorId } : { target: props.target }
+// Confirmed fault history for this target, newest confirmation first. Signals are
+// target-scoped (one request covers every Agent), and each row carries its own
+// frozen evidence, so nothing here is re-derived from metric samples. A
+// monitor-less system series has no target id to scope by and shows no records.
+async function loadFaults() {
+  const seq = ++faultSeq
+  if (!props.monitorId) {
+    faults.value = []
+    return
+  }
   try {
-    const lists = await Promise.all(props.probers.map((p) => api.agentAlerts(p.agent.id, scope, 10).catch(() => [] as Alert[])))
-    if (seq !== alertSeq) return
-    alerts.value = lists
-      .flat()
-      .sort((a, b) => new Date(b.started_at).getTime() - new Date(a.started_at).getTime())
-      .slice(0, 20)
+    const list = await api.faultSignals({ target: props.monitorId, limit: 20 })
+    if (seq !== faultSeq) return
+    faults.value = [...list].sort((a, b) => new Date(b.confirmed_at).getTime() - new Date(a.confirmed_at).getTime())
   } catch {
-    if (seq === alertSeq) alerts.value = []
+    if (seq === faultSeq) faults.value = []
   }
 }
+
+// Per-Agent availability over the server's fixed windows. Rounds that reached no
+// verdict are absent from the denominator, and an Agent with no verdict at all in
+// a window is simply missing here — rendered "unknown" rather than 0%.
+async function loadAvailability() {
+  const seq = ++availSeq
+  if (!props.monitorId) {
+    availWindows.value = {}
+    return
+  }
+  try {
+    const res = await api.targetAvailability(props.monitorId, AVAIL_WINDOWS)
+    if (seq !== availSeq) return
+    const out: Record<string, Map<string, number>> = {}
+    for (const w of res.windows) {
+      const byAgent = new Map<string, number>()
+      for (const ratio of w.agents) if (ratio.agent_id) byAgent.set(ratio.agent_id, ratio.ratio)
+      out[w.window] = byAgent
+    }
+    availWindows.value = out
+  } catch {
+    if (seq === availSeq) availWindows.value = {}
+  }
+}
+
+const windowRatio = (agentId: string, window: AvailabilityWindow) => availWindows.value[window]?.get(agentId)
+const windowAvail = (agentId: string, window: AvailabilityWindow): string =>
+  formatAvailability(windowRatio(agentId, window)) ?? t('targetStatus.availabilityUnknown')
+const windowTone = (agentId: string, window: AvailabilityWindow): Tone => availabilityTone(windowRatio(agentId, window))
 
 function reload() {
   applyDefaults()
   loadData()
-  loadAlerts()
+  loadFaults()
+  loadAvailability()
 }
 
 watch([
@@ -307,6 +357,9 @@ onMounted(reload)
           <tr>
             <th>{{ t('targetStatus.thAgent') }}</th>
             <th>{{ t('targetStatus.thCurrent') }}</th>
+            <th class="num">{{ t('targetStatus.availability24h') }}</th>
+            <th class="num">{{ t('targetStatus.availability7d') }}</th>
+            <th class="num">{{ t('targetStatus.availability30d') }}</th>
             <th class="num">{{ t('targetStatus.thAvailability') }}</th>
             <th class="num">{{ t('targetStatus.thOutages') }}</th>
             <th class="num">{{ t('targetStatus.thLatest') }}</th>
@@ -321,10 +374,16 @@ onMounted(reload)
               <span v-if="r.row" class="op-cell">
                 <MonitorStateBadge dim="execution" :state="r.row.execution_state" />
                 <MonitorStateBadge v-if="r.row.probe_state !== 'not_applicable'" dim="probe" :state="r.row.probe_state" />
-                <MonitorStateBadge v-if="r.row.rule_state !== 'normal'" dim="rule" :state="r.row.rule_state" />
+                <MonitorStateBadge v-if="r.row.fault_state !== 'normal'" dim="fault" :state="r.row.fault_state" />
               </span>
               <span v-else class="hint">—</span>
             </td>
+            <td
+              v-for="w in AVAIL_WINDOWS"
+              :key="w"
+              class="num mono"
+              :class="`t-${windowTone(r.id, w)}`"
+            >{{ windowAvail(r.id, w) }}</td>
             <td class="num mono" :class="`t-${r.availTone}`">{{ r.avail === null ? '—' : r.avail + '%' }}</td>
             <td class="num mono">{{ r.avail === null ? '—' : r.outages }}</td>
             <td class="num mono">{{ r.latest }}</td>
@@ -379,7 +438,9 @@ onMounted(reload)
       </div>
     </template>
 
-    <AlertsTable :alerts="alerts" show-agent />
+    <!-- Confirmed fault history. Every column is frozen at confirmation time, so a
+         later rename or deletion of the target cannot rewrite what it said. -->
+    <FaultSignalsTable :signals="faults" show-agent />
   </div>
 </template>
 

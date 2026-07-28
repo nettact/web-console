@@ -49,7 +49,7 @@ const backLocation = computed(() => ({
           </div>
           <MonitorStateBadge dim="execution" :state="agent.execution_state" />
           <MonitorStateBadge v-if="agent.probe_state !== 'not_applicable'" dim="probe" :state="agent.probe_state" />
-          <MonitorStateBadge dim="rule" :state="agent.rule_state" />
+          <MonitorStateBadge dim="fault" :state="agent.fault_state" />
         </div>
       </header>
 

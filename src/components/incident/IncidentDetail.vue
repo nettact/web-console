@@ -1,7 +1,7 @@
 <script setup lang="ts">
-// Accessible incident detail drawer (INCIDENT-001/002 + DIAG-001). Owns its own
-// data (incident + member alerts, timeline, immutable snapshot, shared trace
-// reports) and self-paced polling: it only polls while the snapshot is still
+// Accessible incident detail drawer (ALERT-002 + INCIDENT-002 + DIAG-001). Owns
+// its own data (incident + member fault signals, notification records, timeline,
+// immutable snapshot, shared trace reports) and self-paced polling: it only polls while the snapshot is still
 // collecting or a referenced trace report is queued/running, via the reusable
 // usePolling composable (single in-flight request, cleanup on unmount). Dialog
 // semantics: role=dialog / aria-modal, focus moved in on open, Tab trapped,
@@ -16,7 +16,8 @@ import {
   type TimelineEntry,
   type SnapshotView,
   type TraceReportView,
-  type Alert,
+  type FaultSignal,
+  type NotificationDelivery,
 } from '../../api'
 import { toDateLocale } from '../../i18n'
 import { useIncidentLabels, severityTone } from '../../composables/useIncidentLabels'
@@ -46,14 +47,20 @@ const detail = ref<IncidentDetail | null>(null)
 const timeline = ref<TimelineEntry[]>([])
 const snapshot = ref<SnapshotView | null>(null)
 const traces = ref<TraceReportView[]>([])
+const notifications = ref<NotificationDelivery[]>([])
+// Whether the notification records could be read at all. An empty list means
+// "nothing was due to be sent", which is a legitimate and reassuring state; a
+// failed request must not borrow that wording and tell the operator no channel
+// was notified when the truth is that we do not know.
+const notifyFailed = ref(false)
 const loaded = ref(false)
 const error = ref('')
 
 const incident = computed(() => detail.value?.incident ?? null)
 const members = computed(() => detail.value?.members ?? [])
-// Count of distinct targets STILL currently abnormal on this incident's firing
-// alerts — computed server-side from current condition state, deliberately not
-// derived from the immutable evidence count.
+// Count of distinct targets STILL failing right now — computed server-side from
+// live detector state, deliberately not derived from the member count, whose
+// evidence is immutable.
 const abnormalTargetCount = computed(() => detail.value?.abnormal_target_count ?? 0)
 const titleId = 'incident-detail-title'
 
@@ -61,28 +68,64 @@ const fmtDateTime = (s: string | null) =>
   s ? new Date(s).toLocaleString(toDateLocale(locale.value), { hour12: false }) : '—'
 const fmtNum = (v: number) => (Number.isInteger(v) ? String(v) : v.toFixed(2))
 
-// A member alert resolved by a configuration change is shown as a distinct
-// "terminated" state, never mixed with a genuine recovery.
-const memberStateKey = (a: Alert) => {
-  if (a.state === 'firing') return 'firing'
-  return a.resolve_reason === 'configuration_changed' ? 'terminated' : 'resolved'
+// A member ended by a configuration change is shown as a distinct "terminated"
+// state, never mixed with a genuine recovery: the fault did not go away, it
+// stopped being observable.
+const memberStateKey = (m: FaultSignal) => {
+  if (m.state === 'firing') return 'firing'
+  return m.resolve_reason && m.resolve_reason !== 'recovered' ? 'terminated' : 'resolved'
 }
-const memberStateLabel = (a: Alert) => t(`incidents.detail.memberState.${memberStateKey(a)}`)
+const memberStateLabel = (m: FaultSignal) => t(`incidents.detail.memberState.${memberStateKey(m)}`)
+
+// How long the detector took to confirm — the gap between the first failing round
+// and the threshold being met. Shown beside the timestamps so a slow confirmation
+// is visible rather than mistaken for a slow fault.
+function confirmLag(m: FaultSignal): string {
+  const secs = Math.max(
+    0,
+    Math.round((new Date(m.confirmed_at).getTime() - new Date(m.observed_at).getTime()) / 1000),
+  )
+  return t('incidents.detail.confirmLagValue', { n: secs })
+}
+
+// A delivery's status in words. "canceled" is not a failure: it is what happens
+// when a fault recovers inside its notification delay, which is the delay doing
+// exactly what it exists for.
+const deliveryLabel = (d: NotificationDelivery) => t(`incidents.detail.delivery.${d.status}`)
+const deliveryTone = (d: NotificationDelivery) =>
+  d.status === 'sent' ? 'ok' : d.status === 'failed' ? 'warn' : 'neutral'
 
 // ---- data + self-paced polling ----
-async function load(): Promise<boolean> {
+
+// How long to wait before looking again when the only outstanding work is a
+// delivery serving out its notification delay. Returns false when nothing is
+// pending. The small settle margin absorbs clock skew between browser and server
+// and gives the delivery worker (3s cadence) a tick to actually send.
+const NOTIFY_SETTLE_MS = 4000
+function nextDeliveryDelay(notes: NotificationDelivery[]): boolean | number {
+  const due = notes.filter((n) => n.status === 'pending').map((n) => new Date(n.due_at).getTime())
+  if (!due.length) return false
+  return Math.max(NOTIFY_SETTLE_MS, Math.min(...due) - Date.now() + NOTIFY_SETTLE_MS)
+}
+
+async function load(): Promise<boolean | number> {
   const id = props.incidentId
   try {
-    const [d, tl, snap, sums] = await Promise.all([
+    const [d, tl, snap, sums, notes] = await Promise.all([
       api.incident(id),
       api.timeline(id),
       api.incidentSnapshot(id),
       api.incidentTraces(id),
+      // Kept out of the failure path of the drawer as a whole — the fault itself
+      // is still worth showing — but the failure is recorded, not erased.
+      api.incidentNotifications(id).catch(() => null),
     ])
     if (id !== props.incidentId) return false // selection changed mid-flight
     detail.value = d
     timeline.value = tl
     snapshot.value = snap
+    notifyFailed.value = notes === null
+    notifications.value = notes ?? []
     const reports = await Promise.all(
       sums.map((s) => api.traceReport(s.report_id).catch(() => null)),
     )
@@ -93,7 +136,12 @@ async function load(): Promise<boolean> {
     // Keep polling only while there is live work to observe.
     const snapActive = snap?.status === 'collecting'
     const traceActive = sums.some((s) => s.status === 'queued' || s.status === 'running')
-    return snapActive || traceActive
+    if (snapActive || traceActive) return true
+    // A pending delivery is live work too — the drawer should show it flip to
+    // "sent" rather than looking stuck — but a notification delay is minutes,
+    // not seconds. Sleep until just after the earliest one comes due instead of
+    // re-fetching the whole drawer every 4s for an answer that cannot change yet.
+    return nextDeliveryDelay(notes ?? [])
   } catch (e) {
     error.value = String((e as Error).message || e)
     throw e // let the poller back off and retry
@@ -211,17 +259,22 @@ onBeforeUnmount(() => {
           {{ t('incidents.detail.evidenceExpired') }}
         </p>
 
-        <!-- Member alerts + per-condition evidence. -->
+        <!-- Member fault signals with their frozen evidence. -->
         <section class="block" aria-labelledby="mem-h">
-          <h4 id="mem-h">{{ t('incidents.detail.memberAlerts') }}</h4>
+          <h4 id="mem-h">{{ t('incidents.detail.memberFaults') }}</h4>
           <p v-if="!members.length" class="hint">{{ t('incidents.detail.noMembers') }}</p>
           <div v-for="m in members" :key="m.id" class="card sub">
             <div class="member-head">
-              <b>{{ m.rule_name }}</b>
+              <b>{{ m.title || (locale === 'en' ? m.desc_en : m.desc_zh) || m.target_name || m.target_addr }}</b>
               <span class="badge" :class="m.state === 'firing' ? 'open' : memberStateKey(m) === 'terminated' ? 'warn' : 'resolved'">
                 {{ memberStateLabel(m) }}
               </span>
               <span class="badge" :class="severityTone(m.severity)">{{ sevLabel(m.severity) }}</span>
+              <span
+                v-if="m.state === 'firing' && !m.currently_abnormal"
+                class="badge neutral tiny"
+                :title="t('incidents.detail.recoveringHint')"
+              >{{ t('incidents.detail.recovering') }}</span>
               <span class="hint agent-name">
                 <span
                   v-if="presenceOf(m.agent_id)"
@@ -229,50 +282,93 @@ onBeforeUnmount(() => {
                   :class="presenceOf(m.agent_id)"
                   :title="presenceOf(m.agent_id) === 'online' ? t('agents.statusOnline') : t('agents.statusOffline')"
                 ></span>
-                {{ m.agent_host || m.agent_id }}
+                {{ m.agent_name || m.agent_id }}
               </span>
             </div>
-            <div class="table-scroll">
-              <table class="mini-table">
-                <thead>
-                  <tr>
-                    <th>{{ t('incidents.detail.evTarget') }}</th>
-                    <th>{{ t('incidents.detail.evAgent') }}</th>
-                    <th>{{ t('incidents.detail.evMetric') }}</th>
-                    <th>{{ t('incidents.detail.evValue') }}</th>
-                    <th>{{ t('incidents.detail.evThreshold') }}</th>
-                    <th>{{ t('incidents.detail.evObserved') }}</th>
-                    <th>{{ t('incidents.detail.evState') }}</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  <tr v-if="!m.evidence.length"><td colspan="7" class="hint">{{ t('incidents.detail.noEvidence') }}</td></tr>
-                  <tr v-for="ev in m.evidence" :key="ev.id">
-                    <td class="ev-target">
-                      <span class="mono ev-name">{{ ev.target_name || ev.target_addr || ev.target_id }}</span>
-                      <span v-if="ev.target_name && ev.target_addr" class="hint mono ev-addr">{{ ev.target_addr }}</span>
-                    </td>
-                    <td class="hint">{{ m.agent_host || m.agent_id }}</td>
-                    <td>
-                      {{ metricLabel(ev.metric_kind) }}
-                      <span v-if="ev.reason_code > 0" class="reason-chip" :title="ev.reason_detail || undefined">{{ probeReasonLabel(ev.reason_code) }}</span>
-                      <span v-if="ev.reason_detail" class="hint mono ev-detail" :title="ev.reason_detail">{{ ev.reason_detail }}</span>
-                    </td>
-                    <td class="num mono">{{ fmtNum(ev.value) }}</td>
-                    <td class="num mono">
-                      <span :aria-label="comparatorLabel(ev.comparator)">{{ comparatorSymbol(ev.comparator) }}</span>
-                      {{ fmtNum(ev.threshold) }}
-                    </td>
-                    <td class="hint">{{ fmtDateTime(ev.observed_at) }}</td>
-                    <td>
-                      <span class="badge tiny" :class="ev.currently_abnormal ? 'open' : 'neutral'">
-                        {{ ev.currently_abnormal ? t('incidents.detail.evCurrent') : t('incidents.detail.evHistorical') }}
-                      </span>
-                    </td>
-                  </tr>
-                </tbody>
-              </table>
-            </div>
+            <dl class="facts member-facts">
+              <div v-if="m.target_addr">
+                <dt>{{ t('incidents.detail.evTarget') }}</dt>
+                <dd class="mono">{{ m.target_addr }}</dd>
+              </div>
+              <div v-if="m.metric_kind">
+                <dt>{{ t('incidents.detail.evMetric') }}</dt>
+                <dd>
+                  {{ metricLabel(m.metric_kind) }}
+                  <span class="mono">{{ fmtNum(m.value) }}</span>
+                  <span class="hint">
+                    (<span :aria-label="comparatorLabel(m.comparator)">{{ comparatorSymbol(m.comparator) }}</span>
+                    {{ fmtNum(m.threshold) }})
+                  </span>
+                </dd>
+              </div>
+              <div v-if="m.reason_code > 0">
+                <dt>{{ t('incidents.detail.evReason') }}</dt>
+                <dd>
+                  <span class="reason-chip">{{ probeReasonLabel(m.reason_code) }}</span>
+                  <span v-if="m.reason_detail" class="hint mono ev-detail" :title="m.reason_detail">{{ m.reason_detail }}</span>
+                </dd>
+              </div>
+              <div>
+                <dt>{{ t('incidents.detail.evObserved') }}</dt>
+                <dd class="hint">{{ fmtDateTime(m.observed_at) }}</dd>
+              </div>
+              <div>
+                <dt>{{ t('incidents.detail.evConfirmed') }}</dt>
+                <dd class="hint">
+                  {{ fmtDateTime(m.confirmed_at) }}
+                  <span class="hint">({{ t('incidents.detail.confirmLag') }} {{ confirmLag(m) }})</span>
+                </dd>
+              </div>
+              <div v-if="m.resolved_at">
+                <dt>{{ t('incidents.detail.evResolved') }}</dt>
+                <dd class="hint">{{ fmtDateTime(m.resolved_at) }}</dd>
+              </div>
+              <div>
+                <dt>{{ t('incidents.detail.evSensitivity') }}</dt>
+                <dd class="hint">
+                  {{ t('incidents.detail.sensitivityValue', { fail: m.fail_threshold, recover: m.recover_threshold }) }}
+                </dd>
+              </div>
+              <div v-if="m.resolve_reason">
+                <dt>{{ t('incidents.detail.endReason') }}</dt>
+                <dd>
+                  <span class="badge tiny" :class="m.resolve_reason === 'recovered' ? 'ok' : 'warn'">
+                    {{ resolveReasonLabel(m.resolve_reason) }}
+                  </span>
+                </dd>
+              </div>
+            </dl>
+          </div>
+        </section>
+
+        <!-- What was actually sent, to where and when — or why nothing was. -->
+        <section class="block" aria-labelledby="notify-h">
+          <h4 id="notify-h">{{ t('incidents.detail.notifications') }}</h4>
+          <p v-if="notifyFailed" class="hint warn-text">{{ t('incidents.detail.ntUnavailable') }}</p>
+          <p v-else-if="!notifications.length" class="hint">
+            {{ t('incidents.detail.noNotifications') }}
+          </p>
+          <div v-if="notifications.length" class="table-scroll">
+            <table class="mini-table">
+              <thead>
+                <tr>
+                  <th>{{ t('incidents.detail.ntEvent') }}</th>
+                  <th>{{ t('incidents.detail.ntChannel') }}</th>
+                  <th>{{ t('incidents.detail.ntStatus') }}</th>
+                  <th>{{ t('incidents.detail.ntDue') }}</th>
+                  <th>{{ t('incidents.detail.ntSent') }}</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="n in notifications" :key="n.id">
+                  <td>{{ t(`incidents.detail.ntKind.${n.event_kind}`) }}</td>
+                  <td>{{ n.channel_name || n.channel_id }}</td>
+                  <td><span class="badge tiny" :class="deliveryTone(n)">{{ deliveryLabel(n) }}</span></td>
+                  <td class="hint">{{ fmtDateTime(n.due_at) }}</td>
+                  <td class="hint">{{ fmtDateTime(n.sent_at ?? null) }}</td>
+                </tr>
+              </tbody>
+            </table>
           </div>
         </section>
 
@@ -407,6 +503,13 @@ onBeforeUnmount(() => {
   flex-wrap: wrap;
   margin-bottom: 8px;
 }
+/* A member's frozen evidence reads as label/value pairs rather than a one-row
+   table: a built-in detector reaches its verdict from a single metric, so there
+   is nothing to tabulate. */
+.member-facts {
+  margin: 0;
+  gap: 6px 26px;
+}
 .agent-name {
   display: inline-flex;
   align-items: center;
@@ -459,6 +562,10 @@ onBeforeUnmount(() => {
 }
 .table-scroll {
   overflow-x: auto;
+}
+/* "We could not read this" must not look like the calm "nothing to report". */
+.warn-text {
+  color: var(--warning);
 }
 .mini-table {
   width: 100%;

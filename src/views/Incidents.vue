@@ -1,64 +1,90 @@
 <script setup lang="ts">
-// Incidents page: the site's parallel incidents (INCIDENT-001) with a group-aware
-// list and an accessible detail drawer (INCIDENT-002 snapshot + DIAG-001 traces).
-// The list keeps server pagination; a lightweight state/group filter narrows the
-// currently-loaded page. Selecting an incident mounts IncidentDetail keyed by its
-// id, which owns detail loading and self-paced polling.
-import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
-import { useRoute } from 'vue-router'
+// Fault centre (ALERT-002): the one place a fault lives, whether or not anyone
+// was notified about it. Detection is unconditional now, so this page is the
+// complete record — current faults, history, evidence and what was sent — and it
+// no longer has to be assembled from three separate lists (connectivity alerts,
+// firing alerts, incidents) the way the rule-era page did.
+//
+// Filtering is SERVER-side: narrowing to "open, critical, this group" must search
+// the whole history, not just the page already loaded.
+import { ref, computed, onMounted, onBeforeUnmount, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
-import { api, type Incident, type Alert } from '../api'
+import { api, type Incident, type IncidentFilter } from '../api'
 import { toDateLocale } from '../i18n'
 import { useIncidentLabels, severityTone } from '../composables/useIncidentLabels'
 import IncidentDetail from '../components/incident/IncidentDetail.vue'
-import { agentStatus } from '../agentStatus'
-import { agentLabel } from '../lib/agentLabel'
+import { onSSE } from '../lib/sse'
 
 const { t, locale } = useI18n()
 const route = useRoute()
+const router = useRouter()
 const { sevLabel, layerLabel } = useIncidentLabels()
 
-// Firing agent connectivity alerts (AGENT-002), sourced from the shared
-// agent-status store so it stays in lockstep with the Agent list — no extra fetch.
-const connAlerts = computed(() =>
-  agentStatus.agents
-    .filter((a) => a.connectivity_alert)
-    .map((a) => ({ agent: a, alert: a.connectivity_alert! })),
-)
-
 const incidents = ref<Incident[]>([])
-const alerts = ref<Alert[]>([])
+const summary = ref({ open: 0, opened_24h: 0, resolved_24h: 0, top_layer: '' })
 const selected = ref<string>('')
 const error = ref('')
+const loading = ref(false)
 let timer: number | undefined
+let offSSE: (() => void) | undefined
 
-// Active-alert row helpers: who fired (agent hostname → short id) and why
-// (server-rendered fault text in the current language, else first evidence).
-const alertAgentLabel = (a: Alert) => a.agent_host || a.agent_id.slice(0, 14) + '…'
-const alertReason = (a: Alert) =>
-  (locale.value === 'en' ? a.desc_en : a.desc_zh) ||
-  a.evidence[0]?.target_name ||
-  a.evidence[0]?.target_addr ||
-  a.rule_name
-const fmtTime = (s: string) => new Date(s).toLocaleTimeString(toDateLocale(locale.value))
 const fmtDateTime = (s: string | null) =>
   s ? new Date(s).toLocaleString(toDateLocale(locale.value)) : '—'
 
-// ---- filters (client-side, over the loaded page; server pagination preserved) ----
-const stateFilter = ref<'all' | 'open' | 'resolved'>('all')
-const groupFilter = ref<string>('all')
+// duration renders how long a fault lasted (or has lasted), from opened_at.
+function duration(i: Incident): string {
+  const end = i.resolved_at ? new Date(i.resolved_at).getTime() : Date.now()
+  const secs = Math.max(0, Math.round((end - new Date(i.opened_at).getTime()) / 1000))
+  if (secs < 60) return t('incidents.durSeconds', { n: secs })
+  if (secs < 3600) return t('incidents.durMinutes', { n: Math.round(secs / 60) })
+  if (secs < 86400) return t('incidents.durHours', { n: Math.round(secs / 360) / 10 })
+  return t('incidents.durDays', { n: Math.round(secs / 8640) / 10 })
+}
+
+// ---- tabs + filters (server-side) ----
+const tab = ref<'open' | 'resolved'>('open')
+const severity = ref('')
+const groupId = ref('')
+const kind = ref('')
+const search = ref('')
+
+const filter = computed<IncidentFilter>(() => ({
+  state: tab.value,
+  severity: severity.value || undefined,
+  group: groupId.value || undefined,
+  kind: kind.value || undefined,
+  q: search.value.trim() || undefined,
+}))
+
+// Group choices come from the site's actual monitor groups, not from the page of
+// incidents on screen: filtering is server-side, so deriving the options from the
+// current page would make a group unselectable precisely when it has no fault on
+// this page — and picking one would then narrow the options down to itself.
+//
+// Groups seen on the current page are merged in on top, because an incident
+// freezes its group name: a group deleted after the fact still filters its own
+// history correctly and must stay reachable.
+const siteGroups = ref<{ id: string; name: string }[]>([])
 const groupOptions = computed(() => {
   const seen = new Map<string, string>()
-  for (const i of incidents.value) if (i.group_id) seen.set(i.group_id, i.group_name || i.group_id)
+  for (const g of siteGroups.value) seen.set(g.id, g.name)
+  for (const i of incidents.value) {
+    if (i.group_id && !seen.has(i.group_id)) seen.set(i.group_id, i.group_name || i.group_id)
+  }
   return Array.from(seen, ([id, name]) => ({ id, name }))
 })
-const filteredIncidents = computed(() =>
-  incidents.value.filter(
-    (i) =>
-      (stateFilter.value === 'all' || i.state === stateFilter.value) &&
-      (groupFilter.value === 'all' || i.group_id === groupFilter.value),
-  ),
-)
+
+const PROBE_KINDS = ['icmp', 'gateway', 'tcp', 'http', 'dns', 'nat', 'agent_connectivity']
+
+// notifyState summarizes an incident's delivery records for the list: announced,
+// waiting out its delay, or recorded only. "Recorded only" is a legitimate state,
+// not a failure, so it reads as neutral rather than as a warning.
+function notifyState(i: Incident): { key: string; tone: string } {
+  if (i.notified_count > 0) return { key: 'incidents.notifySent', tone: 'ok' }
+  if (i.pending_notify_count > 0) return { key: 'incidents.notifyPending', tone: 'neutral' }
+  return { key: 'incidents.notifyRecordedOnly', tone: 'neutral' }
+}
 
 // ---- pagination (server-side) ----
 const PAGE_SIZES = [15, 30, 50, 100]
@@ -73,17 +99,21 @@ function goPage(p: number) {
     load()
   }
 }
-function onPageSize() {
-  page.value = 1
-  load()
-}
 
+// Three things can start a load at once — a debounced filter edit, an SSE push
+// and the safety poll — and they do not come back in the order they were sent.
+// Without this guard a slow request for the old filter can land last and repaint
+// the table with results the operator already narrowed away.
+let loadSeq = 0
 async function load() {
+  const seq = ++loadSeq
+  loading.value = true
   try {
-    const [res, al] = await Promise.all([api.incidents(page.value, pageSize.value), api.alerts()])
+    const res = await api.incidents(page.value, pageSize.value, filter.value)
+    if (seq !== loadSeq) return // a newer request is already in flight
     incidents.value = res.items
     total.value = res.total
-    alerts.value = al
+    summary.value = res.summary
     const tp = Math.max(1, Math.ceil(total.value / pageSize.value))
     if (page.value > tp) {
       page.value = tp
@@ -91,27 +121,58 @@ async function load() {
     }
     error.value = ''
   } catch (e) {
+    if (seq !== loadSeq) return
     error.value = String((e as Error).message || e)
+  } finally {
+    if (seq === loadSeq) loading.value = false
   }
 }
 
+// Any filter change restarts at page 1: staying on page 4 of a narrower result
+// set would show an empty table for no visible reason.
+let debounce: number | undefined
+watch(filter, () => {
+  page.value = 1
+  if (debounce) clearTimeout(debounce)
+  debounce = window.setTimeout(load, 200)
+})
+
 function openIncident(id: string) {
   selected.value = id
+  // Keep the deep link honest so a reload or a shared URL reopens the same fault.
+  router.replace({ query: { ...route.query, incident: id } })
 }
 function closeDetail() {
   selected.value = ''
+  const q = { ...route.query }
+  delete q.incident
+  router.replace({ query: q })
 }
 
+const SITE = 'site_default'
+
 onMounted(async () => {
-  // Deep link from a notification: ?incident=<id> auto-opens that incident.
+  // Deep link from a notification or the tray: ?incident=<id> auto-opens it.
   const deep = route.query.incident
   if (typeof deep === 'string' && deep) selected.value = deep
+  // The filter list is a convenience, not a prerequisite: if it cannot be read
+  // the page still works, falling back to the groups visible on the page.
+  api
+    .monitorGroups(SITE)
+    .then((gs) => {
+      siteGroups.value = gs.map((g) => ({ id: g.id, name: g.name }))
+    })
+    .catch(() => {})
   await load()
-  // The list refresh keeps the overview coherent; the drawer polls its own detail.
-  timer = window.setInterval(load, 5000)
+  // The server pushes incident lifecycle changes; the slow poll is only a safety
+  // net for a dropped stream, so the list cannot silently go stale.
+  offSSE = onSSE('incident', () => load())
+  timer = window.setInterval(load, 15000)
 })
 onBeforeUnmount(() => {
   if (timer) clearInterval(timer)
+  if (debounce) clearTimeout(debounce)
+  offSSE?.()
 })
 </script>
 
@@ -123,138 +184,126 @@ onBeforeUnmount(() => {
     </div>
     <p v-if="error" class="err">{{ error }}</p>
 
-    <section v-if="connAlerts.length" class="panel">
-      <div class="panel-head">
-        <h3>{{ t('agentStatus.connAlertsTitle') }}</h3>
-        <span class="count hot">{{ connAlerts.length }}</span>
+    <section class="summary">
+      <div class="stat">
+        <span class="stat-value" :class="{ hot: summary.open > 0 }">{{ summary.open }}</span>
+        <span class="stat-label">{{ t('incidents.statOpen') }}</span>
       </div>
-      <div class="table-wrap">
-        <table class="data-table">
-          <thead>
-            <tr>
-              <th>{{ t('agentStatus.thName') }}</th>
-              <th>{{ t('agentStatus.thReason') }}</th>
-              <th>{{ t('agentStatus.thOfflineSince') }}</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr v-for="c in connAlerts" :key="c.alert.id">
-              <td>
-                <router-link class="link" :to="`/agents/${encodeURIComponent(c.agent.id)}`">
-                  {{ agentLabel(c.agent) }}
-                </router-link>
-              </td>
-              <td>{{ t(`agentStatus.reason.${c.alert.reason}`) }}</td>
-              <td class="hint">{{ fmtDateTime(c.alert.offline_since) }}</td>
-            </tr>
-          </tbody>
-        </table>
+      <div class="stat">
+        <span class="stat-value">{{ summary.opened_24h }}</span>
+        <span class="stat-label">{{ t('incidents.statOpened24h') }}</span>
+      </div>
+      <div class="stat">
+        <span class="stat-value">{{ summary.resolved_24h }}</span>
+        <span class="stat-label">{{ t('incidents.statResolved24h') }}</span>
+      </div>
+      <div v-if="summary.top_layer" class="stat">
+        <span class="stat-value small">{{ layerLabel(summary.top_layer) }}</span>
+        <span class="stat-label">{{ t('incidents.statTopLayer') }}</span>
       </div>
     </section>
 
     <section class="panel">
-      <div class="panel-head">
-        <h3>{{ t('incidents.activeAlerts') }}</h3>
-        <span class="count" :class="{ hot: alerts.length }">{{ alerts.length }}</span>
-      </div>
-      <div class="table-wrap">
-        <table class="data-table">
-          <thead>
-            <tr>
-              <th>{{ t('incidents.thRule') }}</th>
-              <th>{{ t('incidents.thNode') }}</th>
-              <th>{{ t('incidents.thReason') }}</th>
-              <th>{{ t('incidents.thLayer') }}</th>
-              <th>{{ t('incidents.thStart') }}</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr v-if="!alerts.length"><td colspan="5" class="hint">{{ t('incidents.noActiveAlerts') }}</td></tr>
-            <tr v-for="a in alerts" :key="a.id">
-              <td>{{ a.rule_name }}</td>
-              <td :title="a.agent_id">{{ alertAgentLabel(a) }}</td>
-              <td>{{ alertReason(a) }}</td>
-              <td><span class="badge neutral">{{ layerLabel(a.layer) }}</span></td>
-              <td class="hint">{{ fmtTime(a.started_at) }}</td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
-    </section>
-
-    <section class="panel">
-      <div class="panel-head">
-        <h3>{{ t('incidents.incidents') }}</h3>
-        <span class="head-hint hint">{{ t('incidents.rowHint') }}</span>
+      <div class="tabs" role="tablist">
+        <button
+          class="tab"
+          role="tab"
+          :class="{ active: tab === 'open' }"
+          :aria-selected="tab === 'open'"
+          @click="tab = 'open'"
+        >{{ t('incidents.tabCurrent') }}</button>
+        <button
+          class="tab"
+          role="tab"
+          :class="{ active: tab === 'resolved' }"
+          :aria-selected="tab === 'resolved'"
+          @click="tab = 'resolved'"
+        >{{ t('incidents.tabHistory') }}</button>
         <span class="count">{{ total }}</span>
       </div>
 
       <div class="filters">
         <label class="filter">
-          <span class="hint">{{ t('incidents.filterState') }}</span>
-          <select v-model="stateFilter">
-            <option value="all">{{ t('incidents.filterAll') }}</option>
-            <option value="open">{{ t('incidents.stateOpen') }}</option>
-            <option value="resolved">{{ t('incidents.stateResolved') }}</option>
+          <span class="hint">{{ t('incidents.filterSeverity') }}</span>
+          <select v-model="severity">
+            <option value="">{{ t('incidents.filterAll') }}</option>
+            <option value="critical">{{ sevLabel('critical') }}</option>
+            <option value="error">{{ sevLabel('error') }}</option>
+            <option value="warn">{{ sevLabel('warn') }}</option>
+            <option value="info">{{ sevLabel('info') }}</option>
           </select>
         </label>
         <label class="filter">
           <span class="hint">{{ t('incidents.filterGroup') }}</span>
-          <select v-model="groupFilter">
-            <option value="all">{{ t('incidents.filterAll') }}</option>
+          <select v-model="groupId">
+            <option value="">{{ t('incidents.filterAll') }}</option>
             <option v-for="g in groupOptions" :key="g.id" :value="g.id">{{ g.name }}</option>
           </select>
         </label>
-        <span v-if="stateFilter !== 'all' || groupFilter !== 'all'" class="hint filter-note">
-          {{ t('incidents.filterNote') }}
-        </span>
+        <label class="filter">
+          <span class="hint">{{ t('incidents.filterKind') }}</span>
+          <select v-model="kind">
+            <option value="">{{ t('incidents.filterAll') }}</option>
+            <option v-for="k in PROBE_KINDS" :key="k" :value="k">{{ t(`incidents.kind_${k}`) }}</option>
+          </select>
+        </label>
+        <label class="filter grow">
+          <span class="hint">{{ t('incidents.filterSearch') }}</span>
+          <input v-model="search" type="search" :placeholder="t('incidents.searchPlaceholder')" />
+        </label>
       </div>
 
       <div class="table-wrap">
         <table class="data-table">
           <thead>
             <tr>
-              <th>{{ t('incidents.thState') }}</th>
-              <th>{{ t('incidents.thGroup') }}</th>
+              <th>{{ t('incidents.thTitle') }}</th>
               <th>{{ t('incidents.thSeverity') }}</th>
+              <th>{{ t('incidents.thGroup') }}</th>
               <th>{{ t('incidents.thSuspectedLayer') }}</th>
               <th>{{ t('incidents.thMembers') }}</th>
               <th>{{ t('incidents.thStartTime') }}</th>
-              <th>{{ t('incidents.thResolvedTime') }}</th>
+              <th>{{ t('incidents.thDuration') }}</th>
+              <th>{{ t('incidents.thNotify') }}</th>
               <th class="action-col">{{ t('incidents.thAction') }}</th>
             </tr>
           </thead>
           <tbody>
-            <tr v-if="!filteredIncidents.length"><td colspan="8" class="hint">{{ t('incidents.noIncidents') }}</td></tr>
+            <tr v-if="!incidents.length">
+              <td colspan="9" class="hint">
+                {{ loading ? t('common.loading') : t(tab === 'open' ? 'incidents.noCurrent' : 'incidents.noHistory') }}
+              </td>
+            </tr>
             <tr
-              v-for="i in filteredIncidents"
+              v-for="i in incidents"
               :key="i.id"
               class="clickable"
               :class="{ selected: i.id === selected }"
               tabindex="0"
               role="button"
-              :aria-label="t('incidents.openDetailAria', { group: i.group_name || '—' })"
+              :aria-label="t('incidents.openDetailAria', { group: i.title || i.group_name || '—' })"
               @click="openIncident(i.id)"
               @keydown.enter.prevent="openIncident(i.id)"
               @keydown.space.prevent="openIncident(i.id)"
             >
               <td>
-                <span class="badge" :class="i.state">
-                  <span class="dot" :class="i.state === 'open' ? 'down' : 'up'"></span>
-                  {{ i.state === 'open' ? t('incidents.stateOpen') : t('incidents.stateResolved') }}
-                </span>
+                <span class="title">{{ i.title || i.summary || '—' }}</span>
                 <span
-                  v-if="i.state === 'resolved' && i.resolve_reason === 'configuration_changed'"
+                  v-if="i.state === 'resolved' && i.resolve_reason && i.resolve_reason !== 'recovered'"
                   class="badge warn tiny"
-                >{{ t('incidents.badgeTerminated') }}</span>
+                  :title="t('incidents.badgeTerminatedHint')"
+                >{{ t(`incidents.resolveReason.${i.resolve_reason}`) }}</span>
                 <span v-if="i.evidence_expired" class="badge neutral tiny">{{ t('incidents.badgeExpired') }}</span>
               </td>
-              <td>{{ i.group_name || '—' }}</td>
               <td><span class="badge" :class="severityTone(i.severity)">{{ sevLabel(i.severity) }}</span></td>
+              <td>{{ i.group_name || '—' }}</td>
               <td>{{ layerLabel(i.suspected_layer) }}</td>
               <td class="mono">{{ i.active_member_count }} / {{ i.member_count }}</td>
               <td class="hint">{{ fmtDateTime(i.opened_at) }}</td>
-              <td class="hint">{{ fmtDateTime(i.resolved_at) }}</td>
+              <td class="hint mono">{{ duration(i) }}</td>
+              <td>
+                <span class="badge tiny" :class="notifyState(i).tone">{{ t(notifyState(i).key) }}</span>
+              </td>
               <td class="row-action-cell">
                 <span class="row-detail-cue" aria-hidden="true">
                   {{ t('incidents.viewDetail') }}
@@ -268,7 +317,7 @@ onBeforeUnmount(() => {
       <div v-if="incidents.length" class="pager">
         <div class="pager-size">
           <span class="hint">{{ t('incidents.perPage') }}</span>
-          <select v-model.number="pageSize" @change="onPageSize">
+          <select v-model.number="pageSize" @change="page = 1; load()">
             <option v-for="s in PAGE_SIZES" :key="s" :value="s">{{ s }}</option>
           </select>
         </div>
@@ -293,6 +342,65 @@ onBeforeUnmount(() => {
 .table-wrap {
   overflow-x: auto;
 }
+.summary {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 16px;
+}
+.stat {
+  flex: 1 1 140px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 14px 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+.stat-value {
+  font-size: 26px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+.stat-value.small {
+  font-size: 17px;
+  padding-top: 7px;
+}
+.stat-value.hot {
+  color: var(--danger);
+}
+.stat-label {
+  font-size: 12px;
+  color: var(--text-dim);
+}
+.tabs {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 10px 12px 0;
+  border-bottom: 1px solid var(--border);
+}
+.tab {
+  padding: 8px 14px;
+  border: 1px solid transparent;
+  border-bottom: none;
+  border-radius: var(--radius-sm) var(--radius-sm) 0 0;
+  background: transparent;
+  color: var(--text-dim);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.tab.active {
+  color: var(--text);
+  border-color: var(--border);
+  background: var(--surface-2);
+}
+.tab:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: -2px;
+}
 .count {
   margin-left: auto;
   min-width: 22px;
@@ -304,15 +412,6 @@ onBeforeUnmount(() => {
   background: var(--surface-2);
   border: 1px solid var(--border);
   text-align: center;
-}
-.count.hot {
-  color: var(--danger);
-  background: var(--danger-soft);
-  border-color: rgba(248, 113, 113, 0.3);
-}
-.head-hint {
-  margin-left: auto;
-  font-size: 12px;
 }
 .filters {
   display: flex;
@@ -327,15 +426,23 @@ onBeforeUnmount(() => {
   gap: 8px;
   font-size: 13px;
 }
-.filter select {
+.filter.grow {
+  flex: 1 1 200px;
+}
+.filter select,
+.filter input {
   padding: 4px 8px;
   border-radius: var(--radius-sm);
   border: 1px solid var(--border);
   background: var(--surface-2);
   color: var(--text);
 }
-.filter-note {
-  font-size: 12px;
+.filter.grow input {
+  flex: 1;
+  min-width: 140px;
+}
+.title {
+  font-weight: 600;
 }
 .badge.tiny {
   padding: 1px 7px;
@@ -428,13 +535,5 @@ tr.clickable:focus-visible {
   font-size: 13px;
   color: var(--text-dim);
   font-variant-numeric: tabular-nums;
-}
-.fade-enter-active,
-.fade-leave-active {
-  transition: opacity 0.2s ease;
-}
-.fade-enter-from,
-.fade-leave-to {
-  opacity: 0;
 }
 </style>

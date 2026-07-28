@@ -11,7 +11,6 @@ import {
   isRegionID,
   type RegionID,
 } from './onboardingPresets'
-import { unavailablePreset } from './conditionPresets'
 import type { ProbeTarget } from '../api'
 
 const KINDS = new Set(['icmp', 'http', 'dns', 'gateway', 'nat'])
@@ -84,29 +83,6 @@ describe('NAT STUN server selection', () => {
   it('offers both defaults among the selectable servers', () => {
     expect(STUN_SERVERS).toContain('stun.miwifi.com')
     expect(STUN_SERVERS).toContain('stun.hot-chilli.net')
-  })
-})
-
-describe('unavailablePreset (per-group outage alarm condition)', () => {
-  const mk = (kind: string, target = 'x'): ProbeTarget => ({ group_id: 'g', kind, target, enabled: true })
-  it('maps icmp/gateway to the 100% loss down condition', () => {
-    for (const kind of ['icmp', 'gateway']) {
-      const p = unavailablePreset(mk(kind))!
-      expect(p.metric).toBe('probe.icmp.loss_pct')
-      expect(p.comparator).toBe('gte')
-      expect(p.fixed).toBe(100)
-    }
-  })
-  it('maps http/tcp/dns to their ok<1 failure condition', () => {
-    expect(unavailablePreset(mk('http'))!.metric).toBe('probe.http.ok')
-    expect(unavailablePreset(mk('tcp'))!.metric).toBe('probe.tcp.ok')
-    expect(unavailablePreset(mk('dns'))!.metric).toBe('probe.dns.ok')
-    expect(unavailablePreset(mk('dns'))!.comparator).toBe('lt')
-  })
-  it('maps nat to a probe failure (not a NAT-type change)', () => {
-    const p = unavailablePreset(mk('nat'))!
-    expect(p.metric).toBe('probe.nat.ok')
-    expect(p.fixed).toBe(1)
   })
 })
 

@@ -6,10 +6,10 @@
 // screen readers announce the dimension and state.
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { AGENT_TONE, DISPLAY_TONE, EXECUTION_TONE, PROBE_TONE, RULE_TONE, type Tone } from '../../lib/targetStatus'
+import { AGENT_TONE, DISPLAY_TONE, EXECUTION_TONE, PROBE_TONE, FAULT_TONE, type Tone } from '../../lib/targetStatus'
 
 const props = defineProps<{
-  dim: 'display' | 'execution' | 'probe' | 'rule' | 'agent'
+  dim: 'display' | 'execution' | 'probe' | 'fault' | 'agent'
   state: string
   // Optional native tooltip (e.g. the stale window explanation on a stale badge).
   title?: string
@@ -19,7 +19,7 @@ const TONE_MAPS: Record<typeof props.dim, Record<string, Tone>> = {
   display: DISPLAY_TONE,
   execution: EXECUTION_TONE,
   probe: PROBE_TONE,
-  rule: RULE_TONE,
+  fault: FAULT_TONE,
   agent: AGENT_TONE,
 }
 const { t, te } = useI18n()

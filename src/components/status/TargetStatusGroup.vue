@@ -1,8 +1,10 @@
 <script setup lang="ts">
+import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type { ProbeTarget, TargetStatusRow } from '../../api'
 import type { TargetStatusGroupView } from '../../lib/targetStatusPage'
 import { targetLabel, typeLabel } from '../../lib/targetLabels'
+import { availabilityTone, formatAvailability } from '../../lib/targetStatus'
 import { toDateLocale } from '../../i18n'
 import MonitorStateBadge from './MonitorStateBadge.vue'
 import TargetStatusAgentDetails from './TargetStatusAgentDetails.vue'
@@ -45,6 +47,44 @@ function fmtTime(value?: string): string {
 
 function targetName(row: TargetStatusRow): string {
   return row.name || t('targetStatus.unnamedTarget')
+}
+
+// The built-in detector's state for the whole target row: a confirmed fault wins,
+// otherwise the Agent whose failing streak is closest to its threshold is the one
+// worth surfacing (that pair decides when the target flips to faulted).
+interface FaultCell {
+  kind: 'faulted' | 'confirming' | 'none'
+  severity: string
+  fail: number
+  need: number
+}
+
+const faultCells = computed(() => {
+  const out = new Map<string, FaultCell>()
+  for (const row of props.view.targets) {
+    if (row.agents.some((agent) => agent.fault_state === 'faulted')) {
+      out.set(row.target_id, { kind: 'faulted', severity: row.worst_severity || 'error', fail: 0, need: 0 })
+      continue
+    }
+    let best: { fail: number; need: number } | null = null
+    for (const agent of row.agents) {
+      const progress = agent.confirm
+      if (!progress) continue
+      const candidate = { fail: progress.fail_rounds, need: Math.max(progress.need_rounds, 1) }
+      if (!best || candidate.fail / candidate.need > best.fail / best.need) best = candidate
+    }
+    out.set(row.target_id, best ? { kind: 'confirming', severity: '', ...best } : { kind: 'none', severity: '', fail: 0, need: 0 })
+  }
+  return out
+})
+
+const faultCell = (row: TargetStatusRow): FaultCell =>
+  faultCells.value.get(row.target_id) ?? { kind: 'none', severity: '', fail: 0, need: 0 }
+
+// An absent ratio is "unknown", never 0%: a 24h window that reached no verdict
+// (blocked, unsupported, Agent offline throughout) says nothing about uptime.
+function availabilityLabel(row: TargetStatusRow): string {
+  return formatAvailability(row.availability_24h) ?? t('targetStatus.availabilityUnknown')
 }
 </script>
 
@@ -109,7 +149,8 @@ function targetName(row: TargetStatusRow): string {
           <span>{{ t('targetStatus.targetColumn') }}</span>
           <span>{{ t('targetStatus.currentState') }}</span>
           <span>{{ t('targetStatus.agentImpact') }}</span>
-          <span>{{ t('targetStatus.activeConditions') }}</span>
+          <span>{{ t('targetStatus.faultTitle') }}</span>
+          <span>{{ t('targetStatus.availability24h') }}</span>
           <span>{{ t('targetStatus.lastObserved') }}</span>
           <span class="action-column">{{ t('targetStatus.detailAction') }}</span>
         </div>
@@ -135,7 +176,6 @@ function targetName(row: TargetStatusRow): string {
 
             <div class="state-cell" :data-label="t('targetStatus.currentState')">
               <MonitorStateBadge dim="display" :state="row.display_state" />
-              <span v-if="row.display_state === 'breaching'" class="breaching-hint">{{ t('targetStatus.breachingShort') }}</span>
             </div>
 
             <div class="impact-cell" :data-label="t('targetStatus.agentImpact')">
@@ -144,14 +184,25 @@ function targetName(row: TargetStatusRow): string {
               <small>{{ t('targetStatus.agentsAffected') }}</small>
             </div>
 
-            <div class="condition-cell" :data-label="t('targetStatus.activeConditions')">
-              <template v-if="row.active_condition_count">
-                <strong :class="`severity-${row.worst_severity || 'warn'}`">
-                  {{ row.worst_severity ? t(`targetStatus.severity.${row.worst_severity}`) : t('targetStatus.severity.warn') }}
+            <div class="fault-cell" :data-label="t('targetStatus.faultTitle')">
+              <template v-if="faultCell(row).kind === 'faulted'">
+                <strong :class="`severity-${faultCell(row).severity}`">
+                  {{ t(`targetStatus.severity.${faultCell(row).severity}`) }}
                 </strong>
-                <span>{{ t('targetStatus.conditionCount', { n: row.active_condition_count }) }}</span>
+                <span>{{ t('targetStatus.reason.fault_confirmed') }}</span>
               </template>
-              <span v-else class="muted">{{ t('targetStatus.noActiveConditions') }}</span>
+              <span v-else-if="faultCell(row).kind === 'confirming'" class="confirming">
+                {{ t('targetStatus.confirmProgress', { n: faultCell(row).fail, need: faultCell(row).need }) }}
+              </span>
+              <span v-else class="muted">{{ t('targetStatus.fault.normal') }}</span>
+            </div>
+
+            <div class="availability-cell" :data-label="t('targetStatus.availability24h')">
+              <span
+                class="avail-pill"
+                :class="`is-${availabilityTone(row.availability_24h)}`"
+                :title="t('targetStatus.availabilityHint')"
+              >{{ availabilityLabel(row) }}</span>
             </div>
 
             <div class="observed-cell" :data-label="t('targetStatus.lastObserved')">{{ fmtTime(row.last_observed_at) }}</div>
@@ -348,7 +399,7 @@ function targetName(row: TargetStatusRow): string {
 .target-columns,
 .target-summary {
   display: grid;
-  grid-template-columns: minmax(230px, 1.45fr) 126px 140px 145px 135px minmax(160px, auto);
+  grid-template-columns: minmax(215px, 1.35fr) 126px 130px 130px 105px 130px minmax(150px, auto);
   gap: 12px;
   align-items: center;
 }
@@ -412,27 +463,40 @@ function targetName(row: TargetStatusRow): string {
   white-space: nowrap;
 }
 .state-cell,
-.condition-cell,
+.fault-cell,
+.availability-cell,
 .impact-cell {
   display: flex;
   align-items: center;
   gap: 5px;
   flex-wrap: wrap;
 }
-.breaching-hint { color: var(--text-muted); font-size: 9.5px; }
 .impact-cell strong { font-size: 14px; }
 .impact-cell strong.affected { color: var(--danger); }
 .impact-cell span { color: var(--text-dim); font-size: 11px; }
 .impact-cell small { flex-basis: 100%; color: var(--text-muted); font-size: 9.5px; }
-.condition-cell {
+.fault-cell {
   flex-direction: column;
   align-items: flex-start;
   gap: 2px;
   font-size: 10.5px;
 }
-.condition-cell strong { color: var(--warning); font-size: 11px; }
-.condition-cell .severity-error,
-.condition-cell .severity-critical { color: var(--danger); }
+.fault-cell strong { color: var(--warning); font-size: 11px; }
+.fault-cell .confirming { color: var(--warning); font-variant-numeric: tabular-nums; }
+.fault-cell .severity-error,
+.fault-cell .severity-critical { color: var(--danger); }
+.avail-pill {
+  padding: 2px 8px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-pill);
+  font-size: 10.5px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.avail-pill.is-good { color: #6ee7b7; border-color: rgba(52, 211, 153, 0.35); background: rgba(52, 211, 153, 0.1); }
+.avail-pill.is-warn { color: #fcd34d; border-color: rgba(251, 191, 36, 0.35); background: var(--warning-soft); }
+.avail-pill.is-bad { color: #fca5a5; border-color: rgba(248, 113, 113, 0.35); background: var(--danger-soft); }
+.avail-pill.is-unknown { color: var(--text-muted); border-color: var(--border-strong); }
 .muted,
 .observed-cell { color: var(--text-muted); font-size: 10.5px; }
 .target-actions {
@@ -472,10 +536,12 @@ function targetName(row: TargetStatusRow): string {
     grid-template-columns: minmax(220px, 1fr) 130px 125px;
     padding: 12px 15px;
   }
-  .condition-cell,
+  .fault-cell,
+  .availability-cell,
   .observed-cell,
   .target-actions { margin-left: 45px; }
-  .condition-cell::before,
+  .fault-cell::before,
+  .availability-cell::before,
   .observed-cell::before {
     content: attr(data-label);
     color: var(--text-muted);
@@ -494,11 +560,13 @@ function targetName(row: TargetStatusRow): string {
   .target-toggle { grid-column: 1; }
   .state-cell { grid-column: 2; justify-content: flex-end; }
   .impact-cell,
-  .condition-cell,
+  .fault-cell,
+  .availability-cell,
   .observed-cell,
   .target-actions { grid-column: 1 / -1; margin-left: 45px; }
   .impact-cell::before,
-  .condition-cell::before,
+  .fault-cell::before,
+  .availability-cell::before,
   .observed-cell::before {
     content: attr(data-label);
     min-width: 86px;
@@ -507,7 +575,7 @@ function targetName(row: TargetStatusRow): string {
     text-transform: uppercase;
   }
   .impact-cell small { flex-basis: auto; }
-  .condition-cell { flex-direction: row; align-items: center; }
+  .fault-cell { flex-direction: row; align-items: center; }
   .target-actions { justify-content: flex-start; }
 }
 </style>

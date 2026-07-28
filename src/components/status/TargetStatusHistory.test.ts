@@ -11,12 +11,12 @@ import { i18n } from '../../i18n'
 
 const target = {
   target_id: 'target-1', group_id: 'group-1', name: 'Public DNS', kind: 'dns', target: '1.1.1.1', enabled: true,
-  display_state: 'healthy' as const, applicable_agents: 1, affected_agents: 0, active_condition_count: 0,
-  rule_ids: [], alert_ids: [], incident_ids: [],
+  display_state: 'healthy' as const, applicable_agents: 1, affected_agents: 0,
+  signal_ids: [], incident_ids: [],
   agents: [{
     agent_id: 'agent-1', agent_name: 'Agent 1', agent_online: true,
-    execution_state: 'collecting' as const, probe_state: 'healthy' as const, rule_state: 'normal' as const,
-    reason_code: 'ok' as const, missing_permissions: [], matched_selector: 'all', block_reason: '', active_conditions: [],
+    execution_state: 'collecting' as const, probe_state: 'healthy' as const, fault_state: 'normal' as const,
+    reason_code: 'ok' as const, missing_permissions: [], matched_selector: 'all', block_reason: '',
   }],
 }
 

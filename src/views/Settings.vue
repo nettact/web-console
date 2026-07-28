@@ -2,20 +2,36 @@
 import { ref, reactive, computed, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRouter } from 'vue-router'
-import { api, ApiError, AuthError, type Quota, type Channel, type ServerInfo, type StorageStats } from '../api'
+import {
+  api,
+  ApiError,
+  AuthError,
+  type Channel,
+  type EffectivePolicy,
+  type MonitorGroup,
+  type NotificationPolicy,
+  type NotificationPolicyInput,
+  type ProbeTarget,
+  type Quota,
+  type ServerInfo,
+  type StorageStats,
+} from '../api'
 import { auth } from '../auth'
 import { pushToast } from '../toasts'
 import WebhookChannelForm from '../components/WebhookChannelForm.vue'
 import ChannelAddForm from '../components/ChannelAddForm.vue'
 import DataCleanup from '../components/DataCleanup.vue'
+import PolicyFields from '../components/PolicyFields.vue'
 
 const { t } = useI18n()
 const router = useRouter()
 
+const SITE = 'site_default'
+
 // Secondary navigation: the page grew too dense for one scroll, so its panels are
 // split across underline tabs (same pattern as Processes.vue). All tab bodies stay
 // mounted (v-show) so their one-shot on-mount loads/state persist across switches.
-const tab = ref<'general' | 'notifications' | 'data'>('general')
+const tab = ref<'general' | 'notifications' | 'policies' | 'data'>('general')
 
 const quota = ref<Quota | null>(null)
 const stats = ref<StorageStats | null>(null)
@@ -220,22 +236,20 @@ async function saveDiag() {
   }
 }
 
-// Agent connectivity alerts (AGENT-002): enable + grace/recovery/stale timings +
-// severity + which channels the offline/recovery notifications go to.
+// Agent connectivity alerts (AGENT-002): enable + grace/recovery/stale timings.
+// The severity of an Agent-offline fault is fixed at critical, and where its
+// notification goes is decided by the notification policy — neither is set here.
 const agentAlert = reactive({
   enabled: true,
   graceS: 60, // agent_alert_grace_seconds
   recoverS: 30, // agent_alert_recover_seconds
   staleS: 120, // agent_status_stale_seconds
-  severity: '', // agent_alert_severity ('' = warn)
-  channelIds: [] as string[], // agent_alert_channel_ids ([] = all enabled)
 })
 const AGENT_ALERT_BOUNDS: Record<string, [number, number]> = {
   graceS: [15, 3600],
   recoverS: [5, 600],
   staleS: [30, 3600],
 }
-const AGENT_SEVERITIES = ['', 'info', 'warn', 'error', 'critical']
 const agentAlertSaved = ref(false)
 const agentAlertError = ref('')
 
@@ -248,18 +262,6 @@ function populateAgentAlert(s: Record<string, string>) {
   agentAlert.graceS = num('agent_alert_grace_seconds', 60)
   agentAlert.recoverS = num('agent_alert_recover_seconds', 30)
   agentAlert.staleS = num('agent_status_stale_seconds', 120)
-  agentAlert.severity = s['agent_alert_severity'] ?? ''
-  try {
-    const ids = JSON.parse(s['agent_alert_channel_ids'] || '[]')
-    agentAlert.channelIds = Array.isArray(ids) ? ids : []
-  } catch {
-    agentAlert.channelIds = []
-  }
-}
-function toggleAlertChannel(id: string) {
-  const i = agentAlert.channelIds.indexOf(id)
-  if (i >= 0) agentAlert.channelIds.splice(i, 1)
-  else agentAlert.channelIds.push(id)
 }
 async function saveAgentAlert() {
   agentAlertError.value = ''
@@ -277,14 +279,174 @@ async function saveAgentAlert() {
       agent_alert_grace_seconds: String(agentAlert.graceS),
       agent_alert_recover_seconds: String(agentAlert.recoverS),
       agent_status_stale_seconds: String(agentAlert.staleS),
-      agent_alert_severity: agentAlert.severity,
-      agent_alert_channel_ids: JSON.stringify(agentAlert.channelIds),
     })
     agentAlertSaved.value = true
     setTimeout(() => (agentAlertSaved.value = false), 2000)
   } catch (e) {
     agentAlertError.value = String((e as Error).message || e)
   }
+}
+
+// ---- notification policies ----
+// A policy decides whether/when/where a RECORDED fault is announced; it never
+// decides whether the fault is detected. Exactly one policy governs any target
+// (target > group > site default, no stacking), so the preview below can show
+// the single winner instead of a merged result.
+const policies = ref<NotificationPolicy[]>([])
+const policyGroups = ref<MonitorGroup[]>([])
+const policyTargets = ref<ProbeTarget[]>([])
+const policyError = ref('')
+const policyBusy = ref(false)
+const policySaved = ref('') // '' | 'default' | <policy id>
+// Drafts are separate objects so an in-flight edit survives a channel reload.
+const defaultDraft = ref<NotificationPolicyInput | null>(null)
+const editingPolicyId = ref('')
+const policyDraft = ref<NotificationPolicyInput | null>(null)
+
+const defaultPolicy = computed(() => policies.value.find((p) => p.is_default) ?? null)
+const overrides = computed(() => policies.value.filter((p) => !p.is_default))
+
+function toInput(p: NotificationPolicy): NotificationPolicyInput {
+  return {
+    name: p.name,
+    scope_kind: p.scope_kind,
+    scope_id: p.scope_id,
+    enabled: p.enabled,
+    min_severity: p.min_severity,
+    warn_delay_sec: p.warn_delay_sec,
+    critical_delay_sec: p.critical_delay_sec,
+    notify_recovery: p.notify_recovery,
+    channel_ids: [...p.channel_ids],
+  }
+}
+
+async function loadPolicies() {
+  policyError.value = ''
+  try {
+    const [pol, grp, tgt] = await Promise.all([
+      api.notificationPolicies(SITE),
+      api.monitorGroups(SITE),
+      api.listTargets(SITE),
+    ])
+    policies.value = pol
+    policyGroups.value = grp
+    policyTargets.value = tgt
+    const def = pol.find((p) => p.is_default)
+    defaultDraft.value = def ? toInput(def) : null
+  } catch (e) {
+    policyError.value = String((e as Error).message || e)
+  }
+}
+
+async function saveDefaultPolicy() {
+  const def = defaultPolicy.value
+  if (!def || !defaultDraft.value) return
+  policyBusy.value = true
+  policyError.value = ''
+  try {
+    await api.updateNotificationPolicy(def.id, defaultDraft.value)
+    policySaved.value = 'default'
+    setTimeout(() => (policySaved.value = ''), 2000)
+    await loadPolicies()
+  } catch (e) {
+    policyError.value = String((e as Error).message || e)
+  } finally {
+    policyBusy.value = false
+  }
+}
+
+function toggleEditPolicy(p: NotificationPolicy) {
+  if (editingPolicyId.value === p.id) {
+    editingPolicyId.value = ''
+    policyDraft.value = null
+    return
+  }
+  editingPolicyId.value = p.id
+  policyDraft.value = toInput(p)
+}
+
+async function saveEditedPolicy(p: NotificationPolicy) {
+  if (!policyDraft.value) return
+  policyBusy.value = true
+  policyError.value = ''
+  try {
+    // The scope is not editable here: an override is created from the surface it
+    // scopes (the monitor group / the target), so it can only be retargeted there.
+    await api.updateNotificationPolicy(p.id, {
+      ...policyDraft.value,
+      scope_kind: p.scope_kind,
+      scope_id: p.scope_id,
+    })
+    editingPolicyId.value = ''
+    policyDraft.value = null
+    policySaved.value = p.id
+    setTimeout(() => (policySaved.value = ''), 2000)
+    await loadPolicies()
+  } catch (e) {
+    policyError.value = String((e as Error).message || e)
+  } finally {
+    policyBusy.value = false
+  }
+}
+
+async function removePolicy(p: NotificationPolicy) {
+  if (!confirm(t('notificationPolicy.deleteConfirm', { name: p.name }))) return
+  policyBusy.value = true
+  policyError.value = ''
+  try {
+    await api.deleteNotificationPolicy(p.id)
+    if (editingPolicyId.value === p.id) {
+      editingPolicyId.value = ''
+      policyDraft.value = null
+    }
+    await loadPolicies()
+  } catch (e) {
+    policyError.value = String((e as Error).message || e)
+  } finally {
+    policyBusy.value = false
+  }
+}
+
+// ---- effective-policy preview ----
+const previewTargetId = ref('')
+const previewBusy = ref(false)
+const preview = ref<EffectivePolicy | null>(null)
+async function runPreview() {
+  preview.value = null
+  if (!previewTargetId.value) return
+  previewBusy.value = true
+  policyError.value = ''
+  try {
+    preview.value = await api.effectiveNotificationPolicy(previewTargetId.value)
+  } catch (e) {
+    policyError.value = String((e as Error).message || e)
+  } finally {
+    previewBusy.value = false
+  }
+}
+
+function scopeLabel(p: NotificationPolicy): string {
+  if (p.scope_kind === 'group') {
+    const g = policyGroups.value.find((x) => x.id === p.scope_id)
+    return t('notificationPolicy.scopeGroup', { name: g?.name || p.scope_id })
+  }
+  if (p.scope_kind === 'target') {
+    const tg = policyTargets.value.find((x) => x.id === p.scope_id)
+    return t('notificationPolicy.scopeTarget', { name: tg?.name || tg?.target || p.scope_id })
+  }
+  return t('notificationPolicy.scopeSite')
+}
+function targetOptionLabel(tg: ProbeTarget): string {
+  return `${tg.name || tg.target} · ${tg.kind}`
+}
+function channelsLabel(ids: string[]): string {
+  if (!ids.length) return t('notificationPolicy.recordOnlyShort')
+  return ids.map((id) => channels.value.find((c) => c.id === id)?.name || id).join(', ')
+}
+function delayLabel(sec: number): string {
+  if (!sec) return t('notificationPolicy.delayImmediate')
+  if (sec % 60 === 0) return t('common.durMinutes', { n: sec / 60 })
+  return t('common.durSeconds', { n: sec })
 }
 
 async function load() {
@@ -322,22 +484,6 @@ async function onWebhookSaved() {
   editingId.value = ''
   await load()
 }
-// Apply a channel to every alert rule at once. Confirmed because it edits all rules.
-const applyingId = ref('')
-const applyMsg = ref('')
-async function applyChannelToAll(c: Channel) {
-  if (!confirm(t('settings.applyAll.confirm', { name: c.name || c.type }))) return
-  applyingId.value = c.id
-  applyMsg.value = ''
-  try {
-    const r = await api.applyChannelToAll(c.id)
-    applyMsg.value = t('settings.applyAll.done', { count: r.updated })
-  } catch (e) {
-    error.value = String((e as Error).message || e)
-  } finally {
-    applyingId.value = ''
-  }
-}
 async function toggleChannel(c: Channel) {
   await api.updateChannel(c.id, { name: c.name, enabled: !c.enabled })
   await load()
@@ -355,7 +501,10 @@ function channelConfigLabel(c: Channel): string {
   if (c.type === 'system') return t('settings.sysNotifyConfig')
   return `${c.config.from} → ${c.config.to} @ ${c.config.host}`
 }
-onMounted(load)
+onMounted(() => {
+  load()
+  loadPolicies()
+})
 </script>
 
 <template>
@@ -380,6 +529,13 @@ onMounted(load)
       >
         {{ t('settings.tabs.notifications') }}
         <span class="count">{{ channels.length }}</span>
+      </button>
+      <button
+        class="tab" role="tab"
+        :class="{ active: tab === 'policies' }" :aria-selected="tab === 'policies'"
+        @click="tab = 'policies'"
+      >
+        {{ t('settings.tabs.policies') }}
       </button>
       <button
         class="tab" role="tab"
@@ -592,7 +748,6 @@ onMounted(load)
         <p class="hint">{{ t('settings.channelsHint') }}</p>
 
         <ChannelAddForm :native-notify="serverInfo?.native_notify === true" @added="load" />
-        <p v-if="applyMsg" class="hint saved">✓ {{ applyMsg }}</p>
       </div>
       <div class="table-wrap">
         <table class="data-table">
@@ -610,9 +765,6 @@ onMounted(load)
                     v-if="c.type === 'webhook'" class="link-btn"
                     @click="editingId = editingId === c.id ? '' : c.id">
                     {{ editingId === c.id ? t('settings.webhook.cancel') : t('settings.webhook.edit') }}
-                  </button>
-                  <button class="link-btn" :disabled="applyingId === c.id" @click="applyChannelToAll(c)">
-                    {{ t('settings.applyAll.btn') }}
                   </button>
                   <button class="link-btn danger" @click="removeChannel(c.id)">{{ t('common.delete') }}</button>
                 </td>
@@ -669,29 +821,8 @@ onMounted(load)
             </span>
             <span class="knob-help hint">{{ t('settings.agentAlert.staleHelp') }}</span>
           </label>
-          <label class="knob">
-            <span class="knob-label">{{ t('settings.agentAlert.severity') }}</span>
-            <span class="knob-input">
-              <select v-model="agentAlert.severity" :disabled="!agentAlert.enabled">
-                <option v-for="sv in AGENT_SEVERITIES" :key="sv" :value="sv">
-                  {{ sv === '' ? t('settings.agentAlert.sevDefault') : t(`mform.sev_${sv}`) }}
-                </option>
-              </select>
-            </span>
-            <span class="knob-help hint">{{ t('settings.agentAlert.severityHelp') }}</span>
-          </label>
         </div>
-        <div class="alert-channels">
-          <span class="knob-label">{{ t('settings.agentAlert.channels') }}</span>
-          <p class="hint tiny">{{ t('settings.agentAlert.channelsHint') }}</p>
-          <div class="chip-row">
-            <div v-if="!channels.length" class="hint tiny">{{ t('settings.noChannels') }}</div>
-            <label v-for="c in channels" :key="c.id" class="member-chip">
-              <input type="checkbox" :checked="agentAlert.channelIds.includes(c.id)" :disabled="!agentAlert.enabled" @change="toggleAlertChannel(c.id)" />
-              <span>{{ c.name || c.type }}</span>
-            </label>
-          </div>
-        </div>
+        <p class="hint tiny">{{ t('settings.agentAlert.routingNote') }}</p>
         <div class="row field-row">
           <button class="btn btn-primary" @click="saveAgentAlert">{{ t('common.save') }}</button>
           <span v-if="agentAlertSaved" class="hint saved">✓ {{ t('common.saved') }}</span>
@@ -700,6 +831,154 @@ onMounted(load)
       </div>
     </section>
     </div><!-- /notifications -->
+
+    <div v-show="tab === 'policies'">
+    <!-- Non-blocking: no channel is a legal configuration, and detection is on
+         regardless — say both plainly so it never reads as "nothing is watching". -->
+    <p v-if="!channels.length" class="notice-box">{{ t('notificationPolicy.noChannelsNotice') }}</p>
+    <p v-if="policyError" class="err">{{ policyError }}</p>
+
+    <section class="panel">
+      <div class="panel-head">
+        <h3>{{ t('notificationPolicy.defaultTitle') }}</h3>
+        <span class="badge neutral def-badge">{{ t('notificationPolicy.defaultBadge') }}</span>
+      </div>
+      <div class="panel-body">
+        <p class="hint">{{ t('notificationPolicy.defaultHint') }}</p>
+        <PolicyFields v-if="defaultDraft" v-model="defaultDraft" :channels="channels" :disabled="policyBusy" />
+        <p v-else class="hint">{{ t('common.noData') }}</p>
+        <div class="row field-row">
+          <button class="btn btn-primary" :disabled="!defaultDraft || policyBusy" @click="saveDefaultPolicy">
+            {{ t('common.save') }}
+          </button>
+          <span v-if="policySaved === 'default'" class="hint saved">✓ {{ t('common.saved') }}</span>
+        </div>
+      </div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-head">
+        <h3>{{ t('notificationPolicy.overridesTitle') }}</h3>
+        <span class="count">{{ overrides.length }}</span>
+      </div>
+      <div class="panel-body">
+        <p class="hint">{{ t('notificationPolicy.overridesHint') }}</p>
+      </div>
+      <div class="table-wrap">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>{{ t('notificationPolicy.thName') }}</th>
+              <th>{{ t('notificationPolicy.thScope') }}</th>
+              <th>{{ t('notificationPolicy.thMinSeverity') }}</th>
+              <th>{{ t('notificationPolicy.thDelay') }}</th>
+              <th>{{ t('notificationPolicy.thChannels') }}</th>
+              <th class="center">{{ t('notificationPolicy.thRecovery') }}</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-if="!overrides.length"><td colspan="7" class="hint">{{ t('notificationPolicy.noOverrides') }}</td></tr>
+            <template v-for="p in overrides" :key="p.id">
+              <tr>
+                <td>
+                  {{ p.name }}
+                  <span v-if="!p.enabled" class="badge warn">{{ t('notificationPolicy.stateDisabled') }}</span>
+                </td>
+                <td>{{ scopeLabel(p) }}</td>
+                <td>{{ t(`mform.sev_${p.min_severity}`) }}</td>
+                <td>{{ delayLabel(p.warn_delay_sec) }} / {{ delayLabel(p.critical_delay_sec) }}</td>
+                <td :class="{ 'record-only': !p.channel_ids.length }">{{ channelsLabel(p.channel_ids) }}</td>
+                <td class="center">
+                  {{ p.notify_recovery ? t('notificationPolicy.yes') : t('notificationPolicy.no') }}
+                </td>
+                <td class="row-actions">
+                  <button class="link-btn" @click="toggleEditPolicy(p)">
+                    {{ editingPolicyId === p.id ? t('settings.webhook.cancel') : t('settings.webhook.edit') }}
+                  </button>
+                  <button class="link-btn danger" :disabled="policyBusy" @click="removePolicy(p)">
+                    {{ t('common.delete') }}
+                  </button>
+                </td>
+              </tr>
+              <tr v-if="editingPolicyId === p.id" class="wh-edit-row">
+                <td colspan="7">
+                  <PolicyFields v-if="policyDraft" v-model="policyDraft" :channels="channels" :disabled="policyBusy" />
+                  <p class="hint tiny">{{ t('notificationPolicy.scopeFixedHint') }}</p>
+                  <div class="row field-row">
+                    <button class="btn btn-primary" :disabled="policyBusy" @click="saveEditedPolicy(p)">
+                      {{ t('common.save') }}
+                    </button>
+                    <button class="btn" :disabled="policyBusy" @click="toggleEditPolicy(p)">
+                      {{ t('settings.webhook.cancel') }}
+                    </button>
+                    <span v-if="policySaved === p.id" class="hint saved">✓ {{ t('common.saved') }}</span>
+                  </div>
+                </td>
+              </tr>
+            </template>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-head"><h3>{{ t('notificationPolicy.previewTitle') }}</h3></div>
+      <div class="panel-body">
+        <p class="hint">{{ t('notificationPolicy.previewHint') }}</p>
+        <div class="row field-row">
+          <select v-model="previewTargetId" class="wide" @change="runPreview">
+            <option value="">{{ t('notificationPolicy.previewPick') }}</option>
+            <option v-for="tg in policyTargets" :key="tg.id" :value="tg.id">{{ targetOptionLabel(tg) }}</option>
+          </select>
+        </div>
+        <div v-if="previewBusy" class="hint">{{ t('notificationPolicy.previewLoading') }}</div>
+        <div v-else-if="preview" class="preview-box">
+          <div class="sum-row">
+            <span class="sum-k">{{ t('notificationPolicy.previewSource') }}</span>
+            <span class="sum-v">{{ t(`notificationPolicy.source_${preview.source}`) }}</span>
+          </div>
+          <template v-if="preview.policy">
+            <div class="sum-row">
+              <span class="sum-k">{{ t('notificationPolicy.name') }}</span>
+              <span class="sum-v">
+                {{ preview.policy.name }}
+                <em v-if="!preview.policy.enabled" class="off">{{ t('notificationPolicy.stateDisabled') }}</em>
+              </span>
+            </div>
+            <div class="sum-row">
+              <span class="sum-k">{{ t('notificationPolicy.minSeverity') }}</span>
+              <span class="sum-v">{{ t(`mform.sev_${preview.policy.min_severity}`) }}</span>
+            </div>
+            <div class="sum-row">
+              <span class="sum-k">{{ t('notificationPolicy.thDelay') }}</span>
+              <span class="sum-v">
+                {{ delayLabel(preview.policy.warn_delay_sec) }} / {{ delayLabel(preview.policy.critical_delay_sec) }}
+              </span>
+            </div>
+            <div class="sum-row">
+              <span class="sum-k">{{ t('notificationPolicy.notifyRecovery') }}</span>
+              <span class="sum-v">
+                {{ preview.policy.notify_recovery ? t('notificationPolicy.yes') : t('notificationPolicy.no') }}
+              </span>
+            </div>
+            <div class="sum-row">
+              <span class="sum-k">{{ t('notificationPolicy.channels') }}</span>
+              <span class="sum-v" :class="{ 'record-only': !preview.policy.channel_ids.length }">
+                {{ channelsLabel(preview.policy.channel_ids) }}
+              </span>
+            </div>
+          </template>
+          <p v-else class="hint">{{ t('notificationPolicy.previewNone') }}</p>
+          <div class="sum-row" v-if="preview.chain.length">
+            <span class="sum-k">{{ t('notificationPolicy.previewChain') }}</span>
+            <span class="sum-v">{{ preview.chain.map((s) => t(`notificationPolicy.scope_${s}`)).join(' → ') }}</span>
+          </div>
+          <p class="hint tiny">{{ t('notificationPolicy.previewOneWinner') }}</p>
+        </div>
+      </div>
+    </section>
+    </div><!-- /policies -->
 
     <div v-show="tab === 'data'">
       <div class="stat-grid">
@@ -820,6 +1099,9 @@ input.wide {
   min-width: 320px;
   flex: 1;
 }
+select.wide {
+  min-width: 320px;
+}
 .name-in {
   min-width: 120px;
 }
@@ -874,33 +1156,53 @@ input.wide {
   font-size: 12px;
   line-height: 1.45;
 }
-.alert-channels {
-  margin: 16px 0 4px;
+.tiny {
+  font-size: 11.5px;
+  margin: 6px 0 0;
 }
-.alert-channels .hint.tiny {
-  margin: 4px 0 0;
+.def-badge {
+  margin-left: auto;
 }
-/* 渠道勾选项按内容宽度排布，避免继承全局 input 的 min-width 撑出大片空白。 */
-.chip-row {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px 20px;
-  margin-top: 10px;
-}
-.member-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
+/* Notification-policy tab */
+.notice-box {
+  margin: 0 0 16px;
+  padding: 10px 13px;
   font-size: 13px;
+  line-height: 1.55;
+  color: var(--text-dim);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--primary);
+  border-radius: var(--radius-sm);
+}
+.preview-box {
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px dashed var(--border);
+}
+.sum-row {
+  display: flex;
+  gap: 12px;
+  align-items: baseline;
+  padding: 3px 0;
+  font-size: 13px;
+}
+.sum-k {
+  flex: none;
+  min-width: 132px;
   color: var(--text-dim);
 }
-.member-chip input {
-  min-width: 0;
-  width: auto;
-  flex: none;
+.sum-v {
+  color: var(--text);
 }
-.member-chip input:disabled {
-  opacity: 0.5;
+.sum-v .off {
+  margin-left: 8px;
+  font-style: normal;
+  font-size: 11.5px;
+  color: var(--warning);
+}
+.record-only {
+  color: var(--text-dim);
 }
 .toggle-row {
   display: flex;

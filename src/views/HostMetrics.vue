@@ -7,11 +7,10 @@
 import { ref, computed, onMounted } from 'vue'
 import { useRoute } from 'vue-router'
 import { useI18n } from 'vue-i18n'
-import { api, type Agent, type Alert, type Sample, type SeriesInfo } from '../api'
+import { api, type Agent, type Sample, type SeriesInfo } from '../api'
 import MetricChart from '../components/MetricChart.vue'
 import RangePicker from '../components/RangePicker.vue'
 import MetricStatCards from '../components/MetricStatCards.vue'
-import AlertsTable from '../components/AlertsTable.vue'
 import { useMetricMeta } from '../composables/useMetricMeta'
 import { useMetricCards } from '../composables/useMetricCards'
 import { FALLBACK, HIDDEN_KINDS, INFO_KINDS, familyOf, isStatusKind, kindColor, orderOf } from '../lib/metricMeta'
@@ -30,11 +29,9 @@ const targetKey = ref('')
 const selectedKinds = ref<string[]>([])
 const rangeSec = ref(6 * 3600)
 const samplesByKind = ref<Record<string, Sample[]>>({})
-const alerts = ref<Alert[]>([])
 const error = ref('')
 const loading = ref(false)
 let dataSeq = 0
-let alertSeq = 0
 
 interface HostGroup {
   key: string
@@ -292,7 +289,6 @@ function selectSection(key: string) {
   targetKey.value = key
   applyDefaultKinds()
   loadData()
-  loadAlerts()
 }
 
 async function loadAgents() {
@@ -321,42 +317,12 @@ async function loadSeries() {
     const gs = groups.value
     targetKey.value = gs.length ? gs[0].key : ''
     applyDefaultKinds()
-    await Promise.all([loadData(), loadAlerts()])
+    await loadData()
   } catch (e) {
     error.value = String((e as Error).message || e)
   }
 }
 
-async function loadAlerts() {
-  const seq = ++alertSeq
-  const g = selectedGroup.value
-  if (!agentId.value || !g) {
-    alerts.value = []
-    return
-  }
-  try {
-    // Alerts are target-scoped. Whole-machine rules (CPU / memory / load) fire on
-    // the "host" target, so the CPU collection and the overview both read "host"
-    // alerts; disk rules fire per mount, so the disk collection merges each
-    // mount's alerts. (CPU cores and the agent-runtime series carry no rules.)
-    let res: Alert[]
-    if (g.collection === 'disk') {
-      const mounts = [...new Set(g.metrics.map((m) => m.target))]
-      const lists = await Promise.all(
-        mounts.map((mp) => api.agentAlerts(agentId.value, { target: mp }, 10).catch(() => [] as Alert[])),
-      )
-      res = lists
-        .flat()
-        .sort((a, b) => new Date(b.started_at).getTime() - new Date(a.started_at).getTime())
-        .slice(0, 10)
-    } else {
-      res = await api.agentAlerts(agentId.value, { target: g.collection === 'cpu' ? 'host' : g.target }, 10)
-    }
-    if (seq === alertSeq) alerts.value = res
-  } catch {
-    if (seq === alertSeq) alerts.value = []
-  }
-}
 
 async function loadData() {
   const seq = ++dataSeq
@@ -513,7 +479,6 @@ onMounted(async () => {
           </div>
         </template>
 
-        <AlertsTable :alerts="alerts" />
       </template>
     </template>
   </main>

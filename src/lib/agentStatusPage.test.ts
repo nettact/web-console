@@ -30,7 +30,7 @@ function row(over: Partial<AgentStatusRow>): AgentStatusRow {
     last_disconnect_kind: '',
     connectivity_alerts_muted: over.connectivity_alerts_muted ?? false,
     groups: over.groups ?? [],
-    firing_alerts: over.firing_alerts ?? 0,
+    firing_faults: over.firing_faults ?? 0,
     active_issues: over.active_issues ?? 0,
     connectivity_alert: null,
     resources: noResources,

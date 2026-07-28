@@ -8,7 +8,7 @@
 import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
-import { api, type Channel, type MonitorGroup, type ProbeTarget, type RuleConditionInput, type ServerInfo } from '../api'
+import { api, type Channel, type MonitorGroup, type ProbeTarget, type ServerInfo } from '../api'
 import { onboarding, loadOnboarding, saveOnboarding } from '../onboarding'
 import {
   REGIONS,
@@ -23,7 +23,6 @@ import {
   type RegionPreset,
   type SelectionGroup,
 } from '../lib/onboardingPresets'
-import { unavailablePreset } from '../lib/conditionPresets'
 import EnrollExamples from '../components/EnrollExamples.vue'
 import ChannelAddForm from '../components/ChannelAddForm.vue'
 
@@ -250,46 +249,6 @@ async function resolveGroupId(bucket: SelectionGroup): Promise<string> {
   return id
 }
 
-// ensureUnavailableRule adds an "unavailable" (outage) alarm to a monitor group:
-// an OR rule with one down/unreachable condition per target in the group. Skips
-// the group if it already has a rule with this name (idempotent on re-run). The
-// STUN target for a nat probe is stored under the user-chosen server, so its
-// down condition (probe.nat.ok < 1) applies regardless.
-async function ensureUnavailableRule(groupId: string, layer: string): Promise<void> {
-  const name = t('setup.ruleUnavailable')
-  let existing
-  try {
-    existing = await api.groupRules(groupId)
-  } catch {
-    return // best-effort: never block onboarding on rule setup
-  }
-  if (existing.some((r) => r.name === name)) return
-  const conditions: RuleConditionInput[] = []
-  for (const m of existingTargets.value) {
-    if (m.group_id !== groupId || !m.id) continue
-    const p = unavailablePreset(m)
-    if (!p) continue
-    conditions.push({
-      target_id: m.id,
-      metric_kind: p.metric,
-      comparator: p.comparator,
-      threshold: p.fixed ?? 0,
-      fail_threshold: 3,
-      for_seconds: 0,
-    })
-  }
-  if (!conditions.length) return
-  await api.createGroupRule(groupId, {
-    name,
-    op: 'or',
-    layer,
-    severity: 'error',
-    channel_ids: [],
-    enabled: true,
-    conditions,
-  })
-}
-
 // applyAndNext creates the checked, not-yet-existing presets as real targets in
 // their respective monitor groups, adds an unavailable alarm to each group, then
 // advances. Groups are created first (a target's group_id is a foreign key);
@@ -319,10 +278,8 @@ async function applyAndNext(): Promise<void> {
     if (additions.length) {
       await api.setTargets(SITE, [...existingTargets.value, ...additions])
       ;[existingTargets.value, groups.value] = await Promise.all([api.listTargets(SITE), api.monitorGroups(SITE)])
-      // Add an outage alarm to each populated group (targets now have server ids).
-      for (const { bucket, groupId } of populated) {
-        await ensureUnavailableRule(groupId, bucket.key === 'local' ? 'lan' : 'internet')
-      }
+      // Nothing further to configure: every saved target starts recording faults
+      // on its own from the next probe round.
     }
     await goNext()
   } catch (e) {
@@ -401,41 +358,34 @@ async function loadChannels(): Promise<void> {
   if (!sysTouched.value) sysWanted.value = showSysCard.value
 }
 
-// wireChannelsToRules records the enabled channels on the outage rules this wizard
-// created, so the routing is explicit and visible in the rule editor instead of
-// relying on the server's "empty list = every enabled channel" fallback.
-//
-// Scoped by rule name to the wizard's own rules: a hand-made rule keeps whatever
-// routing its author chose. Channels are merged in rather than assigned, so a
-// re-run never drops a channel the user ticked by hand. With no enabled channel
-// there is nothing to point at, and the rules are left empty — the fallback is the
-// right behavior there.
-async function wireChannelsToRules(): Promise<void> {
+// wireChannelsToPolicy adds the channels created in this wizard to the site's
+// default notification policy. Detection already runs regardless; this is the
+// step that decides anyone hears about it. Adding them here is not a silent
+// opt-in — the user created the channel moments ago in this very flow — and it
+// is idempotent, so a re-run never duplicates or drops a hand-picked channel.
+async function wireChannelsToPolicy(): Promise<void> {
   const ids = channels.value.filter((c) => c.enabled).map((c) => c.id)
   if (!ids.length) return
-  const name = t('setup.ruleUnavailable')
-  for (const g of await api.monitorGroups(SITE)) {
-    for (const r of await api.groupRules(g.id)) {
-      if (r.name !== name) continue
-      const merged = [...r.channel_ids, ...ids.filter((id) => !r.channel_ids.includes(id))]
-      if (merged.length === r.channel_ids.length) continue
-      await api.updateGroupRule(r.id, {
-        name: r.name,
-        op: r.op,
-        layer: r.layer,
-        severity: r.severity,
-        channel_ids: merged,
-        enabled: r.enabled,
-        conditions: r.conditions.map((c) => ({
-          target_id: c.target_id,
-          metric_kind: c.metric_kind,
-          comparator: c.comparator,
-          threshold: c.threshold,
-          fail_threshold: c.fail_threshold,
-          for_seconds: c.for_seconds,
-        })),
-      })
-    }
+  try {
+    const policies = await api.notificationPolicies(SITE)
+    const def = policies.find((p) => p.is_default)
+    if (!def) return
+    const merged = [...def.channel_ids, ...ids.filter((id) => !def.channel_ids.includes(id))]
+    if (merged.length === def.channel_ids.length) return
+    await api.updateNotificationPolicy(def.id, {
+      name: def.name,
+      scope_kind: def.scope_kind,
+      scope_id: def.scope_id,
+      enabled: def.enabled,
+      min_severity: def.min_severity,
+      warn_delay_sec: def.warn_delay_sec,
+      critical_delay_sec: def.critical_delay_sec,
+      notify_recovery: def.notify_recovery,
+      channel_ids: merged,
+    })
+  } catch {
+    // Best-effort: never block onboarding on notification wiring. Faults are
+    // recorded either way, and the policy page can wire the channel later.
   }
 }
 
@@ -459,12 +409,12 @@ async function applyNotifyAndNext(): Promise<void> {
       } else {
         await api.createChannel(t('settings.sysNotify'), 'system', { lang: sysLang.value })
       }
-      // Re-read so the new channel's id is available to wireChannelsToRules, and
+      // Re-read so the new channel's id is available to wireChannelsToPolicy, and
       // so coming back doesn't re-offer the card.
       channels.value = await api.channels()
       sysTouched.value = true
     }
-    await wireChannelsToRules()
+    await wireChannelsToPolicy()
   } catch (e) {
     notifyError.value = String((e as Error).message || e)
     return

@@ -1,11 +1,14 @@
 // Thin wrapper over the browser EventSource for the /events stream. The server
-// multiplexes two event types on the one connection:
+// multiplexes several event types on the one connection:
 //   • `issues`               — FULL issue state on connect and on every change;
 //                              consumers replace their state wholesale on each push.
 //   • `target.status.changed`— a site-scoped signal carrying only the affected
 //                              target ids; the client coalesces bursts into one
 //                              authoritative batch refresh (it never applies ids
 //                              directly), so missed/duplicate events cannot drift.
+//   • `incident.changed`     — one incident opened, changed or resolved; the id
+//                              is a hint for an open detail drawer, and the list
+//                              refetches wholesale.
 // `onOpen` fires on every (re)connect — EventSource reconnects natively — so each
 // consumer can perform a full refresh and converge after a dropped connection.
 
@@ -29,10 +32,18 @@ export interface AgentStatusChanged {
   site_id: string
 }
 
+// Payload of an `incident.changed` frame: the affected site plus the incident id,
+// so a console with that incident open can refresh exactly it.
+export interface IncidentChanged {
+  site_id: string
+  incident_id: string
+}
+
 export interface EventStreamHandlers {
   onIssues?: (state: IssueStreamState) => void
   onTargetStatus?: (ev: TargetStatusChanged) => void
   onAgentStatus?: (ev: AgentStatusChanged) => void
+  onIncident?: (ev: IncidentChanged) => void
   onOpen?: () => void
 }
 
@@ -60,7 +71,7 @@ function releaseEventSource(es: EventSource) {
   }
 }
 
-export function openEventStream({ onIssues, onTargetStatus, onAgentStatus, onOpen }: EventStreamHandlers): EventStream {
+export function openEventStream({ onIssues, onTargetStatus, onAgentStatus, onIncident, onOpen }: EventStreamHandlers): EventStream {
   const es = acquireEventSource()
 
   const listeners: Array<[string, EventListener]> = []
@@ -104,6 +115,17 @@ export function openEventStream({ onIssues, onTargetStatus, onAgentStatus, onOpe
     })
   }
 
+  if (onIncident) {
+    listen('incident.changed', (ev) => {
+      try {
+        const data = JSON.parse((ev as MessageEvent).data) as IncidentChanged
+        onIncident({ site_id: data.site_id ?? '', incident_id: data.incident_id ?? '' })
+      } catch {
+        /* ignore — a full refresh on the next event/reconnect converges */
+      }
+    })
+  }
+
   let closed = false
   return {
     close: () => {
@@ -113,4 +135,16 @@ export function openEventStream({ onIssues, onTargetStatus, onAgentStatus, onOpe
       releaseEventSource(es)
     },
   }
+}
+
+// onSSE subscribes to one event family and returns an unsubscribe function — the
+// shape a component's onMounted/onBeforeUnmount pair wants. It reconnects and
+// refreshes through the same shared EventSource as every other consumer.
+export function onSSE(kind: 'incident', handler: () => void): () => void {
+  const stream = openEventStream({
+    onIncident: kind === 'incident' ? () => handler() : undefined,
+    // A reconnect may have missed events, so converge with a full refresh.
+    onOpen: () => handler(),
+  })
+  return () => stream.close()
 }

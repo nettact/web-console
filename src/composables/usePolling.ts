@@ -19,9 +19,13 @@ export interface PollingOptions {
   maxBackoffMs?: number
 }
 
-// task resolves to true when polling should continue (work still active) and
-// false when it should go idle. Throwing triggers backoff without stopping.
-export function usePolling(task: () => Promise<boolean>, opts: PollingOptions = {}) {
+// task resolves to true when polling should continue at the base cadence, false
+// when it should go idle, or a number of milliseconds to wait before the next
+// tick. The number form is for work whose completion time is already known — a
+// notification serving out a five-minute delay changes nothing in the meantime,
+// so asking every 4s costs 75 round trips to learn what one well-timed request
+// would have told us. Throwing triggers backoff without stopping.
+export function usePolling(task: () => Promise<boolean | number>, opts: PollingOptions = {}) {
   const base = Math.max(1000, opts.intervalMs ?? 4000)
   const maxBackoff = Math.max(base, opts.maxBackoffMs ?? 15000)
 
@@ -49,8 +53,10 @@ export function usePolling(task: () => Promise<boolean>, opts: PollingOptions = 
       inFlight = false
       backoff = base
       if (stopped) return
-      if (active) schedule(base) // still work in flight → keep polling
-      // otherwise go idle; the caller restarts the loop on a state change
+      // A number is an explicit "look again at roughly this time"; true is the
+      // base cadence; false goes idle until the caller restarts the loop.
+      if (typeof active === 'number') schedule(Math.max(base, active))
+      else if (active) schedule(base)
     } catch {
       inFlight = false
       backoff = Math.min(backoff * 1.8, maxBackoff)

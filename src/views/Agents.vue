@@ -109,7 +109,7 @@ function reasonText(r: AgentStatusRow): string {
   }
   if (r.status === 'abnormal') {
     const parts: string[] = []
-    if (r.firing_alerts) parts.push(t('agentStatus.reasonAlerts', { n: r.firing_alerts }))
+    if (r.firing_faults) parts.push(t('agentStatus.reasonFaults', { n: r.firing_faults }))
     if (r.active_issues) parts.push(t('agentStatus.reasonIssues', { n: r.active_issues }))
     return parts.join(' · ')
   }

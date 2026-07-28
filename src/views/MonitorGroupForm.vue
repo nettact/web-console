@@ -1,10 +1,10 @@
 <script setup lang="ts">
 // Create/edit a monitor group: its name, incident-merge policy, shared Agent
 // execution scope (all agents, or selected existing agent groups), the static
-// list of member targets, and its one-layer AND/OR group rules. The default group
-// may be edited but never deleted (its invariant is shown). Rules and members are
-// only available once the group exists (mirrors the target form's save-first
-// flow), because a condition must bind to an in-group target.
+// list of member targets, and the notification policy its targets fall under.
+// The default group may be edited but never deleted (its invariant is shown).
+// The notification policy is only offered once the group exists, because an
+// override policy is scoped by the group's id.
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
@@ -12,14 +12,14 @@ import {
   api,
   type AgentGroup,
   type Channel,
-  type GroupRule,
-  type GroupRuleInput,
   type MonitorGroup,
   type MonitorGroupInput,
+  type NotificationPolicy,
+  type NotificationPolicyInput,
   type ProbeTarget,
 } from '../api'
 import ConfirmDialog from '../components/ConfirmDialog.vue'
-import GroupRuleEditor from '../components/GroupRuleEditor.vue'
+import PolicyFields from '../components/PolicyFields.vue'
 import { typeLabel, targetLabel } from '../lib/targetLabels'
 
 const { t: tr } = useI18n()
@@ -43,8 +43,6 @@ const group = ref<MonitorGroup | null>(null)
 const agentGroups = ref<AgentGroup[]>([])
 const targets = ref<ProbeTarget[]>([])
 const channels = ref<Channel[]>([])
-const rules = ref<GroupRule[]>([])
-const draftRule = ref<GroupRule | null>(null)
 
 const error = ref('')
 const saved = ref(false)
@@ -73,6 +71,67 @@ function payload(): MonitorGroupInput {
     all_agents: form.all_agents,
     agent_group_ids: form.all_agents ? [] : [...form.agent_group_ids],
   }
+}
+
+// ---- notification policy ----
+// Detection is unconditional; this only decides whether/when/where a recorded
+// fault is announced. A group either inherits the site default or owns exactly
+// one override — precedence never stacks.
+const sitePolicy = ref<NotificationPolicy | null>(null)
+const groupPolicy = ref<NotificationPolicy | null>(null)
+const policyMode = ref<'default' | 'override'>('default')
+const policyDraft = ref<NotificationPolicyInput>(seedDraft())
+
+function seedDraft(): NotificationPolicyInput {
+  // A fresh override starts as a copy of whatever governs the group today, so
+  // switching to "override" changes nothing until the user edits a field.
+  const base = groupPolicy.value ?? sitePolicy.value
+  return {
+    name: groupPolicy.value?.name || tr('mgroup.policyDraftName', { name: form.name || tr('mgroup.name') }),
+    scope_kind: 'group',
+    scope_id: editingId.value,
+    enabled: base?.enabled ?? true,
+    min_severity: base?.min_severity || 'warn',
+    warn_delay_sec: base?.warn_delay_sec ?? 0,
+    critical_delay_sec: base?.critical_delay_sec ?? 0,
+    notify_recovery: base?.notify_recovery ?? true,
+    channel_ids: [...(base?.channel_ids ?? [])],
+  }
+}
+
+async function loadPolicies() {
+  const list = await api.notificationPolicies(SITE)
+  sitePolicy.value = list.find((p) => p.is_default) ?? null
+  groupPolicy.value = list.find((p) => p.scope_kind === 'group' && p.scope_id === editingId.value) ?? null
+  policyMode.value = groupPolicy.value ? 'override' : 'default'
+  policyDraft.value = seedDraft()
+}
+
+async function savePolicy() {
+  if (!editingId.value) return
+  if (policyMode.value === 'override') {
+    const body: NotificationPolicyInput = {
+      ...policyDraft.value,
+      scope_kind: 'group',
+      scope_id: editingId.value,
+      name: policyDraft.value.name.trim() || form.name.trim(),
+    }
+    if (groupPolicy.value) await api.updateNotificationPolicy(groupPolicy.value.id, body)
+    else await api.createNotificationPolicy(SITE, body)
+    return
+  }
+  // Back to inheriting: the override must go, or it would keep winning.
+  if (groupPolicy.value) await api.deleteNotificationPolicy(groupPolicy.value.id)
+}
+
+function channelsLabel(ids: string[]): string {
+  if (!ids.length) return tr('notificationPolicy.recordOnlyShort')
+  return ids.map((id) => channels.value.find((c) => c.id === id)?.name || id).join(', ')
+}
+function delayLabel(sec: number): string {
+  if (!sec) return tr('notificationPolicy.delayImmediate')
+  if (sec % 60 === 0) return tr('common.durMinutes', { n: sec / 60 })
+  return tr('common.durSeconds', { n: sec })
 }
 
 async function load() {
@@ -109,13 +168,12 @@ async function load() {
     form.all_agents = g.all_agents
     form.agent_group_ids = [...g.agent_group_ids]
     original.value = { name: g.name, merge_enabled: g.merge_enabled, all_agents: g.all_agents, agent_group_ids: [...g.agent_group_ids] }
-    await loadRules()
+    try {
+      await loadPolicies()
+    } catch (e) {
+      error.value = String((e as Error).message || e)
+    }
   }
-}
-
-async function loadRules() {
-  if (!editingId.value) return
-  rules.value = await api.groupRules(editingId.value)
 }
 
 // A merge flip or a scope change terminates the group's active alerts/incidents
@@ -155,7 +213,7 @@ async function doCreate() {
   busy.value = true
   try {
     const { id } = await api.createMonitorGroup(SITE, payload())
-    // Move to the edit route; the id watcher reloads with rules/members enabled.
+    // Move to the edit route; the id watcher reloads with policy/members enabled.
     router.replace(`/monitoring/groups/${id}/edit`)
   } catch (e) {
     error.value = String((e as Error).message || e)
@@ -169,66 +227,9 @@ async function doUpdate() {
   busy.value = true
   try {
     await api.updateMonitorGroup(editingId.value, payload())
+    await savePolicy()
     saved.value = true
     await load()
-  } catch (e) {
-    error.value = String((e as Error).message || e)
-  } finally {
-    busy.value = false
-  }
-}
-
-// ---- rules ----
-function addRule() {
-  draftRule.value = {
-    id: '',
-    group_id: editingId.value,
-    site_id: '',
-    name: '',
-    op: 'and',
-    layer: 'internet',
-    severity: 'warn',
-    channel_ids: [],
-    enabled: true,
-    conditions: [],
-  }
-}
-async function saveNewRule(input: GroupRuleInput) {
-  busy.value = true
-  error.value = ''
-  try {
-    await api.createGroupRule(editingId.value, input)
-    draftRule.value = null
-    await loadRules()
-  } catch (e) {
-    error.value = String((e as Error).message || e)
-  } finally {
-    busy.value = false
-  }
-}
-async function saveExistingRule(id: string, input: GroupRuleInput) {
-  busy.value = true
-  error.value = ''
-  try {
-    await api.updateGroupRule(id, input)
-    await loadRules()
-  } catch (e) {
-    error.value = String((e as Error).message || e)
-  } finally {
-    busy.value = false
-  }
-}
-
-const pendingDeleteRule = ref<GroupRule | null>(null)
-async function confirmDeleteRule() {
-  const r = pendingDeleteRule.value
-  if (!r) return
-  busy.value = true
-  error.value = ''
-  try {
-    await api.deleteGroupRule(r.id)
-    pendingDeleteRule.value = null
-    await loadRules()
   } catch (e) {
     error.value = String((e as Error).message || e)
   } finally {
@@ -256,7 +257,6 @@ async function confirmDeleteGroup() {
 watch(editingId, () => {
   notFound.value = false
   saved.value = false
-  draftRule.value = null
   load()
 })
 onMounted(load)
@@ -334,6 +334,69 @@ onMounted(load)
         </div>
       </section>
 
+      <!-- Notification policy: inherit the site default, or override for this group.
+           Saved together with the group. -->
+      <section class="panel" v-if="editingId">
+        <div class="panel-head"><h3>{{ tr('mgroup.policyTitle') }}</h3></div>
+        <p class="hint panel-hint">{{ tr('mgroup.policyHint') }}</p>
+        <div class="pbody">
+          <label class="scope-opt">
+            <input type="radio" value="default" v-model="policyMode" />
+            <span>{{ tr('mgroup.policyUseSite') }}</span>
+          </label>
+          <label class="scope-opt">
+            <input type="radio" value="override" v-model="policyMode" />
+            <span>{{ tr('mgroup.policyOverride') }}</span>
+          </label>
+
+          <div v-if="policyMode === 'default'" class="policy-view">
+            <p v-if="!sitePolicy" class="hint tiny">{{ tr('mgroup.policySiteMissing') }}</p>
+            <template v-else>
+              <div class="sum-row">
+                <span class="sum-k">{{ tr('notificationPolicy.name') }}</span>
+                <span class="sum-v">
+                  {{ sitePolicy.name }}
+                  <em v-if="!sitePolicy.enabled" class="off">{{ tr('notificationPolicy.stateDisabled') }}</em>
+                </span>
+              </div>
+              <div class="sum-row">
+                <span class="sum-k">{{ tr('notificationPolicy.minSeverity') }}</span>
+                <span class="sum-v">{{ tr(`mform.sev_${sitePolicy.min_severity}`) }}</span>
+              </div>
+              <div class="sum-row">
+                <span class="sum-k">{{ tr('notificationPolicy.warnDelay') }}</span>
+                <span class="sum-v">{{ delayLabel(sitePolicy.warn_delay_sec) }}</span>
+              </div>
+              <div class="sum-row">
+                <span class="sum-k">{{ tr('notificationPolicy.criticalDelay') }}</span>
+                <span class="sum-v">{{ delayLabel(sitePolicy.critical_delay_sec) }}</span>
+              </div>
+              <div class="sum-row">
+                <span class="sum-k">{{ tr('notificationPolicy.notifyRecovery') }}</span>
+                <span class="sum-v">
+                  {{ sitePolicy.notify_recovery ? tr('notificationPolicy.yes') : tr('notificationPolicy.no') }}
+                </span>
+              </div>
+              <div class="sum-row">
+                <span class="sum-k">{{ tr('notificationPolicy.channels') }}</span>
+                <span class="sum-v" :class="{ 'record-only': !sitePolicy.channel_ids.length }">
+                  {{ channelsLabel(sitePolicy.channel_ids) }}
+                </span>
+              </div>
+              <p class="hint tiny">
+                {{ tr('mgroup.policyEditSiteHint') }}
+                <router-link to="/settings">{{ tr('mgroup.policyGoSettings') }}</router-link>
+              </p>
+            </template>
+          </div>
+
+          <div v-else class="policy-edit">
+            <PolicyFields v-model="policyDraft" :channels="channels" />
+            <p class="hint tiny">{{ tr('mgroup.policyOverrideSaveHint') }}</p>
+          </div>
+        </div>
+      </section>
+
       <div class="form-foot">
         <router-link to="/monitoring" class="btn">{{ tr('mgroup.cancel') }}</router-link>
         <button class="btn btn-primary" :disabled="busy" @click="save">
@@ -389,39 +452,6 @@ onMounted(load)
         <p v-else class="hint tiny pbody-hint">{{ tr('mgroup.noMembers') }}</p>
       </section>
 
-      <!-- Group rules (one-layer AND/OR) -->
-      <section class="panel" v-if="editingId">
-        <div class="panel-head"><h3>{{ tr('mgroup.rulesTitle') }}</h3></div>
-        <p class="hint panel-hint">{{ tr('mgroup.rulesHint') }}</p>
-        <div class="pbody">
-          <p v-if="!members.length" class="hint tiny">{{ tr('mgroup.addMembersForRules') }}</p>
-          <template v-else>
-            <button v-if="!draftRule" class="link-btn" @click="addRule">{{ tr('mgroup.addRule') }}</button>
-            <p v-if="!rules.length && !draftRule" class="hint tiny">{{ tr('mgroup.noRules') }}</p>
-
-            <GroupRuleEditor
-              v-for="r in rules"
-              :key="r.id"
-              :rule="r"
-              :members="members"
-              :channels="channels"
-              :busy="busy"
-              @save="saveExistingRule(r.id, $event)"
-              @remove="pendingDeleteRule = r"
-            />
-            <GroupRuleEditor
-              v-if="draftRule"
-              :rule="draftRule"
-              :members="members"
-              :channels="channels"
-              :busy="busy"
-              @save="saveNewRule"
-              @cancel="draftRule = null"
-            />
-          </template>
-        </div>
-      </section>
-
       <p v-if="!editingId" class="hint save-first">{{ tr('mgroup.saveGroupFirst') }}</p>
     </template>
 
@@ -436,17 +466,6 @@ onMounted(load)
       tone="danger"
       @confirm="doUpdate"
       @cancel="showConfigConfirm = false"
-    />
-    <ConfirmDialog
-      :open="!!pendingDeleteRule"
-      :title="tr('mgroup.ruleDeleteTitle')"
-      :message="[tr('mgroup.ruleDeleteBody1'), tr('mgroup.ruleDeleteBody2')]"
-      :confirm-label="tr('common.delete')"
-      :cancel-label="tr('mgroup.cancel')"
-      :busy="busy"
-      tone="danger"
-      @confirm="confirmDeleteRule"
-      @cancel="pendingDeleteRule = null"
     />
     <ConfirmDialog
       :open="showDeleteGroup"
@@ -546,6 +565,36 @@ onMounted(load)
   font-style: normal;
   color: var(--text-dim);
   font-size: 11px;
+}
+.policy-view,
+.policy-edit {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px dashed var(--border);
+}
+.sum-row {
+  display: flex;
+  gap: 12px;
+  align-items: baseline;
+  padding: 3px 0;
+  font-size: 13px;
+}
+.sum-k {
+  flex: none;
+  min-width: 132px;
+  color: var(--text-dim);
+}
+.sum-v {
+  color: var(--text);
+}
+.sum-v.record-only {
+  color: var(--text-dim);
+}
+.sum-v .off {
+  margin-left: 8px;
+  font-style: normal;
+  font-size: 11.5px;
+  color: var(--warning);
 }
 .tiny {
   font-size: 11.5px;

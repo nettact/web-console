@@ -4,7 +4,6 @@ import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import type { TargetAgentStatusRow, TargetStatusRow } from '../../api'
 import { useMetricMeta } from '../../composables/useMetricMeta'
-import { useIncidentLabels } from '../../composables/useIncidentLabels'
 import { fmtNum } from '../../lib/metricMeta'
 import { toDateLocale } from '../../i18n'
 import { notifications } from '../../notifications'
@@ -20,9 +19,8 @@ const props = defineProps<{
 }>()
 
 const router = useRouter()
-const { t, locale } = useI18n()
-const { metricLabel, unitLabel } = useMetricMeta()
-const { comparatorLabel, comparatorSymbol } = useIncidentLabels()
+const { t, te, locale } = useI18n()
+const { unitLabel } = useMetricMeta()
 
 // Remediation dialog for a clicked missing permission. A missing permission on a
 // target×agent pair is permission_blocked (not granted) unless the pair's whole
@@ -95,6 +93,13 @@ function executionContextLabel(agent: TargetAgentStatusRow): string {
   return t(`targetStatus.context.${agent.execution_state}`)
 }
 
+// Severity comes off a frozen fault ref as a raw server string; fall back to the
+// code itself rather than rendering a blank pill for a severity we don't know.
+function severityLabel(severity: string): string {
+  const key = `targetStatus.severity.${severity}`
+  return te(key) ? t(key) : severity
+}
+
 function historyLocation(agentID: string) {
   return {
     path: `/target-status/${encodeURIComponent(props.target.target_id)}/agents/${encodeURIComponent(agentID)}/history`,
@@ -120,7 +125,7 @@ function openHistory(agentID: string): void {
       class="agent-card"
       :class="{
         highlighted: selectedAgentId === agent.agent_id,
-        abnormal: agent.execution_state !== 'collecting' || agent.probe_state === 'failed' || agent.rule_state !== 'normal',
+        abnormal: agent.execution_state !== 'collecting' || agent.probe_state === 'failed' || agent.fault_state !== 'normal',
       }"
       role="link"
       tabindex="0"
@@ -143,7 +148,7 @@ function openHistory(agentID: string): void {
             :state="agent.probe_state"
             :title="staleTitle(agent)"
           />
-          <MonitorStateBadge dim="rule" :state="agent.rule_state" />
+          <MonitorStateBadge dim="fault" :state="agent.fault_state" />
         </div>
         <span class="history-link-hint">{{ t('targetStatus.openHistory') }} →</span>
       </header>
@@ -185,35 +190,42 @@ function openHistory(agentID: string): void {
         @select="(permId: string) => openRemediation(agent, permId)"
       />
 
-      <ul v-if="agent.active_conditions.length" class="condition-list">
-        <li v-for="condition in agent.active_conditions" :key="condition.condition_id">
-          <div class="condition-main">
-            <strong>{{ condition.rule_name }}</strong>
-            <span class="severity" :class="`severity-${condition.severity}`">
-              {{ t(`targetStatus.severity.${condition.severity}`) }}
-            </span>
-          </div>
-          <div class="condition-expression">
-            <span>{{ metricLabel(condition.metric_kind) }}</span>
-            <span :aria-label="comparatorLabel(condition.comparator)">{{ comparatorSymbol(condition.comparator) }}</span>
-            <span>{{ fmtNum(condition.threshold) }}</span>
-            <span v-if="condition.unit">{{ unitLabel(condition.unit) }}</span>
-            <span v-if="condition.last_value != null" class="condition-current">
-              {{ t('targetStatus.condValue', { v: fmtNum(condition.last_value) }) }}
-            </span>
-          </div>
-          <router-link
-            v-if="condition.incident_id"
-            class="incident-link"
-            :to="{ path: '/incidents', query: { incident: condition.incident_id } }"
-            @click.stop
-            @keydown.enter.stop
-            @keydown.space.stop
-          >
-            {{ t('targetStatus.openIncident') }} →
-          </router-link>
-        </li>
-      </ul>
+      <!-- The built-in availability detector's own verdict for this pair: a
+           confirmed fault (frozen title + severity, deep-linked to the incident
+           that owns it) or, short of the threshold, its confirmation progress. -->
+      <div v-if="agent.fault_state === 'faulted' && agent.fault" class="fault-panel is-faulted">
+        <div class="fault-main">
+          <strong>{{ agent.fault.title }}</strong>
+          <span class="severity" :class="`severity-${agent.fault.severity}`">{{ severityLabel(agent.fault.severity) }}</span>
+        </div>
+        <div class="fault-meta">
+          <span>{{ t('targetStatus.confirmSince', { time: fmtTime(agent.fault.observed_at) }) }}</span>
+        </div>
+        <router-link
+          v-if="agent.fault.incident_id"
+          class="incident-link"
+          :to="{ path: '/incidents', query: { incident: agent.fault.incident_id } }"
+          @click.stop
+          @keydown.enter.stop
+          @keydown.space.stop
+        >
+          {{ t('targetStatus.viewFault') }} →
+        </router-link>
+      </div>
+
+      <div v-else-if="agent.fault_state === 'confirming' && agent.confirm" class="fault-panel is-confirming">
+        <div class="fault-main">
+          <strong>{{ t('targetStatus.fault.confirming') }}</strong>
+          <span class="confirm-rounds">
+            {{ t('targetStatus.confirmProgress', { n: agent.confirm.fail_rounds, need: agent.confirm.need_rounds }) }}
+          </span>
+        </div>
+        <div class="fault-meta">
+          <span v-if="agent.confirm.first_fail_at">
+            {{ t('targetStatus.confirmSince', { time: fmtTime(agent.confirm.first_fail_at) }) }}
+          </span>
+        </div>
+      </div>
     </article>
 
     <PermissionRemediationDialog
@@ -236,8 +248,8 @@ function openHistory(agentID: string): void {
 .agent-head,
 .agent-identity,
 .state-badges,
-.condition-main,
-.condition-expression {
+.fault-main,
+.fault-meta {
   display: flex;
   align-items: center;
 }
@@ -277,16 +289,26 @@ function openHistory(agentID: string): void {
 .fact-card strong { color: var(--text-dim); font-size: 12px; font-weight: 550; }
 .fact-card small { color: var(--text-muted); font-size: 10.5px; }
 .missing-permissions { margin-top: 10px; }
-.condition-list { display: grid; gap: 7px; margin: 11px 0 0; padding: 0; list-style: none; }
-.condition-list li { display: grid; grid-template-columns: minmax(140px, 0.8fr) minmax(240px, 1.5fr) auto; align-items: center; gap: 12px; padding: 9px 10px; border-left: 2px solid var(--danger); border-radius: 0 7px 7px 0; background: var(--danger-soft); }
-.condition-main { gap: 7px; }
-.condition-main strong { font-size: 11.5px; }
+.fault-panel {
+  display: grid;
+  grid-template-columns: minmax(200px, 1.2fr) minmax(220px, 1.4fr) auto;
+  align-items: center;
+  gap: 12px;
+  margin-top: 11px;
+  padding: 9px 10px;
+  border-left: 2px solid var(--danger);
+  border-radius: 0 7px 7px 0;
+  background: var(--danger-soft);
+}
+.fault-panel.is-confirming { border-left-color: var(--warning); background: var(--warning-soft); }
+.fault-main { gap: 7px; flex-wrap: wrap; }
+.fault-main strong { font-size: 11.5px; }
 .severity { padding: 1px 6px; border-radius: var(--radius-pill); color: var(--text-dim); font-size: 9.5px; background: var(--surface-2); }
 .severity-error,
 .severity-critical { color: var(--danger); }
 .severity-warn { color: var(--warning); }
-.condition-expression { gap: 5px; color: var(--text-dim); font-family: var(--mono); font-size: 11px; flex-wrap: wrap; }
-.condition-current { color: var(--danger); }
+.confirm-rounds { color: var(--warning); font-family: var(--mono); font-size: 11.5px; font-variant-numeric: tabular-nums; }
+.fault-meta { gap: 12px; flex-wrap: wrap; color: var(--text-dim); font-size: 11px; }
 .empty-agent { padding: 12px 2px; }
 
 @media (max-width: 760px) {
@@ -294,7 +316,7 @@ function openHistory(agentID: string): void {
   .agent-identity { min-width: 0; flex-basis: 100%; }
   .history-link-hint { margin-left: 0; }
   .agent-facts { grid-template-columns: 1fr; }
-  .condition-list li { grid-template-columns: 1fr; gap: 6px; }
+  .fault-panel { grid-template-columns: 1fr; gap: 6px; }
   .incident-link { justify-self: start; }
 }
 </style>

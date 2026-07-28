@@ -13,14 +13,12 @@ import MonitorStateBadge from '../components/status/MonitorStateBadge.vue'
 import ConfirmDialog from '../components/ConfirmDialog.vue'
 import { targetStatus, targetIndex } from '../targetStatus'
 import { useMetricMeta } from '../composables/useMetricMeta'
-import { useIncidentLabels } from '../composables/useIncidentLabels'
 import { typeLabel, targetLabel } from '../lib/targetLabels'
 import { fmtNum } from '../lib/metricMeta'
 import { toDateLocale } from '../i18n'
 
 const { t: tr, locale } = useI18n()
-const { metricLabel, unitLabel } = useMetricMeta()
-const { comparatorSymbol, comparatorLabel } = useIncidentLabels()
+const { unitLabel } = useMetricMeta()
 
 const SITE = 'site_default'
 const groups = ref<MonitorGroup[]>([])
@@ -76,8 +74,8 @@ function mergeLabel(g: MonitorGroup): string {
 const fmtTime = (s: string | null | undefined) =>
   s ? new Date(s).toLocaleString(toDateLocale(locale.value), { hour12: false }) : '—'
 
-// Condition context is derived on the client from stable machine values
-// (metric_kind + comparator + threshold) — the server never sends display text.
+// The latest sample's display text is derived on the client from the stable
+// machine values (value + unit) — the server never sends display text.
 function lastValueLabel(a: TargetAgentStatusRow): string {
   if (a.last_value == null || !a.last_metric_kind) return '—'
   const unit = a.last_unit ? unitLabel(a.last_unit) : ''
@@ -227,10 +225,6 @@ onMounted(load)
                       class="affected"
                     >{{ tr('targetStatus.affected', { affected: statusOf(t.id)!.affected_agents, total: statusOf(t.id)!.applicable_agents }) }}</span>
                     <span
-                      v-if="statusOf(t.id)!.display_state === 'breaching'"
-                      class="breach-hint"
-                    >{{ tr('targetStatus.breachingHint') }}</span>
-                    <span
                       v-for="link in incidentLinks(statusOf(t.id)!)"
                       :key="link.id"
                       class="nav-chip"
@@ -250,7 +244,7 @@ onMounted(load)
                   </div>
                 </td>
               </tr>
-              <!-- Per-agent authoritative detail (execution / probe / rule + context). -->
+              <!-- Per-agent authoritative detail (execution / probe / fault + context). -->
               <tr v-if="t.id && expanded.has(t.id) && statusOf(t.id)" class="detail-row">
                 <td colspan="6">
                   <div v-if="!statusOf(t.id)!.agents.length" class="hint pad">
@@ -264,7 +258,7 @@ onMounted(load)
                         </span>
                         <MonitorStateBadge dim="execution" :state="a.execution_state" />
                         <MonitorStateBadge v-if="a.probe_state !== 'not_applicable'" dim="probe" :state="a.probe_state" />
-                        <MonitorStateBadge v-if="a.rule_state !== 'normal'" dim="rule" :state="a.rule_state" />
+                        <MonitorStateBadge v-if="a.fault_state !== 'normal'" dim="fault" :state="a.fault_state" />
                         <router-link class="agent-link" :to="agentTo(a.agent_id)">{{ tr('targetStatus.viewAgent') }}</router-link>
                       </div>
                       <div class="agent-facts">
@@ -280,20 +274,23 @@ onMounted(load)
                           {{ tr('targetStatus.missingPerms', { n: a.missing_permissions.length }) }}
                         </span>
                       </div>
-                      <ul v-if="a.active_conditions.length" class="cond-list">
-                        <li v-for="c in a.active_conditions" :key="c.condition_id">
-                          <span class="cond-rule">{{ c.rule_name }}</span>
-                          <span class="cond-expr mono">
-                            {{ metricLabel(c.metric_kind) }}
-                            <span :aria-label="comparatorLabel(c.comparator)">{{ comparatorSymbol(c.comparator) }}</span>
-                            {{ fmtNum(c.threshold) }}<template v-if="c.unit"> {{ unitLabel(c.unit) }}</template>
-                            <template v-if="c.last_value != null"> · {{ tr('targetStatus.condValue', { v: fmtNum(c.last_value) }) }}</template>
-                          </span>
-                          <router-link v-if="c.incident_id" class="cond-link" :to="{ path: '/incidents', query: { incident: c.incident_id } }">
-                            {{ tr('targetStatus.incidentLink') }}
-                          </router-link>
-                        </li>
-                      </ul>
+                      <!-- The built-in detector's verdict for this pair: a confirmed
+                           fault (frozen title, deep-linked to its incident) or the
+                           failing streak still short of the threshold. -->
+                      <div v-if="a.fault_state === 'faulted' && a.fault" class="fault-line">
+                        <span class="fault-title">{{ a.fault.title }}</span>
+                        <span class="fault-meta">{{ tr('targetStatus.confirmSince', { time: fmtTime(a.fault.observed_at) }) }}</span>
+                        <router-link v-if="a.fault.incident_id" class="fault-link" :to="{ path: '/incidents', query: { incident: a.fault.incident_id } }">
+                          {{ tr('targetStatus.viewFault') }}
+                        </router-link>
+                      </div>
+                      <div v-else-if="a.fault_state === 'confirming' && a.confirm" class="fault-line">
+                        <span class="fault-title">{{ tr('targetStatus.fault.confirming') }}</span>
+                        <span class="fault-meta">
+                          {{ tr('targetStatus.confirmProgress', { n: a.confirm.fail_rounds, need: a.confirm.need_rounds }) }}
+                          <template v-if="a.confirm.first_fail_at"> · {{ tr('targetStatus.confirmSince', { time: fmtTime(a.confirm.first_fail_at) }) }}</template>
+                        </span>
+                      </div>
                     </div>
                   </div>
                 </td>
@@ -471,10 +468,6 @@ onMounted(load)
   color: var(--text-muted);
   font-variant-numeric: tabular-nums;
 }
-.breach-hint {
-  font-size: 11.5px;
-  color: var(--text-dim);
-}
 .nav-chip a {
   font-size: 11.5px;
 }
@@ -524,7 +517,7 @@ onMounted(load)
   background: var(--border-strong);
 }
 .agent-link,
-.cond-link {
+.fault-link {
   font-size: 11.5px;
   margin-left: auto;
 }
@@ -535,26 +528,18 @@ onMounted(load)
   font-size: 12px;
   color: var(--text-muted);
 }
-.cond-list {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-.cond-list li {
+.fault-line {
   display: flex;
   align-items: baseline;
   gap: 10px;
   flex-wrap: wrap;
   font-size: 12px;
 }
-.cond-rule {
+.fault-title {
   color: var(--text-dim);
   font-weight: 600;
 }
-.cond-expr {
+.fault-meta {
   color: var(--text-muted);
 }
 .pad {
