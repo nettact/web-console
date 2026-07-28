@@ -1005,21 +1005,26 @@ export default {
     title: 'Settings',
     sub: 'Quota, storage and notification channels.',
     // Agent connectivity-alert configuration (AGENT-002).
-    agentAlert: {
-      routingNote: 'An Agent-offline fault is always critical; where its notification goes is decided by the notification policy.',
-      title: 'Agent connectivity alerts',
-      hint: 'Raise an alert when an agent stays offline past the grace period; resolve after stable recovery. Individual agents can be muted in the list.',
-      enable: 'Enable connectivity alerts',
+    agentConnectivity: {
+      title: 'Agent connectivity detection',
+      hint: 'An agent offline past the grace period is recorded as a fault, which ends on its own after a stable recovery. Individual agents can be muted in the list.',
+      enable: 'Enable connectivity detection',
+      disableWarn: 'Turning this off stops the fault being recorded at all — it does not merely silence a notification, it leaves no fault history. To stop being interrupted, change the notification policy instead.',
       grace: 'Offline grace',
-      graceHelp: 'An agent must be offline this long before an alert fires, absorbing brief blips.',
+      graceHelp: 'An agent must be offline this long before the fault is confirmed, absorbing brief blips.',
       recover: 'Recovery confirmation',
       recoverHelp: 'The agent must reconnect and stay connected this long before it counts as recovered.',
+      routingNote: 'An Agent-offline fault is always critical; who hears about it is decided by the notification policy.',
+      rangeErr: 'A value is out of the allowed range.',
+    },
+    agentDisplay: {
+      title: 'Agent status display',
+      hint: 'Affects only how the Agent list is presented; it takes no part in fault detection.',
       stale: 'Resource freshness',
       staleHelp: 'Resource samples older than this are tagged "stale" in the list.',
       rangeErr: 'A value is out of the allowed range.',
     },
     tabs: {
-      policies: 'Notification policies',
       general: 'General',
       notifications: 'Notifications',
       data: 'Data',
@@ -1033,7 +1038,7 @@ export default {
     rollupFoot: '1 min · 1 hour · 1 day',
     storageNote: 'Raw samples are kept short-term; 1-min / 1-hour / 1-day rollups are retained long-term → years of history stay compact.',
     channels: 'Notification channels',
-    channelsHint: 'Add multiple channels and pick which to notify per alert rule in Monitoring.',
+    channelsHint: 'Channels are where a notice can go; which faults reach which channel is decided by the policies below.',
     webhook: {
       url: 'URL',
       urlPlaceholder: 'https://hooks.example.com/…',

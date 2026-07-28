@@ -31,7 +31,7 @@ const SITE = 'site_default'
 // Secondary navigation: the page grew too dense for one scroll, so its panels are
 // split across underline tabs (same pattern as Processes.vue). All tab bodies stay
 // mounted (v-show) so their one-shot on-mount loads/state persist across switches.
-const tab = ref<'general' | 'notifications' | 'policies' | 'data'>('general')
+const tab = ref<'general' | 'notifications' | 'data'>('general')
 
 const quota = ref<Quota | null>(null)
 const stats = ref<StorageStats | null>(null)
@@ -236,54 +236,81 @@ async function saveDiag() {
   }
 }
 
-// Agent connectivity alerts (AGENT-002): enable + grace/recovery/stale timings.
-// The severity of an Agent-offline fault is fixed at critical, and where its
-// notification goes is decided by the notification policy — neither is set here.
-const agentAlert = reactive({
+// Agent connectivity DETECTION (AGENT-002). These decide whether an offline
+// Agent is recorded as a fault and how long confirmation takes — not who hears
+// about it. Turning detection off does not merely silence a notification: the
+// fault stops being recorded at all, which is why this sits with the other
+// detection settings rather than under Notifications. Severity is fixed at
+// critical and routing is a notification policy; neither is set here.
+const connectivity = reactive({
   enabled: true,
-  graceS: 60, // agent_alert_grace_seconds
-  recoverS: 30, // agent_alert_recover_seconds
-  staleS: 120, // agent_status_stale_seconds
+  graceS: 60, // agent_connectivity_grace_seconds
+  recoverS: 30, // agent_connectivity_recover_seconds
 })
-const AGENT_ALERT_BOUNDS: Record<string, [number, number]> = {
+const CONNECTIVITY_BOUNDS: Record<string, [number, number]> = {
   graceS: [15, 3600],
   recoverS: [5, 600],
-  staleS: [30, 3600],
 }
-const agentAlertSaved = ref(false)
-const agentAlertError = ref('')
+const connectivitySaved = ref(false)
+const connectivityError = ref('')
 
-function populateAgentAlert(s: Record<string, string>) {
-  const num = (k: string, def: number) => {
-    const v = parseInt(s[k] ?? '', 10)
-    return Number.isFinite(v) ? v : def
-  }
-  agentAlert.enabled = num('agent_alert_enabled', 1) !== 0
-  agentAlert.graceS = num('agent_alert_grace_seconds', 60)
-  agentAlert.recoverS = num('agent_alert_recover_seconds', 30)
-  agentAlert.staleS = num('agent_status_stale_seconds', 120)
+// Resource-sample freshness for the Agent list (AGENT-001). Not part of the
+// detector at all — it only decides when a resource reading is labelled stale in
+// the UI — so it gets its own panel rather than riding along with detection
+// timings it has nothing to do with.
+const agentDisplay = reactive({ staleS: 120 }) // agent_status_stale_seconds
+const AGENT_DISPLAY_BOUNDS: [number, number] = [30, 3600]
+const agentDisplaySaved = ref(false)
+const agentDisplayError = ref('')
+
+function settingInt(s: Record<string, string>, k: string, def: number): number {
+  const v = parseInt(s[k] ?? '', 10)
+  return Number.isFinite(v) ? v : def
 }
-async function saveAgentAlert() {
-  agentAlertError.value = ''
-  const inRange = Object.entries(AGENT_ALERT_BOUNDS).every(([k, [min, max]]) => {
-    const v = (agentAlert as unknown as Record<string, number>)[k]
+
+function populateAgentSettings(s: Record<string, string>) {
+  connectivity.enabled = settingInt(s, 'agent_connectivity_enabled', 1) !== 0
+  connectivity.graceS = settingInt(s, 'agent_connectivity_grace_seconds', 60)
+  connectivity.recoverS = settingInt(s, 'agent_connectivity_recover_seconds', 30)
+  agentDisplay.staleS = settingInt(s, 'agent_status_stale_seconds', 120)
+}
+
+async function saveConnectivity() {
+  connectivityError.value = ''
+  const inRange = Object.entries(CONNECTIVITY_BOUNDS).every(([k, [min, max]]) => {
+    const v = (connectivity as unknown as Record<string, number>)[k]
     return Number.isFinite(v) && v >= min && v <= max
   })
   if (!inRange) {
-    agentAlertError.value = t('settings.agentAlert.rangeErr')
+    connectivityError.value = t('settings.agentConnectivity.rangeErr')
     return
   }
   try {
     await api.updateSettings({
-      agent_alert_enabled: agentAlert.enabled ? '1' : '0',
-      agent_alert_grace_seconds: String(agentAlert.graceS),
-      agent_alert_recover_seconds: String(agentAlert.recoverS),
-      agent_status_stale_seconds: String(agentAlert.staleS),
+      agent_connectivity_enabled: connectivity.enabled ? '1' : '0',
+      agent_connectivity_grace_seconds: String(connectivity.graceS),
+      agent_connectivity_recover_seconds: String(connectivity.recoverS),
     })
-    agentAlertSaved.value = true
-    setTimeout(() => (agentAlertSaved.value = false), 2000)
+    connectivitySaved.value = true
+    setTimeout(() => (connectivitySaved.value = false), 2000)
   } catch (e) {
-    agentAlertError.value = String((e as Error).message || e)
+    connectivityError.value = String((e as Error).message || e)
+  }
+}
+
+async function saveAgentDisplay() {
+  agentDisplayError.value = ''
+  const [min, max] = AGENT_DISPLAY_BOUNDS
+  if (!Number.isFinite(agentDisplay.staleS) || agentDisplay.staleS < min || agentDisplay.staleS > max) {
+    agentDisplayError.value = t('settings.agentDisplay.rangeErr')
+    return
+  }
+  try {
+    await api.updateSettings({ agent_status_stale_seconds: String(agentDisplay.staleS) })
+    agentDisplaySaved.value = true
+    setTimeout(() => (agentDisplaySaved.value = false), 2000)
+  } catch (e) {
+    agentDisplayError.value = String((e as Error).message || e)
   }
 }
 
@@ -459,7 +486,7 @@ async function load() {
     // a value but saves empty). Entering the console also auto-sets it (see auth).
     consoleUrl.value = settings['console_base_url'] || window.location.origin
     populateDiag(settings)
-    populateAgentAlert(settings)
+    populateAgentSettings(settings)
     populateListen()
   } catch (e) {
     error.value = String((e as Error).message || e)
@@ -525,13 +552,6 @@ onMounted(() => {
       >
         {{ t('settings.tabs.notifications') }}
         <span class="count">{{ channels.length }}</span>
-      </button>
-      <button
-        class="tab" role="tab"
-        :class="{ active: tab === 'policies' }" :aria-selected="tab === 'policies'"
-        @click="tab = 'policies'"
-      >
-        {{ t('settings.tabs.policies') }}
       </button>
       <button
         class="tab" role="tab"
@@ -735,6 +755,66 @@ onMounted(() => {
         <span v-if="diagError" class="err inline">{{ diagError }}</span>
       </div>
     </section>
+    <!-- Detection, not notification: switching this off stops the fault being
+         recorded, which is why it lives here and not under Notifications. -->
+    <section class="panel">
+      <div class="panel-head"><h3>{{ t('settings.agentConnectivity.title') }}</h3></div>
+      <div class="panel-body">
+        <p class="hint">{{ t('settings.agentConnectivity.hint') }}</p>
+        <label class="toggle-row">
+          <input type="checkbox" v-model="connectivity.enabled" />
+          <span>{{ t('settings.agentConnectivity.enable') }}</span>
+        </label>
+        <p class="hint tiny">{{ t('settings.agentConnectivity.disableWarn') }}</p>
+        <div class="knob-grid">
+          <label class="knob">
+            <span class="knob-label">{{ t('settings.agentConnectivity.grace') }}</span>
+            <span class="knob-input">
+              <input type="number" v-model.number="connectivity.graceS" min="15" max="3600" step="1" :disabled="!connectivity.enabled" />
+              <span class="unit">{{ t('settings.unit.seconds') }}</span>
+            </span>
+            <span class="knob-help hint">{{ t('settings.agentConnectivity.graceHelp') }}</span>
+          </label>
+          <label class="knob">
+            <span class="knob-label">{{ t('settings.agentConnectivity.recover') }}</span>
+            <span class="knob-input">
+              <input type="number" v-model.number="connectivity.recoverS" min="5" max="600" step="1" :disabled="!connectivity.enabled" />
+              <span class="unit">{{ t('settings.unit.seconds') }}</span>
+            </span>
+            <span class="knob-help hint">{{ t('settings.agentConnectivity.recoverHelp') }}</span>
+          </label>
+        </div>
+        <p class="hint tiny">{{ t('settings.agentConnectivity.routingNote') }}</p>
+        <div class="row field-row">
+          <button class="btn btn-primary" @click="saveConnectivity">{{ t('common.save') }}</button>
+          <span v-if="connectivitySaved" class="hint saved">✓ {{ t('common.saved') }}</span>
+        </div>
+        <p v-if="connectivityError" class="err inline">{{ connectivityError }}</p>
+      </div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-head"><h3>{{ t('settings.agentDisplay.title') }}</h3></div>
+      <div class="panel-body">
+        <p class="hint">{{ t('settings.agentDisplay.hint') }}</p>
+        <div class="knob-grid">
+          <label class="knob">
+            <span class="knob-label">{{ t('settings.agentDisplay.stale') }}</span>
+            <span class="knob-input">
+              <input type="number" v-model.number="agentDisplay.staleS" min="30" max="3600" step="1" />
+              <span class="unit">{{ t('settings.unit.seconds') }}</span>
+            </span>
+            <span class="knob-help hint">{{ t('settings.agentDisplay.staleHelp') }}</span>
+          </label>
+        </div>
+        <div class="row field-row">
+          <button class="btn btn-primary" @click="saveAgentDisplay">{{ t('common.save') }}</button>
+          <span v-if="agentDisplaySaved" class="hint saved">✓ {{ t('common.saved') }}</span>
+        </div>
+        <p v-if="agentDisplayError" class="err inline">{{ agentDisplayError }}</p>
+      </div>
+    </section>
+
     </div><!-- /general -->
 
     <div v-show="tab === 'notifications'">
@@ -784,51 +864,6 @@ onMounted(() => {
       </div>
     </section>
 
-    <section class="panel">
-      <div class="panel-head"><h3>{{ t('settings.agentAlert.title') }}</h3></div>
-      <div class="panel-body">
-        <p class="hint">{{ t('settings.agentAlert.hint') }}</p>
-        <label class="toggle-row">
-          <input type="checkbox" v-model="agentAlert.enabled" />
-          <span>{{ t('settings.agentAlert.enable') }}</span>
-        </label>
-        <div class="knob-grid">
-          <label class="knob">
-            <span class="knob-label">{{ t('settings.agentAlert.grace') }}</span>
-            <span class="knob-input">
-              <input type="number" v-model.number="agentAlert.graceS" min="15" max="3600" step="1" :disabled="!agentAlert.enabled" />
-              <span class="unit">{{ t('settings.unit.seconds') }}</span>
-            </span>
-            <span class="knob-help hint">{{ t('settings.agentAlert.graceHelp') }}</span>
-          </label>
-          <label class="knob">
-            <span class="knob-label">{{ t('settings.agentAlert.recover') }}</span>
-            <span class="knob-input">
-              <input type="number" v-model.number="agentAlert.recoverS" min="5" max="600" step="1" :disabled="!agentAlert.enabled" />
-              <span class="unit">{{ t('settings.unit.seconds') }}</span>
-            </span>
-            <span class="knob-help hint">{{ t('settings.agentAlert.recoverHelp') }}</span>
-          </label>
-          <label class="knob">
-            <span class="knob-label">{{ t('settings.agentAlert.stale') }}</span>
-            <span class="knob-input">
-              <input type="number" v-model.number="agentAlert.staleS" min="30" max="3600" step="1" />
-              <span class="unit">{{ t('settings.unit.seconds') }}</span>
-            </span>
-            <span class="knob-help hint">{{ t('settings.agentAlert.staleHelp') }}</span>
-          </label>
-        </div>
-        <p class="hint tiny">{{ t('settings.agentAlert.routingNote') }}</p>
-        <div class="row field-row">
-          <button class="btn btn-primary" @click="saveAgentAlert">{{ t('common.save') }}</button>
-          <span v-if="agentAlertSaved" class="hint saved">✓ {{ t('common.saved') }}</span>
-        </div>
-        <p v-if="agentAlertError" class="err inline">{{ agentAlertError }}</p>
-      </div>
-    </section>
-    </div><!-- /notifications -->
-
-    <div v-show="tab === 'policies'">
     <!-- Non-blocking: no channel is a legal configuration, and detection is on
          regardless — say both plainly so it never reads as "nothing is watching". -->
     <p v-if="!channels.length" class="notice-box">{{ t('notificationPolicy.noChannelsNotice') }}</p>
@@ -974,7 +1009,7 @@ onMounted(() => {
         </div>
       </div>
     </section>
-    </div><!-- /policies -->
+    </div><!-- /notifications -->
 
     <div v-show="tab === 'data'">
       <div class="stat-grid">

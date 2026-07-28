@@ -1020,21 +1020,26 @@ export default {
     title: '设置',
     sub: '配额、存储与通知渠道。',
     // Agent connectivity-alert configuration (AGENT-002).
-    agentAlert: {
-      routingNote: 'Agent 离线故障固定为 critical 严重度，通知渠道由通知策略决定。',
-      title: 'Agent 连接告警',
-      hint: '当 Agent 超过宽限期离线时产生告警，稳定恢复后自动结束。单个 Agent 可在列表中单独静音。',
-      enable: '启用连接告警',
+    agentConnectivity: {
+      title: 'Agent 连通性检测',
+      hint: 'Agent 离线超过宽限期即记录为故障，稳定恢复后自动结束。单个 Agent 可在列表中单独静音。',
+      enable: '启用连通性检测',
+      disableWarn: '关闭后不再记录 Agent 离线故障——不是「不发通知」，而是连故障历史都不会留下。若只想停止打扰，请改用通知策略。',
       grace: '离线宽限期',
-      graceHelp: 'Agent 离线超过该时长才触发告警，吸收短暂网络抖动。',
+      graceHelp: 'Agent 离线超过该时长才确认为故障，吸收短暂网络抖动。',
       recover: '恢复确认期',
       recoverHelp: '重新连接并稳定保持该时长后才判定为已恢复。',
+      routingNote: 'Agent 离线故障固定为 critical 严重度，通知发给谁由通知策略决定。',
+      rangeErr: '数值超出允许范围。',
+    },
+    agentDisplay: {
+      title: 'Agent 状态显示',
+      hint: '只影响 Agent 列表的展示，不参与任何故障判定。',
       stale: '资源新鲜度',
       staleHelp: '资源采样超过该时长后在列表中标记为「过期」。',
       rangeErr: '数值超出允许范围。',
     },
     tabs: {
-      policies: '通知策略',
       general: '常规',
       notifications: '通知',
       data: '数据',
@@ -1048,7 +1053,7 @@ export default {
     rollupFoot: '1 分钟 · 1 小时 · 1 天',
     storageNote: '原始样本短期保留，按 1 分钟 / 1 小时 / 1 天降采样分级长期保留 → 多年历史占用可控。',
     channels: '通知渠道',
-    channelsHint: '可添加多个渠道，并在「监控目标」的每条报警规则上单独勾选要通知的渠道。',
+    channelsHint: '渠道是通知的出口；哪些故障发到哪个渠道，由下方的通知策略决定。',
     webhook: {
       url: '地址',
       urlPlaceholder: 'https://hooks.example.com/…',
