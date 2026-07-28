@@ -63,6 +63,20 @@ describe('catalog invariants', () => {
     }
   })
 
+  it('no DNS preset resolves a host an HTTP preset in the same bucket already hits', () => {
+    // A successful HTTP probe already proves the name resolved, so such a DNS
+    // probe would be pure duplication.
+    for (const bucket of buildSelection(REGIONS.map((r) => r.id))) {
+      const httpHosts = new Set(
+        bucket.presets.filter((p) => p.kind === 'http').map((p) => new URL(p.target).hostname),
+      )
+      for (const p of bucket.presets) {
+        if (p.kind !== 'dns') continue
+        expect(httpHosts.has(p.target), `${bucket.key}/${p.key} duplicates an HTTP preset`).toBe(false)
+      }
+    }
+  })
+
   it('the HK/Macau/Taiwan DNS probe resolves a real domain (not www.hinet.net)', () => {
     const hmt = REGIONS.find((r) => r.id === 'hmt')!
     const dns = hmt.presets.find((p) => p.kind === 'dns')!

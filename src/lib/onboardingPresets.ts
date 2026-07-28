@@ -82,6 +82,11 @@ function derp(city: string, nameKey: string, primary: string, backup: string): R
 }
 
 // dnsPreset builds a DNS probe: resolve `query` via a region-appropriate resolver.
+//
+// `query` must NOT be a host that an HTTP preset in the same bucket already hits:
+// a successful HTTP probe already proves the name resolved, so such a DNS probe is
+// pure duplication (and doubles the noise when the host goes down). Point DNS
+// probes at a host no HTTP preset covers. Enforced by a catalog-invariant test.
 function dnsPreset(key: string, query: string, resolver: string, nameKey: string): RegionPreset {
   return { key, kind: 'dns', target: query, nameKey, params: { resolver_server: resolver }, checked: true }
 }
@@ -129,7 +134,6 @@ const GLOBAL_PRESETS: readonly RegionPreset[] = [
   icmp('cf_dns', '1.1.1.1', 'setup.preset_cf_dns'),
   icmp('google_dns', '8.8.8.8', 'setup.preset_google_dns'),
   http('global_gstatic', 'http://www.gstatic.com/generate_204', 'setup.preset_gstatic'),
-  dnsPreset('global_dns', 'www.gstatic.com', '1.1.1.1', 'setup.preset_global_dns'),
 ]
 
 // ---- region buckets (region-specific anchors only; no shared anycast IPs) ----
@@ -142,7 +146,6 @@ export const REGIONS: readonly Region[] = [
       icmp('cn_dnspod', '119.29.29.29', 'setup.preset_dnspod'),
       http('cn_miui', 'http://connect.rom.miui.com/generate_204', 'setup.preset_miui'),
       http('cn_hicloud', 'http://connectivitycheck.platform.hicloud.com/generate_204', 'setup.preset_hicloud'),
-      dnsPreset('cn_dns', 'connect.rom.miui.com', '223.5.5.5', 'setup.preset_cn_dns'),
     ],
   },
   {
