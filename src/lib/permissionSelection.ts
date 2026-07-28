@@ -18,13 +18,14 @@ export type EnrollPlatform = 'windows' | 'macos' | 'linux' | 'docker'
 //   unsupported — this platform's build cannot do it at all; granting is futile
 export type PlatformSupport = 'ok' | 'privileged' | 'unsupported'
 
-// Capabilities that need a raw ICMP socket. On Linux and in containers that means
-// CAP_NET_RAW (root has it; the official image ships the file capability and the
-// installer adds the capability to the container). On Windows the ICMP paths go
-// through iphlpapi and need no elevation, except TCP path diagnostics.
-const RAW_SOCKET_IDS = new Set([
-  'probe.icmp',
-  'network.gateway.probe',
+// Path diagnostics has to RECEIVE the ICMP errors intermediate routers send back,
+// which off Windows takes a raw socket — CAP_NET_RAW or root. ICMP *probing* does
+// not: it only needs to send an echo and read the reply, which an unprivileged
+// ping socket (SOCK_DGRAM/IPPROTO_ICMP) does whenever net.ipv4.ping_group_range
+// covers the process gid — the default on common distributions and inside Docker.
+// Measured: an unprivileged user and a plain non-root container both get ICMP
+// probing and gateway probing; only path diagnostics needs the privileged path.
+const NEEDS_RAW_SOCKET_OFF_WINDOWS = new Set([
   'diagnostic.traceroute.icmp',
   'diagnostic.traceroute.tcp',
 ])
@@ -39,6 +40,9 @@ const NOT_ON_MACOS = new Set([
   'diagnostic.traceroute.tcp',
 ])
 
+// What to expect of a permission on a platform, used when choosing a policy at
+// enrollment. This answers "will this work once granted?", so ICMP probing counts
+// as plain `ok` on Linux: the usual configuration runs it unprivileged.
 export function platformSupport(id: string, platform: EnrollPlatform): PlatformSupport {
   if (platform === 'macos') return NOT_ON_MACOS.has(id) ? 'unsupported' : 'ok'
   if (platform === 'windows') {
@@ -48,7 +52,22 @@ export function platformSupport(id: string, platform: EnrollPlatform): PlatformS
     return id === 'diagnostic.traceroute.tcp' ? 'privileged' : 'ok'
   }
   // Linux and the Linux-based container image behave identically here.
-  return RAW_SOCKET_IDS.has(id) ? 'privileged' : 'ok'
+  return NEEDS_RAW_SOCKET_OFF_WINDOWS.has(id) ? 'privileged' : 'ok'
+}
+
+// Whether more privilege could enable a permission an agent reports as
+// unsupported. This is a DIFFERENT question from platformSupport: ICMP probing
+// normally works unprivileged on Linux, so the picker calls it `ok` — but if a
+// particular agent still reports it unsupported (ping_group_range switched off,
+// no CAP_NET_RAW), running privileged is exactly what fixes it. Answering the
+// remediation question from the enrollment table would tell that operator the
+// platform cannot do it, which is false.
+export function privilegeCanEnable(id: string, platform: EnrollPlatform): boolean {
+  if (platform === 'macos') return false // not implemented; privilege is irrelevant
+  if (platform === 'windows') return id === 'diagnostic.traceroute.tcp'
+  return (
+    NEEDS_RAW_SOCKET_OFF_WINDOWS.has(id) || id === 'probe.icmp' || id === 'network.gateway.probe'
+  )
 }
 
 // selectWithDependencies returns the selection after ticking `id`: the permission

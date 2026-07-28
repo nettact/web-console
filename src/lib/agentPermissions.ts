@@ -17,7 +17,7 @@
 //                                      required parent isn't effective)
 
 import type { AgentPermission } from '../api'
-import { platformSupport, type EnrollPlatform } from './permissionSelection'
+import { privilegeCanEnable, type EnrollPlatform } from './permissionSelection'
 
 // Which remediation flow a permission opens. `dependency` is the case where the
 // permission itself is fine but a parent it needs isn't effective.
@@ -67,7 +67,7 @@ export function categoryFor(p: AgentPermission, platform: EnrollPlatform): Remed
   // Not supported by this agent. Lead with the capability gap; when the
   // permission is also ungranted the dialog still shows the policy line, flagged
   // as not sufficient on its own.
-  return platformSupport(p.id, platform) === 'privileged' ? 'elevation' : 'unsupported'
+  return privilegeCanEnable(p.id, platform) ? 'elevation' : 'unsupported'
 }
 
 export function permissionById(perms: AgentPermission[], id: string): AgentPermission | undefined {

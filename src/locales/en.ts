@@ -1797,11 +1797,11 @@ export default {
   // Windows and Linux builds implement these; on Linux they need CAP_NET_RAW
   // (root has it; containers need --cap-add NET_RAW). macOS does not yet.
   permissionPlatforms: {
-    probe_icmp: 'The Windows and Linux Agent builds implement ICMP probing. On Linux it needs CAP_NET_RAW or a usable unprivileged ping socket (run the container as root with --cap-add NET_RAW). The macOS build does not implement it yet.',
-    network_gateway_probe: 'Gateway probing is an ICMP echo to the default gateway, so it tracks ICMP availability: implemented on Windows and Linux, not yet on macOS.',
+    probe_icmp: 'The Windows and Linux Agent builds implement ICMP probing. On Linux it usually needs no privilege at all (an unprivileged ping socket, subject to net.ipv4.ping_group_range); only when that sysctl is switched off does it require CAP_NET_RAW or root. The macOS build does not implement it yet.',
+    network_gateway_probe: 'Gateway probing is an ICMP echo to the default gateway, so it tracks ICMP availability exactly: implemented on Windows and Linux and usually needing no privilege, not yet on macOS.',
     network_neighbor_read: 'The Windows and Linux Agent builds implement neighbor-table reads (Linux uses netlink and needs no privilege). The macOS build does not implement it yet.',
     network_neighbor_hostname_read: 'The Windows and Linux Agent builds implement neighbor hostname resolution. The macOS build does not implement it yet.',
-    diagnostic_traceroute_icmp: 'The Windows and Linux Agent builds implement ICMP path diagnostics. On Linux, receiving intermediate Time-Exceeded replies needs CAP_NET_RAW or root. The macOS build does not implement it yet.',
+    diagnostic_traceroute_icmp: 'The Windows and Linux Agent builds implement ICMP path diagnostics. Unlike ICMP probing it must receive intermediate Time-Exceeded replies, so on Linux it does require CAP_NET_RAW or root — an unprivileged ping socket never sees them. The macOS build does not implement it yet.',
     diagnostic_traceroute_tcp: 'The Windows and Linux Agent builds implement TCP path diagnostics, and both need extra privilege (Administrator on Windows, CAP_NET_RAW or root on Linux). The macOS build does not implement it yet.',
   },
 

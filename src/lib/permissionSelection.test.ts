@@ -7,6 +7,7 @@ import {
   orderedSelection,
   permissionGroup,
   platformSupport,
+  privilegeCanEnable,
   sameSelection,
   selectWithDependencies,
 } from './permissionSelection'
@@ -118,14 +119,35 @@ describe('platformSupport', () => {
     expect(platformSupport('host.cpu.read', 'macos')).toBe('ok')
   })
 
-  it('marks raw-socket capabilities as privileged on Linux and in containers', () => {
+  it('only marks path diagnostics as privileged on Linux and in containers', () => {
     for (const platform of ['linux', 'docker'] as const) {
-      expect(platformSupport('probe.icmp', platform)).toBe('privileged')
       expect(platformSupport('diagnostic.traceroute.icmp', platform)).toBe('privileged')
+      expect(platformSupport('diagnostic.traceroute.tcp', platform)).toBe('privileged')
+      // ICMP probing needs only to send an echo and read the reply, which an
+      // unprivileged ping socket does under the usual ping_group_range —
+      // measured for both an ordinary user and a plain non-root container.
+      expect(platformSupport('probe.icmp', platform)).toBe('ok')
+      expect(platformSupport('network.gateway.probe', platform)).toBe('ok')
       // Netlink neighbor reads need no privilege at all.
       expect(platformSupport('network.neighbor.read', platform)).toBe('ok')
       expect(platformSupport('host.cpu.read', platform)).toBe('ok')
     }
+  })
+
+  it('separates "expect it to work" from "privilege would fix it"', () => {
+    // The two questions genuinely differ for ICMP probing on Linux: it normally
+    // works unprivileged, so the picker must not warn about it — but an agent
+    // that DOES report it unsupported is fixed by running privileged.
+    expect(platformSupport('probe.icmp', 'linux')).toBe('ok')
+    expect(privilegeCanEnable('probe.icmp', 'linux')).toBe(true)
+    // On macOS nothing about privilege helps, because it is not implemented.
+    expect(privilegeCanEnable('probe.icmp', 'macos')).toBe(false)
+    expect(privilegeCanEnable('diagnostic.traceroute.tcp', 'macos')).toBe(false)
+    // Windows needs elevation for TCP path diagnostics only.
+    expect(privilegeCanEnable('diagnostic.traceroute.tcp', 'windows')).toBe(true)
+    expect(privilegeCanEnable('probe.icmp', 'windows')).toBe(false)
+    // Privilege has nothing to do with a plain metric read anywhere.
+    expect(privilegeCanEnable('host.cpu.read', 'linux')).toBe(false)
   })
 
   it('only flags TCP path diagnostics as privileged on Windows', () => {
