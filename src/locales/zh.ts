@@ -1252,7 +1252,10 @@ export default {
     permSupported: '支持',
     permGranted: '已授予',
     permEffective: '生效',
+    // 未生效权限的三种分组：改策略就能开 / 已授予但用不了 / 本平台没有这个能力。
+    permNotGranted: '未授予',
     permBlocked: '受阻',
+    permUnsupported: '本机不支持',
     policySource: '权限来源',
     policyHash: '策略指纹',
     activeIssues: '{n} 个问题',
@@ -1795,23 +1798,38 @@ export default {
     diagnostic_traceroute_tcp: '用 TCP 追踪网络路径并观测中间跳',
   },
 
+  // 文档站深链。中英各指向自己的语言目录；权限详情锚点由权限 ID 点换连字符得到。
+  docs: {
+    permissionsUrl: 'https://nettact.org/zh/permissions',
+  },
+
   // 硬性「平台/构建不支持」类受阻权限的可用平台说明（按权限 id 查找）。缺失时
-  // 解决方案弹窗回落到通用说明。目前仅 Windows 版 Agent 实现的 ICMP/网关/邻居能力。
+  // 解决方案弹窗回落到通用说明。Windows 与 Linux 均已实现这些能力；Linux 上需要
+  // CAP_NET_RAW（root 自带，容器需 --cap-add NET_RAW）；macOS 版尚未实现。
   permissionPlatforms: {
-    probe_icmp: '目前仅 Windows 版 Agent 实现 ICMP 探测；Linux/macOS 版暂未实现。',
-    network_gateway_probe: '目前仅 Windows 版 Agent 实现网关探测；Linux/macOS 版暂未实现。',
-    network_neighbor_read: '目前仅 Windows 版 Agent 实现邻居表读取；Linux/macOS 版暂未实现。',
-    network_neighbor_hostname_read: '目前仅 Windows 版 Agent 实现邻居主机名解析；Linux/macOS 版暂未实现。',
-    diagnostic_traceroute_icmp: '目前仅 Windows 版 Agent 实现 ICMP 路径诊断；Linux/macOS 版暂未实现。',
+    probe_icmp: 'Windows 与 Linux 版 Agent 已实现 ICMP 探测；Linux 上需 CAP_NET_RAW 或可用的无特权 ping socket（容器请以 root 运行并加 --cap-add NET_RAW）。macOS 版尚未实现。',
+    network_gateway_probe: '网关探测即对默认网关做 ICMP 探测，可用性与 ICMP 探测一致：Windows 与 Linux 已实现，macOS 版尚未实现。',
+    network_neighbor_read: 'Windows 与 Linux 版 Agent 已实现邻居表读取（Linux 走 netlink，无需特权）；macOS 版尚未实现。',
+    network_neighbor_hostname_read: 'Windows 与 Linux 版 Agent 已实现邻居主机名解析；macOS 版尚未实现。',
+    diagnostic_traceroute_icmp: 'Windows 与 Linux 版 Agent 已实现 ICMP 路径诊断；Linux 上需要 CAP_NET_RAW 或 root 才能收到中间跳的 Time-Exceeded。macOS 版尚未实现。',
+    diagnostic_traceroute_tcp: 'Windows 与 Linux 版 Agent 已实现 TCP 路径诊断，两者都需要提权（Windows 管理员 / Linux CAP_NET_RAW 或 root）。macOS 版尚未实现。',
   },
 
   // 权限受阻解决方案弹窗（AGENT-003）。
   permRemediation: {
-    title: '解决权限受阻',
+    title: '让权限生效',
     purposeLabel: '用途：',
+    listSep: '、',
+    docsLink: '查看文档',
     blockedChipsHint: '点击某个受阻权限查看解决方案。',
+    notGrantedChipsHint: '这些权限本机支持但未授予，点击可获取开启它所需的配置文字。',
+    unsupportedGroupHint: '这些权限在当前 Agent 的平台、构建或运行方式下无法启用，仅授予权限并不足以让它生效。',
     policyNote: '权限由 Agent 端策略决定，控制台无法远程修改（安全设计）。',
     blockedIntro: '该权限尚未授予。请在 Agent 运行环境中授予该权限后重启 Agent。',
+    alsoNotGranted: '此外，该权限当前也未授予——即使解决上述限制，仍需按下面的配置授予它。',
+    dependencyIntro: '该权限已授予且本机支持，但它依赖的权限未生效，因此被一并停用。',
+    dependencyRequires: '需要先让「{names}」生效。',
+    elevationIntroUngranted: '当前 Agent 未以足够的系统权限运行，该权限即使授予也无法生效。',
     envLabel: '完整权限变量（整体替换默认策略）：',
     envMissing: '基于当前授权无法生成完整的配置行。请在 Agent 端把「{name}」并入 NETTACT_AGENT_PERMISSIONS（或 YAML 配置的 permissions 键）后重启。',
     runModeLabel: '按运行方式设置：',
@@ -1879,6 +1897,32 @@ export default {
     calloutAdmin: '原生安装需使用管理员或 root 权限；Docker 安装需有 Docker daemon 访问权限。',
     calloutInstall: '命令会下载安装 Agent、写入安全配置，并注册为开机自动运行的后台服务。',
     calloutTokenHistory: '一次性令牌会出现在当前命令和 shell 历史中；注册成功后令牌立即失效。',
+    // 接入时的权限选择。权限在安装时写入配置，装完再改需要改配置文件并重启 Agent。
+    permTitle: '权限',
+    permHint: '选择这台 Agent 允许采集什么。安装时写入，改动需重启 Agent。',
+    preset_recommended: '推荐',
+    presetHint_recommended: 'Agent 内置默认集：标准探测 + 基础网络状态。',
+    preset_host_metrics: '推荐 + 主机指标',
+    presetHint_host_metrics: '再加 CPU、内存、磁盘、负载、运行时长与网络吞吐。',
+    preset_full: '全部',
+    presetHint_full: '授予全部权限，含进程与连接快照（会读取进程名、所属用户、远程地址）。',
+    preset_custom: '自定义',
+    presetHint_custom: '逐条勾选；勾选子权限会自动带上它依赖的父权限。',
+    permExpand: '展开权限清单',
+    permCollapse: '收起权限清单',
+    permGroup_probe: '探测',
+    permGroup_network: '网络状态',
+    permGroup_host: '主机指标',
+    permGroup_process: '进程快照',
+    permGroup_connection: '连接快照',
+    permGroup_diagnostic: '路径诊断',
+    permGroup_other: '其它',
+    permUnsupportedTag: '该平台不支持',
+    permPrivilegedTag: '需提权',
+    permDefaultNote: '当前即 Agent 内置默认集，命令中无需附带权限参数。',
+    permNoneNote: '未勾选任何权限：Agent 将以空授权运行，只保留维持运行所必需的功能。',
+    permUnsupportedNote: '其中 {n} 项在当前平台无法启用，授予后也不会生效。',
+    permReplaceNote: '权限是整体替换语义，不是在默认集上增删。',
   },
 
   setup: {

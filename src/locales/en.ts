@@ -1237,7 +1237,11 @@ export default {
     permSupported: 'Supported',
     permGranted: 'Granted',
     permEffective: 'Effective',
+    // The three not-in-effect groups: a policy edit fixes it / granted but
+    // unusable / this platform lacks the capability.
+    permNotGranted: 'Not granted',
     permBlocked: 'Blocked',
+    permUnsupported: 'Unsupported here',
     policySource: 'Policy source',
     policyHash: 'Policy hash',
     activeIssues: '{n} issues',
@@ -1782,24 +1786,40 @@ export default {
     diagnostic_traceroute_tcp: 'Trace the network path via TCP, observing intermediate hops',
   },
 
+  // Documentation deep links. Each locale points at its own directory; the
+  // per-permission anchor is the permission ID with dots swapped for hyphens.
+  docs: {
+    permissionsUrl: 'https://nettact.org/en/permissions',
+  },
+
   // Platform-availability note for a hard "unsupported" block, looked up by
-  // permission id. Missing = the dialog falls back to a generic explanation. Today
-  // the ICMP/gateway/neighbor capabilities are implemented only in the Windows build.
+  // permission id. Missing = the dialog falls back to a generic explanation. The
+  // Windows and Linux builds implement these; on Linux they need CAP_NET_RAW
+  // (root has it; containers need --cap-add NET_RAW). macOS does not yet.
   permissionPlatforms: {
-    probe_icmp: 'Only the Windows Agent build implements ICMP probing today; Linux/macOS builds do not yet.',
-    network_gateway_probe: 'Only the Windows Agent build implements gateway probing today; Linux/macOS builds do not yet.',
-    network_neighbor_read: 'Only the Windows Agent build implements neighbor-table reads today; Linux/macOS builds do not yet.',
-    network_neighbor_hostname_read: 'Only the Windows Agent build implements neighbor hostname resolution today; Linux/macOS builds do not yet.',
-    diagnostic_traceroute_icmp: 'Only the Windows Agent build implements ICMP path diagnostics today; Linux/macOS builds do not yet.',
+    probe_icmp: 'The Windows and Linux Agent builds implement ICMP probing. On Linux it needs CAP_NET_RAW or a usable unprivileged ping socket (run the container as root with --cap-add NET_RAW). The macOS build does not implement it yet.',
+    network_gateway_probe: 'Gateway probing is an ICMP echo to the default gateway, so it tracks ICMP availability: implemented on Windows and Linux, not yet on macOS.',
+    network_neighbor_read: 'The Windows and Linux Agent builds implement neighbor-table reads (Linux uses netlink and needs no privilege). The macOS build does not implement it yet.',
+    network_neighbor_hostname_read: 'The Windows and Linux Agent builds implement neighbor hostname resolution. The macOS build does not implement it yet.',
+    diagnostic_traceroute_icmp: 'The Windows and Linux Agent builds implement ICMP path diagnostics. On Linux, receiving intermediate Time-Exceeded replies needs CAP_NET_RAW or root. The macOS build does not implement it yet.',
+    diagnostic_traceroute_tcp: 'The Windows and Linux Agent builds implement TCP path diagnostics, and both need extra privilege (Administrator on Windows, CAP_NET_RAW or root on Linux). The macOS build does not implement it yet.',
   },
 
   // Permission remediation dialog (AGENT-003).
   permRemediation: {
-    title: 'Resolve a blocked permission',
+    title: 'Put a permission into effect',
     purposeLabel: 'Purpose: ',
+    listSep: ', ',
+    docsLink: 'Read the docs',
     blockedChipsHint: 'Click a blocked permission to see how to fix it.',
+    notGrantedChipsHint: 'These permissions are supported here but not granted — click one for the configuration that turns it on.',
+    unsupportedGroupHint: 'These permissions cannot be enabled on this Agent’s platform, build or run mode; granting them is not enough on its own.',
     policyNote: 'Permissions are set by the Agent-side policy; the console cannot change them remotely (a security design).',
     blockedIntro: 'This permission is not granted. Grant it in the Agent’s runtime environment, then restart the Agent.',
+    alsoNotGranted: 'On top of that, the permission is not granted either — even once the above is resolved, it still needs the grant below.',
+    dependencyIntro: 'This permission is granted and supported here, but a permission it depends on is not in effect, so it was disabled along with it.',
+    dependencyRequires: 'Put “{names}” into effect first.',
+    elevationIntroUngranted: 'The Agent is not running with enough OS privilege, so this permission would not take effect even once granted.',
     envLabel: 'Full permission variable (replaces the default policy wholesale):',
     envMissing: 'A complete config line cannot be generated from the current grant. Add “{name}” to NETTACT_AGENT_PERMISSIONS (or the YAML config permissions key) on the Agent and restart.',
     runModeLabel: 'Set it by run mode:',
@@ -1866,6 +1886,33 @@ export default {
     autoUpdateHint: 'Check daily for a new version and restart the Agent after updating.',
     calloutAdmin: 'Native installation requires administrator or root access; Docker installation requires access to the Docker daemon.',
     calloutInstall: 'The command downloads the Agent, writes a protected configuration, and registers it as an auto-starting background service.',
+    // Permission choice at enrollment. The policy is written at install time;
+    // changing it later means editing the config on the machine and restarting.
+    permTitle: 'Permissions',
+    permHint: 'Choose what this Agent may collect. Applied at install time; changes need an Agent restart.',
+    preset_recommended: 'Recommended',
+    presetHint_recommended: "The Agent's built-in default set: standard probes plus basic network state.",
+    preset_host_metrics: 'Recommended + host metrics',
+    presetHint_host_metrics: 'Adds CPU, memory, disk, load, uptime and network throughput.',
+    preset_full: 'Everything',
+    presetHint_full: 'Grants every permission, including process and connection snapshots (process names, owning users, remote addresses).',
+    preset_custom: 'Custom',
+    presetHint_custom: 'Pick individually; selecting a child permission pulls in the parents it needs.',
+    permExpand: 'Show the permission list',
+    permCollapse: 'Hide the permission list',
+    permGroup_probe: 'Probes',
+    permGroup_network: 'Network state',
+    permGroup_host: 'Host metrics',
+    permGroup_process: 'Process snapshot',
+    permGroup_connection: 'Connection snapshot',
+    permGroup_diagnostic: 'Path diagnostics',
+    permGroup_other: 'Other',
+    permUnsupportedTag: 'not on this platform',
+    permPrivilegedTag: 'needs privilege',
+    permDefaultNote: "This is the Agent's built-in default set, so the command carries no permission argument.",
+    permNoneNote: 'Nothing selected: the Agent will run with an empty grant, keeping only what it needs to stay up.',
+    permUnsupportedNote: '{n} of these cannot be enabled on this platform and will not take effect even once granted.',
+    permReplaceNote: 'A permission list REPLACES the default set; it does not add to it.',
     calloutTokenHistory: 'The one-time token appears in this command and your shell history; it becomes invalid immediately after enrollment.',
   },
 

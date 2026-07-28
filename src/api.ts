@@ -55,6 +55,51 @@ export interface Agent {
   connectivity_alerts_muted: boolean
 }
 
+// One row of an agent's full permission inventory (GET /agents/{id}/permissions).
+// Unlike the three sets on Agent, this covers the WHOLE compiled catalog, so the
+// detail page can show what the agent does NOT have and how to turn it on.
+export interface AgentPermission {
+  id: string
+  granted: boolean
+  supported: boolean
+  effective: boolean
+  // Direct required parents (never transitive): a child is pruned from effective
+  // when a parent isn't effective, so this names the real blocker.
+  requires?: string[]
+  // Full `NETTACT_AGENT_PERMISSIONS=…` replacement line that grants this
+  // permission, dependency-closed by the server. Present only when not granted —
+  // the console never derives the closure itself.
+  permissions_env?: string
+}
+export interface AgentPermissions {
+  agent_id: string
+  policy_source: string
+  policy_hash: string
+  permissions: AgentPermission[]
+}
+
+// The agent-independent permission catalog (GET /permissions), used by the
+// enrollment screen where no agent exists yet.
+export interface PermissionCatalogEntry {
+  id: string
+  // Direct required parents, for display.
+  requires?: string[]
+  // The FULL transitive requirement set. Selecting an entry means selecting
+  // `[id, ...implies]`, so building a valid policy is a plain set union and the
+  // console never walks the dependency graph itself.
+  implies?: string[]
+  // Whether the agent's built-in default policy grants it.
+  default: boolean
+}
+export interface PermissionBundle {
+  id: string
+  permissions: string[]
+}
+export interface PermissionCatalog {
+  permissions: PermissionCatalogEntry[]
+  bundles: PermissionBundle[]
+}
+
 // --- Agent status list (AGENT-001) ---
 
 // The single authoritative overall status, computed server-side. Order here is
@@ -1247,6 +1292,12 @@ export const api = {
     req<AgentInterfaces>('GET', `/api/v1/agents/${encodeURIComponent(id)}/interfaces`),
   agentStatusHistory: (id: string) =>
     req<StatusEvent[]>('GET', `/api/v1/agents/${encodeURIComponent(id)}/status-history`),
+  // The agent's whole permission catalog — granted and not granted — each
+  // ungranted one carrying the exact policy line that would grant it.
+  agentPermissions: (id: string) =>
+    req<AgentPermissions>('GET', `/api/v1/agents/${encodeURIComponent(id)}/permissions`),
+  // Every permission this server build knows, plus the enrollment presets.
+  permissionCatalog: () => req<PermissionCatalog>('GET', '/api/v1/permissions'),
   // Monitoring/permission issues (notification center). Full-state list + the
   // server-authoritative unread count; SSE pushes updates live.
   listIssues: () => req<IssuesResponse>('GET', '/api/v1/issues'),

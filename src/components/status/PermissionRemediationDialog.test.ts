@@ -7,8 +7,10 @@ import PermissionRemediationDialog from './PermissionRemediationDialog.vue'
 
 type Props = {
   permId: string
-  category: 'permission_blocked' | 'elevation' | 'unsupported'
+  category: 'permission_blocked' | 'elevation' | 'unsupported' | 'dependency'
   permissionsEnv?: string
+  requires?: string[]
+  grantMissing?: boolean
   desktop?: boolean
 }
 
@@ -59,8 +61,43 @@ describe('PermissionRemediationDialog', () => {
 
   it('shows the platform note and no env line for an unsupported block', () => {
     const w = render({ permId: 'probe.icmp', category: 'unsupported' })
-    expect(w.text()).toContain('Windows Agent build')
+    expect(w.text()).toContain('Windows and Linux Agent builds')
     expect(w.find('pre').exists()).toBe(false)
+  })
+
+  it('deep links to the docs entry for this exact permission', () => {
+    // The docs give each permission an explicit `{#id-with-hyphens}` anchor, so
+    // the link must swap dots for hyphens or it lands on the page top.
+    const w = render({ permId: 'host.process.owner.read', category: 'permission_blocked' })
+    const href = w.find('a.prd-docs').attributes('href')
+    expect(href).toBe('https://nettact.org/en/permissions#host-process-owner-read')
+  })
+
+  it('names the blocking parent for a dependency block and offers no policy line', () => {
+    // The permission itself is granted and supported, so a policy edit is not the
+    // fix — pointing at the parent is.
+    const w = render({
+      permId: 'network.wifi.ssid.read',
+      category: 'dependency',
+      requires: ['network.wifi.status.read'],
+    })
+    expect(w.text()).toContain('depends on')
+    expect(w.text()).toContain('Wi-Fi status read')
+    expect(w.find('pre').exists()).toBe(false)
+  })
+
+  it('adds the policy line to a capability block when the permission is not granted either', () => {
+    // Elevating alone would leave it off, so both halves of the fix must show.
+    const env = 'NETTACT_AGENT_PERMISSIONS=probe.icmp,diagnostic.traceroute.tcp'
+    const w = render({
+      permId: 'diagnostic.traceroute.tcp',
+      category: 'elevation',
+      permissionsEnv: env,
+      grantMissing: true,
+    })
+    expect(w.text()).toContain('Administrator')
+    expect(w.text()).toContain('not granted either')
+    expect(w.text()).toContain(env)
   })
 
   it('suppresses environment/YAML guidance in desktop full-access mode', () => {

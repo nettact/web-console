@@ -15,7 +15,10 @@ import { usePermissionMeta } from '../../composables/usePermissionMeta'
 const props = defineProps<{
   label: string
   ids: string[]
-  tone?: 'neutral' | 'granted' | 'effective' | 'blocked'
+  // effective = working; missing = not granted but the platform can run it (a
+  // policy edit turns it on); blocked = granted yet unusable; neutral = listed
+  // for completeness (e.g. the platform lacks the capability entirely).
+  tone?: 'neutral' | 'granted' | 'effective' | 'blocked' | 'missing'
   interactive?: boolean
 }>()
 
@@ -104,5 +107,10 @@ button.chip {
   border-color: rgba(248, 113, 113, 0.4);
   background: var(--danger-soft, rgba(248, 113, 113, 0.1));
   color: var(--danger, #f87171);
+}
+.chip.is-missing {
+  border-color: rgba(251, 191, 36, 0.4);
+  background: rgba(251, 191, 36, 0.1);
+  color: #fbbf24;
 }
 </style>

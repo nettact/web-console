@@ -1,21 +1,27 @@
 <script setup lang="ts">
-// Remediation dialog for a blocked or missing agent permission. Opened by clicking
-// a blocked/missing permission chip. It renders one of three flows keyed by why the
-// permission is not usable:
+// Remediation dialog for a permission that is not in effect. Opened by clicking a
+// permission chip. The body is composed of two parts: WHY it is not usable (one of
+// four causes) and, when a policy change is part of the fix, HOW to grant it.
 //
-//   permission_blocked — the permission is not granted by the Agent's local policy.
-//     Shows the server-computed full NETTACT_AGENT_PERMISSIONS=… line (granted ∪
-//     missing, dependency-closed) with copy, plus per run-mode snippets
-//     (PowerShell / systemd / docker compose / YAML config). When the server line
-//     is unavailable, a generic instruction is shown instead — the console never
-//     fabricates the closure itself.
-//   elevation — granted but not usable until the Agent runs with more OS privilege
-//     (raw-socket TCP traceroute). Shows platform elevation steps; no env line.
+// Causes:
+//   permission_blocked — not granted by the Agent's local policy, and the platform
+//     could run it. The grant block below is the whole fix.
+//   elevation — the Agent needs more OS privilege (raw-socket TCP traceroute).
 //   unsupported — a hard platform/build capability gap. No policy change or
 //     elevation helps; explains which platform/build is required.
+//   dependency — granted and supported, but a permission it requires is not in
+//     effect, so it was pruned. Fix the parent first.
+//
+// The grant block shows the server-computed full NETTACT_AGENT_PERMISSIONS=… line
+// (granted ∪ missing, dependency-closed) with copy, plus per run-mode snippets
+// (PowerShell / systemd / docker compose / YAML config). When the server line is
+// unavailable a generic instruction is shown instead — the console never fabricates
+// the closure itself. It renders for permission_blocked, and also for an
+// elevation/unsupported cause when `grantMissing` says the permission isn't granted
+// either: fixing only the capability would still leave it off.
 //
 // Desktop (embedded-Agent) mode has a fixed FullAccess policy, so the environment/
-// YAML guidance is suppressed there — only elevation/unsupported flows apply.
+// YAML guidance is suppressed there — only the capability causes apply.
 //
 // Accessibility mirrors ConfirmDialog: role=dialog, aria-modal, focus moves in on
 // open and is restored on close, Escape and backdrop close, Tab is trapped.
@@ -26,10 +32,15 @@ import { usePermissionMeta } from '../../composables/usePermissionMeta'
 const props = defineProps<{
   open: boolean
   permId: string
-  category: 'permission_blocked' | 'elevation' | 'unsupported'
-  // Full `NETTACT_AGENT_PERMISSIONS=…` line from the server's issue remediation.
-  // Only meaningful for permission_blocked; absent when it could not be resolved.
+  category: 'permission_blocked' | 'elevation' | 'unsupported' | 'dependency'
+  // Full `NETTACT_AGENT_PERMISSIONS=…` line from the server. Absent when it could
+  // not be resolved (then a generic instruction is shown).
   permissionsEnv?: string
+  // Direct required parents, shown by the dependency cause.
+  requires?: string[]
+  // The permission is not granted either, so the grant block applies on top of an
+  // elevation/unsupported cause.
+  grantMissing?: boolean
   desktop?: boolean
 }>()
 
@@ -45,15 +56,26 @@ let lastFocused: HTMLElement | null = null
 const name = computed(() => permLabel(props.permId))
 const purpose = computed(() => permPurpose(props.permId))
 const platforms = computed(() => permPlatforms(props.permId))
+const requiresLabel = computed(() =>
+  (props.requires || []).map(permLabel).join(t('permRemediation.listSep')),
+)
 
-// permission_blocked env line is suppressed in desktop mode (FullAccess) and when
-// the server did not attach one.
-const showEnv = computed(
-  () => props.category === 'permission_blocked' && !props.desktop && !!props.permissionsEnv,
+// Deep link into the permission reference for THIS permission. The docs give each
+// entry an explicit `{#id-with-hyphens}` anchor precisely because VitePress's
+// default slugifier drops the dots out of an ID, which would leave every link
+// here pointing at nothing.
+const docsUrl = computed(
+  () => `${t('docs.permissionsUrl')}#${props.permId.replace(/\./g, '-')}`,
 )
-const showEnvMissing = computed(
-  () => props.category === 'permission_blocked' && !props.desktop && !props.permissionsEnv,
-)
+
+// A policy change is part of the fix whenever the permission isn't granted —
+// always for permission_blocked, and on top of a capability cause when the caller
+// flags it.
+const needsGrant = computed(() => props.category === 'permission_blocked' || props.grantMissing === true)
+// The env line is suppressed in desktop mode (FullAccess) and when the server did
+// not attach one.
+const showEnv = computed(() => needsGrant.value && !props.desktop && !!props.permissionsEnv)
+const showEnvMissing = computed(() => needsGrant.value && !props.desktop && !props.permissionsEnv)
 
 // The value after `NETTACT_AGENT_PERMISSIONS=` (the comma-joined closure).
 const envValue = computed(() => {
@@ -157,14 +179,50 @@ watch(
             <div class="prd-perm">
               <span class="prd-name">{{ name }}</span>
               <code class="prd-id">{{ permId }}</code>
+              <a class="prd-docs" :href="docsUrl" target="_blank" rel="noopener noreferrer">
+                {{ t('permRemediation.docsLink') }} →
+              </a>
             </div>
             <p v-if="purpose" class="prd-purpose">
               <span class="prd-purpose-label">{{ t('permRemediation.purposeLabel') }}</span>{{ purpose }}
             </p>
 
-            <!-- permission_blocked: not granted by policy -->
+            <!-- why it is not in effect -->
             <template v-if="category === 'permission_blocked'">
               <p class="prd-intro">{{ t('permRemediation.blockedIntro') }}</p>
+            </template>
+
+            <!-- elevation: needs more OS privilege -->
+            <template v-else-if="category === 'elevation'">
+              <p class="prd-intro">
+                {{ grantMissing ? t('permRemediation.elevationIntroUngranted') : t('permRemediation.elevationIntro') }}
+              </p>
+              <ol class="prd-steps">
+                <li>{{ t('permRemediation.elevationWindows') }}</li>
+                <li>{{ t('permRemediation.elevationOther') }}</li>
+              </ol>
+              <p class="prd-note strong">{{ t('permRemediation.reRunNote') }}</p>
+            </template>
+
+            <!-- dependency: granted and supported, but a required parent is not effective -->
+            <template v-else-if="category === 'dependency'">
+              <p class="prd-intro">{{ t('permRemediation.dependencyIntro') }}</p>
+              <p v-if="requiresLabel" class="prd-note">
+                {{ t('permRemediation.dependencyRequires', { names: requiresLabel }) }}
+              </p>
+            </template>
+
+            <!-- unsupported: hard platform/build gap -->
+            <template v-else>
+              <p class="prd-intro">{{ t('permRemediation.unsupportedIntro') }}</p>
+              <p class="prd-note">{{ platforms || t('permRemediation.unsupportedGeneric') }}</p>
+            </template>
+
+            <!-- how to grant it, when the policy is (part of) what's missing -->
+            <template v-if="needsGrant">
+              <p v-if="category !== 'permission_blocked'" class="prd-note strong">
+                {{ t('permRemediation.alsoNotGranted') }}
+              </p>
               <p class="prd-note">{{ t('permRemediation.policyNote') }}</p>
 
               <template v-if="desktop">
@@ -208,22 +266,6 @@ watch(
                 <p class="prd-note">{{ t('permRemediation.envMissing', { name }) }}</p>
                 <p class="prd-note strong">{{ t('permRemediation.restartNote') }}</p>
               </template>
-            </template>
-
-            <!-- elevation: granted but needs more OS privilege -->
-            <template v-else-if="category === 'elevation'">
-              <p class="prd-intro">{{ t('permRemediation.elevationIntro') }}</p>
-              <ol class="prd-steps">
-                <li>{{ t('permRemediation.elevationWindows') }}</li>
-                <li>{{ t('permRemediation.elevationOther') }}</li>
-              </ol>
-              <p class="prd-note strong">{{ t('permRemediation.reRunNote') }}</p>
-            </template>
-
-            <!-- unsupported: hard platform/build gap -->
-            <template v-else>
-              <p class="prd-intro">{{ t('permRemediation.unsupportedIntro') }}</p>
-              <p class="prd-note">{{ platforms || t('permRemediation.unsupportedGeneric') }}</p>
             </template>
           </div>
 
@@ -302,6 +344,12 @@ watch(
   background: var(--surface-2);
   padding: 1px 6px;
   border-radius: var(--radius-sm);
+}
+.prd-docs {
+  margin-left: auto;
+  font-size: 12px;
+  color: var(--primary);
+  white-space: nowrap;
 }
 .prd-purpose {
   margin: 8px 0 0;

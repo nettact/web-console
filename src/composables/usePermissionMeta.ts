@@ -5,25 +5,12 @@
 
 import { useI18n } from 'vue-i18n'
 
-// Permissions whose "granted but not supported" state is caused by insufficient
-// OS privilege (fixable by re-running the Agent elevated) rather than a hard
-// platform/build capability gap. Only raw-socket TCP traceroute today: it is
-// granted by policy and reported unsupported until the Agent runs as
-// Administrator/root. Every other granted-but-unsupported permission is a genuine
-// platform/build gap that no policy change or elevation can resolve.
-const ELEVATION_IDS = new Set<string>(['diagnostic.traceroute.tcp'])
-
-// Whether a blocked (granted − supported) permission is remediable by elevation.
-export function isElevationPermission(id: string): boolean {
-  return ELEVATION_IDS.has(id)
-}
-
-// The remediation category of a blocked (granted but not supported) permission:
-// `elevation` when re-running the Agent with more privilege enables it, else a
-// hard `unsupported` platform/build gap.
-export function blockedCategory(id: string): 'elevation' | 'unsupported' {
-  return isElevationPermission(id) ? 'elevation' : 'unsupported'
-}
+// Whether a "granted but not supported" permission is fixable by elevation is a
+// per-PLATFORM question, so it lives with the platform capability table in
+// lib/permissionSelection.ts rather than here. Deciding it from the permission id
+// alone was wrong in both directions: it told Linux operators that elevation
+// could not enable ICMP probing (it can, with CAP_NET_RAW) and told macOS
+// operators to run as Administrator for a capability that build does not have.
 
 export function usePermissionMeta() {
   const { t, te } = useI18n()

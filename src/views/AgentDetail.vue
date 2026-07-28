@@ -5,6 +5,7 @@ import { useRoute, useRouter } from 'vue-router'
 import {
   api,
   type Agent,
+  type AgentPermission,
   type FaultSignal,
   type Sample,
   type StatusEvent,
@@ -13,7 +14,13 @@ import { toDateLocale } from '../i18n'
 import { agentLabel } from '../lib/agentLabel'
 import { agentStatus, agentIndex, refreshAgentStatus } from '../agentStatus'
 import { targetStatus } from '../targetStatus'
-import { blockedCategory } from '../composables/usePermissionMeta'
+import {
+  agentPlatform,
+  bucketAgentPermissions,
+  categoryFor,
+  permissionById,
+  type RemediationCategory,
+} from '../lib/agentPermissions'
 import { serverInfo, ensureServerInfo } from '../serverInfo'
 import MonitorStateBadge from '../components/status/MonitorStateBadge.vue'
 import PermissionChips from '../components/status/PermissionChips.vue'
@@ -48,22 +55,37 @@ const associatedTargets = computed(() =>
   targetStatus.targets.filter((tt) => tt.agents.some((a) => a.agent_id === id.value)),
 )
 
-// Blocked permissions: granted by policy but not supported by this Agent's
-// platform/build/run-mode (e.g. TCP traceroute granted but the Agent isn't
-// running as Administrator), so the grant can never take effect.
-const blockedPermissions = computed(() => {
-  if (!agent.value) return []
-  const supported = new Set(agent.value.supported)
-  return agent.value.granted.filter((permId) => !supported.has(permId))
-})
-// Remediation dialog for a clicked blocked permission. Blocked here means granted
-// by policy but not supported by this Agent's platform/build/run-mode, so it is
-// never a "not granted" (permission_blocked) case and carries no env line — the
-// category is elevation (needs Administrator, e.g. TCP traceroute) or a hard
-// unsupported platform/build gap.
-const remediation = ref<{ permId: string; category: 'elevation' | 'unsupported' } | null>(null)
+// The Agent's whole permission catalog, not just what it reported having: the
+// permissions it does NOT have are the actionable half of this card — an operator
+// needs to see which capabilities are still available and what to configure to
+// turn them on.
+const permissions = ref<AgentPermission[]>([])
+const permBuckets = computed(() => bucketAgentPermissions(permissions.value))
+
+// Remediation dialog for a clicked permission. Everything the dialog needs comes
+// from the server-computed entry: the cause (policy / privilege / platform /
+// dependency) and, when a policy change is part of the fix, the full
+// dependency-closed NETTACT_AGENT_PERMISSIONS line. The console never derives that
+// closure itself.
+const remediation = ref<{
+  permId: string
+  category: RemediationCategory
+  env: string
+  requires: string[]
+  grantMissing: boolean
+} | null>(null)
 function openRemediation(permId: string) {
-  remediation.value = { permId, category: blockedCategory(permId) }
+  const p = permissionById(permissions.value, permId)
+  if (!p) return
+  remediation.value = {
+    permId,
+    // Whether a capability gap is fixable by elevation depends on the agent's
+    // platform, so the cause is decided with it rather than from the id alone.
+    category: categoryFor(p, agentPlatform(agent.value?.platform || '')),
+    env: p.permissions_env || '',
+    requires: p.requires || [],
+    grantMissing: !p.granted,
+  }
 }
 
 const fmt = (s: string | null | undefined) => (s ? new Date(s).toLocaleString(toDateLocale(locale.value)) : '—')
@@ -75,8 +97,9 @@ async function loadAll() {
   loading.value = true
   error.value = ''
   try {
-    const [a, ca, hist, faults, cpuS, memS, rxS, txS] = await Promise.all([
+    const [a, perms, ca, hist, faults, cpuS, memS, rxS, txS] = await Promise.all([
       api.agent(id.value),
+      api.agentPermissions(id.value),
       api.faultSignals({ agent: id.value, detector: 'agent_connectivity', limit: 50 }),
       api.agentStatusHistory(id.value),
       api.faultSignals({ agent: id.value, detector: 'availability', limit: 50 }),
@@ -91,6 +114,7 @@ async function loadAll() {
       api.metrics(id.value, 'host.net.tx_bps', { target: 'host', sinceSeconds: 7200, limit: 7201 }),
     ])
     agent.value = a
+    permissions.value = perms.permissions
     connFaults.value = ca
     history.value = hist
     targetFaults.value = faults
@@ -179,17 +203,46 @@ onMounted(() => {
         <div><dt>{{ t('agentStatus.factFirstConnected') }}</dt><dd>{{ agent.first_connected_at ? fmt(agent.first_connected_at) : t('agentStatus.statusNeverConnected') }}</dd></div>
         <div v-if="agent.last_disconnect_kind"><dt>{{ t('agentStatus.factLastDisconnect') }}</dt><dd>{{ t(`agentStatus.disconnect.${agent.last_disconnect_kind}`) }}</dd></div>
       </dl>
+      <!-- Every permission, grouped by whether it works and why not. The three
+           non-effective rows are clickable: each opens the cause and, where a
+           policy change is the fix, the exact configuration line. -->
       <div class="perms">
-        <PermissionChips :label="t('agents.permEffective')" :ids="agent.effective" tone="effective" />
-        <PermissionChips
-          v-if="blockedPermissions.length"
-          :label="t('agents.permBlocked')"
-          :ids="blockedPermissions"
-          tone="blocked"
-          interactive
-          @select="openRemediation"
-        />
-        <p v-if="blockedPermissions.length" class="perm-hint">{{ t('permRemediation.blockedChipsHint') }}</p>
+        <PermissionChips :label="t('agents.permEffective')" :ids="permBuckets.effective" tone="effective" />
+        <template v-if="permBuckets.notGranted.length">
+          <PermissionChips
+            :label="t('agents.permNotGranted')"
+            :ids="permBuckets.notGranted"
+            tone="missing"
+            interactive
+            @select="openRemediation"
+          />
+          <p class="perm-hint">
+            {{ t('permRemediation.notGrantedChipsHint') }}
+            <a :href="t('docs.permissionsUrl')" target="_blank" rel="noopener noreferrer">
+              {{ t('permRemediation.docsLink') }} →
+            </a>
+          </p>
+        </template>
+        <template v-if="permBuckets.blocked.length">
+          <PermissionChips
+            :label="t('agents.permBlocked')"
+            :ids="permBuckets.blocked"
+            tone="blocked"
+            interactive
+            @select="openRemediation"
+          />
+          <p class="perm-hint">{{ t('permRemediation.blockedChipsHint') }}</p>
+        </template>
+        <template v-if="permBuckets.unsupported.length">
+          <PermissionChips
+            :label="t('agents.permUnsupported')"
+            :ids="permBuckets.unsupported"
+            tone="neutral"
+            interactive
+            @select="openRemediation"
+          />
+          <p class="perm-hint">{{ t('permRemediation.unsupportedGroupHint') }}</p>
+        </template>
       </div>
     </section>
 
@@ -197,6 +250,9 @@ onMounted(() => {
       :open="!!remediation"
       :perm-id="remediation?.permId || ''"
       :category="remediation?.category || 'unsupported'"
+      :permissions-env="remediation?.env"
+      :requires="remediation?.requires"
+      :grant-missing="remediation?.grantMissing"
       :desktop="serverInfo.desktop"
       @close="remediation = null"
     />
@@ -336,8 +392,12 @@ onMounted(() => {
 .perms > .perm-list + .perm-list {
   margin-top: 8px;
 }
+/* A group followed by its own hint needs a little more air before the next one. */
+.perms > .perm-hint + .perm-list {
+  margin-top: 12px;
+}
 .perm-hint {
-  margin: 8px 0 0;
+  margin: 6px 0 0;
   font-size: 12px;
   color: var(--text-muted);
 }
