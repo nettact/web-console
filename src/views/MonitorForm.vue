@@ -8,14 +8,11 @@ import {
   type DetectionProfile,
   type DetectionSettingsInput,
   type MonitorGroup,
-  type NotificationPolicy,
-  type NotificationPolicyInput,
   type ProbeParams,
   type ProbeTarget,
   type SaveWarning,
 } from '../api'
 import ComboInput from '../components/ComboInput.vue'
-import PolicyFields from '../components/PolicyFields.vue'
 import { pushToast } from '../toasts'
 import { LEADING_SCHEME, paramsRangeError, retargetForKind, targetError } from '../lib/targetValidation'
 
@@ -81,7 +78,6 @@ const notFound = ref(false)
 // are still recorded — but the save confirmation says so instead of leaving the
 // user to assume something was sent.
 const hasChannels = ref(true)
-const channels = ref<Channel[]>([])
 // Guards a destructive save: setTargets is a full reconcile, so saving before the
 // existing target list has loaded would delete every other monitor.
 const loaded = ref(false)
@@ -205,110 +201,6 @@ async function saveDetection(): Promise<boolean> {
   }
 }
 
-// ---- notification policy (target scope) ----
-// Detection is unconditional; this only decides whether/when/where a recorded
-// fault is announced. A target either inherits — from its group, or failing that
-// the site default — or owns exactly one override. Precedence is single-hit and
-// never stacks, so an override replaces the inherited policy rather than adding
-// to it. Host targets have no built-in detector, so they can never raise a fault
-// and are offered no policy.
-const policies = ref<NotificationPolicy[]>([])
-const targetPolicy = ref<NotificationPolicy | null>(null)
-const policyMode = ref<'inherit' | 'override'>('inherit')
-const showPolicy = computed(() => form.kind !== 'host')
-
-// What governs this target when it has no override of its own: its group's
-// policy if that group has an enabled one, otherwise the site default. This is
-// the server's precedence with the target level removed, which is exactly what
-// "inherit" means here — and because it keys off the group currently selected in
-// the form, switching groups updates the preview before anything is saved.
-const inheritedPolicy = computed<NotificationPolicy | null>(() => {
-  const grp = policies.value.find(
-    (p) => p.scope_kind === 'group' && p.scope_id === form.group_id && p.enabled,
-  )
-  return grp ?? policies.value.find((p) => p.is_default) ?? null
-})
-const inheritedFrom = computed(() => {
-  const p = inheritedPolicy.value
-  if (!p) return 'none'
-  return p.is_default ? 'site' : 'group'
-})
-// Declared after inheritedPolicy: the seed reads it.
-const policyDraft = ref<NotificationPolicyInput>(seedPolicyDraft())
-
-function seedPolicyDraft(): NotificationPolicyInput {
-  // A fresh override starts as a copy of whatever governs this target today, so
-  // switching to "override" changes nothing until a field is actually edited.
-  const base = targetPolicy.value ?? inheritedPolicy.value
-  return {
-    name:
-      targetPolicy.value?.name ||
-      tr('mform.policyDraftName', { name: form.name || form.target || tr('mform.policyTitle') }),
-    scope_kind: 'target',
-    scope_id: form.id || '',
-    enabled: base?.enabled ?? true,
-    min_severity: base?.min_severity || 'warn',
-    warn_delay_sec: base?.warn_delay_sec ?? 0,
-    critical_delay_sec: base?.critical_delay_sec ?? 0,
-    notify_recovery: base?.notify_recovery ?? true,
-    channel_ids: [...(base?.channel_ids ?? [])],
-  }
-}
-
-async function loadPolicies() {
-  try {
-    policies.value = await api.notificationPolicies(SITE)
-  } catch {
-    // Policy configuration is context, not a prerequisite: failing to read it
-    // must never block editing the monitor itself.
-    policies.value = []
-  }
-  targetPolicy.value = form.id
-    ? (policies.value.find((p) => p.scope_kind === 'target' && p.scope_id === form.id) ?? null)
-    : null
-  policyMode.value = targetPolicy.value ? 'override' : 'inherit'
-  policyDraft.value = seedPolicyDraft()
-}
-
-// Saved after the target, because a target-scoped policy is keyed by the target's
-// id and a newly created monitor has none until the server assigns one.
-async function savePolicy(): Promise<boolean> {
-  if (!showPolicy.value || !form.id) return true
-  try {
-    if (policyMode.value === 'override') {
-      const body: NotificationPolicyInput = {
-        ...policyDraft.value,
-        scope_kind: 'target',
-        scope_id: form.id,
-        name: policyDraft.value.name.trim() || (form.name || form.target).trim(),
-      }
-      targetPolicy.value = targetPolicy.value
-        ? await api.updateNotificationPolicy(targetPolicy.value.id, body)
-        : await api.createNotificationPolicy(SITE, body)
-      return true
-    }
-    // Back to inheriting: the override has to go, or it would keep winning.
-    if (targetPolicy.value) {
-      await api.deleteNotificationPolicy(targetPolicy.value.id)
-      targetPolicy.value = null
-    }
-    return true
-  } catch (e) {
-    error.value = tr('mform.policySaveErr', { err: String((e as Error).message || e) })
-    return false
-  }
-}
-
-function channelsLabel(ids: string[]): string {
-  if (!ids.length) return tr('notificationPolicy.recordOnlyShort')
-  return ids.map((id) => channels.value.find((c) => c.id === id)?.name || id).join(', ')
-}
-function delayLabel(sec: number): string {
-  if (!sec) return tr('notificationPolicy.delayImmediate')
-  if (sec % 60 === 0) return tr('common.durMinutes', { n: sec / 60 })
-  return tr('common.durSeconds', { n: sec })
-}
-
 const defaultGroupId = computed(() => groups.value.find((g) => g.is_default)?.id || '')
 
 const dnsProto = computed(() => form.params?.resolver_protocol || '')
@@ -380,7 +272,6 @@ async function loadAll() {
     error.value = String((e as Error).message || e)
     return
   }
-  channels.value = chans
   hasChannels.value = chans.length > 0
   all.value.forEach((x) => {
     if (!x.params) x.params = {}
@@ -396,7 +287,6 @@ async function loadAll() {
     applyKindDefaults()
     headersText.value = headersToText(form.params!.headers)
     if (showDetection.value) await loadDetection(editingId.value)
-    if (showPolicy.value) await loadPolicies()
     return
   }
   if (!form.group_id) {
@@ -407,7 +297,6 @@ async function loadAll() {
   }
   // The kind watcher can't cover a kind set during setup (query prefill / new-host).
   applyKindDefaults()
-  if (showPolicy.value) await loadPolicies()
 }
 
 function headersToText(h?: Record<string, string>): string {
@@ -506,13 +395,12 @@ async function save() {
     // Sensitivity hangs off the target's id, so it is written only once that id
     // exists — right after the target itself was saved.
     const detectionOK = await saveDetection()
-    const policyOK = await savePolicy()
     // A save-time finding keeps the form open so the user sees it: which in-scope
     // agents cannot run this monitor, or a sensitivity write that failed. A clean
     // save goes straight back to the list, with the outcome carried in a toast.
     const warning = res.warnings.find((wgn) => wgn.monitor_id === form.id) ?? null
     saveWarning.value = warning
-    if (!warning && detectionOK && policyOK) {
+    if (!warning && detectionOK) {
       pushToast({
         tone: 'info',
         title: tr('mform.saved'),
@@ -552,17 +440,6 @@ watch(
     // error names it.
     form.target = retargetForKind(form.target, prev, k)
     applyKindDefaults()
-  },
-)
-
-// Moving the target to another group changes what it inherits. Re-seed the
-// override draft from the new parent — but only while still inheriting, since
-// once the user is editing an override, silently rewriting their fields would
-// discard work they can see on screen.
-watch(
-  () => form.group_id,
-  () => {
-    if (policyMode.value === 'inherit') policyDraft.value = seedPolicyDraft()
   },
 )
 
@@ -681,110 +558,6 @@ onMounted(loadAll)
         </div>
       </section>
 
-      <!-- Detection sensitivity. Fault recording itself is not configurable: the
-           summary states what will happen, and only the thresholds can be tuned. -->
-      <section class="panel" v-if="showDetection">
-        <div class="panel-head"><h3>{{ tr('mform.detectionTitle') }}</h3></div>
-        <p class="hint panel-hint det-summary">
-          {{ tr('mform.detectionSummary', { fail: detection.fail_rounds, recover: detection.recover_rounds }) }}
-        </p>
-        <details class="advanced" :open="detectionOpen">
-          <summary @click.prevent="detectionOpen = !detectionOpen">{{ tr('mform.detectionAdvanced') }}</summary>
-          <div class="det-body">
-            <p class="hint tiny">{{ tr('detection.hint') }}</p>
-            <div class="profile-list">
-              <label v-for="p in DETECTION_PROFILES" :key="p" class="profile-opt">
-                <input type="radio" :value="p" v-model="detection.profile" @change="setProfile(p)" />
-                <span class="profile-name">{{ tr(`detection.profile_${p}`) }}</span>
-                <em class="profile-desc">{{ tr(`detection.profileDesc_${p}`) }}</em>
-              </label>
-            </div>
-            <div class="form-grid det-grid" v-if="detection.profile === 'custom'">
-              <label class="field">
-                <span>{{ tr('detection.failRounds') }}</span>
-                <input type="number" min="1" max="20" v-model.number="detection.fail_rounds" />
-              </label>
-              <label class="field">
-                <span>{{ tr('detection.recoverRounds') }}</span>
-                <input type="number" min="1" max="20" v-model.number="detection.recover_rounds" />
-              </label>
-            </div>
-            <div class="form-grid det-grid" v-if="showLossThreshold">
-              <label class="field">
-                <span>{{ tr('detection.lossPct') }}</span>
-                <input type="number" min="1" max="100" v-model.number="detection.icmp_loss_pct" />
-              </label>
-              <p class="hint tiny wide">{{ tr('detection.lossHint') }}</p>
-            </div>
-          </div>
-        </details>
-      </section>
-
-      <!-- Notification policy: inherit (from the group, else the site default) or
-           override for this one target. Saved together with the monitor. -->
-      <section class="panel" v-if="showPolicy">
-        <div class="panel-head"><h3>{{ tr('mform.policyTitle') }}</h3></div>
-        <p class="hint panel-hint">{{ tr('mform.policyHint') }}</p>
-        <div class="pbody">
-          <label class="scope-opt">
-            <input type="radio" value="inherit" v-model="policyMode" />
-            <span>{{ tr(`mform.policyInherit_${inheritedFrom}`) }}</span>
-          </label>
-          <label class="scope-opt">
-            <input type="radio" value="override" v-model="policyMode" />
-            <span>{{ tr('mform.policyOverride') }}</span>
-          </label>
-
-          <div v-if="policyMode === 'inherit'" class="policy-view">
-            <p v-if="!inheritedPolicy" class="hint tiny">{{ tr('mform.policyNoneInherited') }}</p>
-            <template v-else>
-              <div class="sum-row">
-                <span class="sum-k">{{ tr('notificationPolicy.name') }}</span>
-                <span class="sum-v">
-                  {{ inheritedPolicy.name }}
-                  <em v-if="!inheritedPolicy.enabled" class="off">
-                    {{ tr('notificationPolicy.stateDisabled') }}
-                  </em>
-                </span>
-              </div>
-              <div class="sum-row">
-                <span class="sum-k">{{ tr('notificationPolicy.minSeverity') }}</span>
-                <span class="sum-v">{{ tr(`mform.sev_${inheritedPolicy.min_severity}`) }}</span>
-              </div>
-              <div class="sum-row">
-                <span class="sum-k">{{ tr('notificationPolicy.warnDelay') }}</span>
-                <span class="sum-v">{{ delayLabel(inheritedPolicy.warn_delay_sec) }}</span>
-              </div>
-              <div class="sum-row">
-                <span class="sum-k">{{ tr('notificationPolicy.criticalDelay') }}</span>
-                <span class="sum-v">{{ delayLabel(inheritedPolicy.critical_delay_sec) }}</span>
-              </div>
-              <div class="sum-row">
-                <span class="sum-k">{{ tr('notificationPolicy.notifyRecovery') }}</span>
-                <span class="sum-v">
-                  {{
-                    inheritedPolicy.notify_recovery
-                      ? tr('notificationPolicy.yes')
-                      : tr('notificationPolicy.no')
-                  }}
-                </span>
-              </div>
-              <div class="sum-row">
-                <span class="sum-k">{{ tr('notificationPolicy.channels') }}</span>
-                <span class="sum-v" :class="{ 'record-only': !inheritedPolicy.channel_ids.length }">
-                  {{ channelsLabel(inheritedPolicy.channel_ids) }}
-                </span>
-              </div>
-            </template>
-          </div>
-
-          <div v-else class="policy-edit">
-            <PolicyFields v-model="policyDraft" :channels="channels" />
-            <p class="hint tiny">{{ tr('mform.policyOverrideSaveHint') }}</p>
-          </div>
-        </div>
-      </section>
-
       <!-- Advanced / per-type -->
       <section class="panel" v-if="form.kind === 'icmp' || form.kind === 'gateway' || form.kind === 'dns' || form.kind === 'tcp'">
         <div class="panel-head"><h3>{{ tr('mform.secAdvanced') }}</h3></div>
@@ -870,6 +643,46 @@ onMounted(loadAll)
           <p class="hint tiny wide">{{ tr('mform.natHint') }}</p>
           <p class="hint tiny wide" v-if="!form.params!.nat_transport || form.params!.nat_transport === 'udp'">{{ tr('mform.natServer2Hint') }}</p>
         </div>
+      </section>
+
+      <!-- Detection sensitivity is the final settings panel for every supported
+           probe type. Fault recording itself is not configurable: only the
+           confirmation and recovery thresholds can be tuned. -->
+      <section class="panel" v-if="showDetection">
+        <div class="panel-head"><h3>{{ tr('mform.detectionTitle') }}</h3></div>
+        <p class="hint panel-hint det-summary">
+          {{ tr('mform.detectionSummary', { fail: detection.fail_rounds, recover: detection.recover_rounds }) }}
+        </p>
+        <details class="advanced" :open="detectionOpen">
+          <summary @click.prevent="detectionOpen = !detectionOpen">{{ tr('mform.detectionAdvanced') }}</summary>
+          <div class="det-body">
+            <p class="hint tiny">{{ tr('detection.hint') }}</p>
+            <div class="profile-list">
+              <label v-for="p in DETECTION_PROFILES" :key="p" class="profile-opt">
+                <input type="radio" :value="p" v-model="detection.profile" @change="setProfile(p)" />
+                <span class="profile-name">{{ tr(`detection.profile_${p}`) }}</span>
+                <em class="profile-desc">{{ tr(`detection.profileDesc_${p}`) }}</em>
+              </label>
+            </div>
+            <div class="form-grid det-grid" v-if="detection.profile === 'custom'">
+              <label class="field">
+                <span>{{ tr('detection.failRounds') }}</span>
+                <input type="number" min="1" max="20" v-model.number="detection.fail_rounds" />
+              </label>
+              <label class="field">
+                <span>{{ tr('detection.recoverRounds') }}</span>
+                <input type="number" min="1" max="20" v-model.number="detection.recover_rounds" />
+              </label>
+            </div>
+            <div class="form-grid det-grid" v-if="showLossThreshold">
+              <label class="field">
+                <span>{{ tr('detection.lossPct') }}</span>
+                <input type="number" min="1" max="100" v-model.number="detection.icmp_loss_pct" />
+              </label>
+              <p class="hint tiny wide">{{ tr('detection.lossHint') }}</p>
+            </div>
+          </div>
+        </details>
       </section>
 
       <div class="form-foot">
@@ -1033,51 +846,6 @@ onMounted(loadAll)
 }
 .panel-body {
   padding: 8px 18px 16px;
-}
-/* Notification-policy block, matching the group form's layout so the same
-   choice reads the same way at both scopes. */
-.pbody {
-  padding: 14px 18px;
-}
-.scope-opt {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 13px;
-  margin: 4px 0;
-}
-.scope-opt input {
-  width: auto;
-}
-.policy-view,
-.policy-edit {
-  margin-top: 10px;
-  padding-top: 10px;
-  border-top: 1px dashed var(--border);
-}
-.sum-row {
-  display: flex;
-  gap: 12px;
-  align-items: baseline;
-  padding: 3px 0;
-  font-size: 13px;
-}
-.sum-k {
-  flex: none;
-  min-width: 132px;
-  color: var(--text-dim);
-}
-.sum-v {
-  color: var(--text);
-}
-.sum-v.record-only {
-  color: var(--text-dim);
-}
-.sum-v .off {
-  margin-left: 8px;
-  font-style: normal;
-  font-size: 11.5px;
-  color: var(--warning);
 }
 .det-summary {
   padding-bottom: 8px;

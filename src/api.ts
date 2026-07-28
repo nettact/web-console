@@ -833,8 +833,8 @@ export interface TraceAttemptView {
 // takes no part in detecting one: detection always runs, so a policy with no
 // channels is a legal, meaningful state meaning "record everything, send
 // nothing". Exactly one policy applies to any incident, resolved by a fixed
-// precedence with no stacking: target > group > site default.
-export type PolicyScope = 'site' | 'group' | 'target'
+// precedence with no stacking: group > site default.
+export type PolicyScope = 'site' | 'group'
 export interface NotificationPolicy {
   id: string
   site_id: string
@@ -886,8 +886,8 @@ export interface NotificationDelivery {
 // ---- built-in detection sensitivity ----
 // The only tunables the built-in detector has. There is deliberately no "off":
 // fault recording is a product guarantee, so a user who does not want the probe
-// disables the target, and one who does not want to be disturbed edits the
-// notification policy.
+// disables the target, and one who does not want to be disturbed edits its
+// monitor group's notification policy.
 export type DetectionProfile = 'balanced' | 'fast' | 'stable' | 'custom'
 export interface DetectionSettings {
   target_id: string

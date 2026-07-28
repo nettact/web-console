@@ -14,6 +14,8 @@ const state = vi.hoisted(() => ({
 const apiMock = vi.hoisted(() => ({
   listTargets: vi.fn(), monitorGroups: vi.fn(), setTargets: vi.fn(), channels: vi.fn(),
   detectionSettings: vi.fn(), updateDetectionSettings: vi.fn(),
+  notificationPolicies: vi.fn(), createNotificationPolicy: vi.fn(),
+  updateNotificationPolicy: vi.fn(), deleteNotificationPolicy: vi.fn(),
 }))
 
 vi.mock('../api', () => ({ api: apiMock }))
@@ -311,6 +313,34 @@ describe('MonitorForm save navigation', () => {
 // The built-in detector has no off switch: the form only tunes its sensitivity,
 // and the settings hang off the target's id, so they are written after the save.
 describe('MonitorForm detection sensitivity', () => {
+  it('does not expose or call a target notification policy', async () => {
+    apiMock.setTargets.mockResolvedValue({ ok: true, warnings: [] })
+    const page = await render()
+
+    expect(page.findAll('h3').some((h) => h.text() === 'Notification policy')).toBe(false)
+    expect(apiMock.notificationPolicies).not.toHaveBeenCalled()
+
+    await targetInput(page).setValue('1.1.1.1')
+    await page.get('button.btn.btn-primary').trigger('click')
+    await flushPromises()
+
+    expect(apiMock.createNotificationPolicy).not.toHaveBeenCalled()
+    expect(apiMock.updateNotificationPolicy).not.toHaveBeenCalled()
+    expect(apiMock.deleteNotificationPolicy).not.toHaveBeenCalled()
+  })
+
+  it('is the final settings panel for every supported monitor type', async () => {
+    const page = await render()
+    for (const kind of ['icmp', 'gateway', 'http', 'tcp', 'dns', 'nat']) {
+      await page.get('select').setValue(kind)
+      await flushPromises()
+
+      const panels = page.findAll('section.panel')
+      expect(panels.length).toBeGreaterThan(0)
+      expect(panels[panels.length - 1].find('.det-summary').exists()).toBe(true)
+    }
+  })
+
   it('writes the chosen profile once the created target has an id', async () => {
     apiMock.setTargets.mockResolvedValue({ ok: true, warnings: [] })
     const page = await render()

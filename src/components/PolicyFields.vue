@@ -2,7 +2,7 @@
 // Reusable editor for the hand-editable part of a notification policy. The model
 // is a whole NotificationPolicyInput because that is what the caller has to POST/
 // PATCH anyway, but scope_kind/scope_id are decided by the surface that owns the
-// policy (site default / group override / target override) and are never edited
+// policy (site default / group override) and are never edited
 // here.
 //
 // Delays are entered in minutes because a notification delay is a human patience

@@ -290,8 +290,8 @@ async function saveAgentAlert() {
 // ---- notification policies ----
 // A policy decides whether/when/where a RECORDED fault is announced; it never
 // decides whether the fault is detected. Exactly one policy governs any target
-// (target > group > site default, no stacking), so the preview below can show
-// the single winner instead of a merged result.
+// (group > site default, no stacking), so the preview below can show the single
+// winner instead of a merged result.
 const policies = ref<NotificationPolicy[]>([])
 const policyGroups = ref<MonitorGroup[]>([])
 const policyTargets = ref<ProbeTarget[]>([])
@@ -370,8 +370,8 @@ async function saveEditedPolicy(p: NotificationPolicy) {
   policyBusy.value = true
   policyError.value = ''
   try {
-    // The scope is not editable here: an override is created from the surface it
-    // scopes (the monitor group / the target), so it can only be retargeted there.
+    // The scope is not editable here: an override is created from its monitor
+    // group, so it can only be retargeted there.
     await api.updateNotificationPolicy(p.id, {
       ...policyDraft.value,
       scope_kind: p.scope_kind,
@@ -429,10 +429,6 @@ function scopeLabel(p: NotificationPolicy): string {
   if (p.scope_kind === 'group') {
     const g = policyGroups.value.find((x) => x.id === p.scope_id)
     return t('notificationPolicy.scopeGroup', { name: g?.name || p.scope_id })
-  }
-  if (p.scope_kind === 'target') {
-    const tg = policyTargets.value.find((x) => x.id === p.scope_id)
-    return t('notificationPolicy.scopeTarget', { name: tg?.name || tg?.target || p.scope_id })
   }
   return t('notificationPolicy.scopeSite')
 }
