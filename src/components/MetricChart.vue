@@ -49,15 +49,9 @@ interface ChartMetric {
   samples: Sample[]
 }
 
-// Legacy single-series props (Dashboard) are still accepted; History passes the
-// richer `metrics` array. Both normalize to `metrics` below.
 const props = defineProps<{
   title: string
-  unit?: string
-  samples?: Sample[]
-  color?: string
-  kind?: string
-  metrics?: ChartMetric[]
+  metrics: ChartMetric[]
 }>()
 
 const el = ref<HTMLDivElement>()
@@ -75,20 +69,6 @@ const unitName = (u: string) => {
   if (u === 's') return t('chart.unitSec')
   return UNIT_LABEL[u] ?? u
 }
-
-const metrics = computed<ChartMetric[]>(() => {
-  if (props.metrics && props.metrics.length) return props.metrics
-  return [
-    {
-      key: 'm',
-      label: props.title,
-      kind: props.kind ?? '',
-      unit: props.unit ?? '',
-      color: props.color ?? '#38bdf8',
-      samples: props.samples ?? [],
-    },
-  ]
-})
 
 const baseTitle = () => ({
   text: props.title,
@@ -315,7 +295,7 @@ function renderTimeline(segs: Seg[], onLabel: string, offLabel: string, restarts
 
 function render() {
   if (!chart) return
-  const ms = metrics.value
+  const ms = props.metrics
   // A lone status/heartbeat metric keeps its dedicated state timeline; anything
   // else (including several trend metrics) is overlaid as lines.
   if (ms.length === 1) {
@@ -359,7 +339,7 @@ onBeforeUnmount(() => {
 // `locale` re-renders axis labels/legends/tooltips on language switch; `theme`
 // re-renders the chart chrome palette on light/dark switch.
 watch(
-  () => [props.metrics, props.samples, props.color, props.kind, props.unit, locale.value, theme.value],
+  () => [props.metrics, locale.value, theme.value],
   render,
   { deep: true },
 )

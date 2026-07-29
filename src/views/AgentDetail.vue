@@ -40,9 +40,26 @@ const history = ref<StatusEvent[]>([])
 const targetFaults = ref<FaultSignal[]>([])
 const cpu = ref<Sample[]>([])
 const mem = ref<Sample[]>([])
-const net = ref<Sample[]>([])
+const rx = ref<Sample[]>([])
+const tx = ref<Sample[]>([])
 const error = ref('')
 const loading = ref(true)
+
+// One series as MetricChart consumes them (it plots an array of these). Derived
+// rather than stored, because t() must re-evaluate on a locale switch: a stored
+// label would leave the legend and tooltip in the language the page loaded in
+// while the chart title (translated in the template) switched.
+type ChartMetric = { key: string; label: string; kind: string; unit: string; color: string; samples: Sample[] }
+const cpuMetrics = computed<ChartMetric[]>(() => [
+  { key: 'cpu', label: t('agentStatus.chartCpu'), kind: 'host.cpu.pct', unit: 'pct', color: '#38bdf8', samples: cpu.value },
+])
+const memMetrics = computed<ChartMetric[]>(() => [
+  { key: 'mem', label: t('agentStatus.chartMem'), kind: 'host.mem.pct', unit: 'pct', color: '#34d399', samples: mem.value },
+])
+const netMetrics = computed<ChartMetric[]>(() => [
+  { key: 'rx', label: t('dashboard.download'), kind: 'host.net.rx_bps', unit: 'bps', color: '#38bdf8', samples: rx.value },
+  { key: 'tx', label: t('dashboard.upload'), kind: 'host.net.tx_bps', unit: 'bps', color: '#a78bfa', samples: tx.value },
+])
 
 // Live per-agent rollup from the shared store (status/resources/groups/alert).
 const row = computed(() => agentIndex.value.get(id.value) || null)
@@ -120,20 +137,14 @@ async function loadAll() {
     targetFaults.value = faults
     cpu.value = cpuS
     mem.value = memS
-    // Merge rx/tx into a single overlaid net series set.
-    net.value = [...rxS, ...txS]
-    netMetrics.value = [
-      { key: 'rx', label: t('dashboard.download'), kind: 'host.net.rx_bps', unit: 'bps', color: '#38bdf8', samples: rxS },
-      { key: 'tx', label: t('dashboard.upload'), kind: 'host.net.tx_bps', unit: 'bps', color: '#a78bfa', samples: txS },
-    ]
+    rx.value = rxS
+    tx.value = txS
   } catch (e) {
     error.value = String((e as Error).message || e)
   } finally {
     loading.value = false
   }
 }
-
-const netMetrics = ref<Array<{ key: string; label: string; kind: string; unit: string; color: string; samples: Sample[] }>>([])
 
 async function toggleMute() {
   if (!agent.value) return
@@ -269,8 +280,8 @@ onMounted(() => {
       <section class="card">
         <h3>{{ t('agentStatus.sectResources') }}</h3>
         <div class="charts">
-          <MetricChart :title="t('agentStatus.chartCpu')" unit="pct" :samples="cpu" color="#38bdf8" />
-          <MetricChart :title="t('agentStatus.chartMem')" unit="pct" :samples="mem" color="#34d399" />
+          <MetricChart :title="t('agentStatus.chartCpu')" :metrics="cpuMetrics" />
+          <MetricChart :title="t('agentStatus.chartMem')" :metrics="memMetrics" />
           <MetricChart :title="t('agentStatus.chartNet')" :metrics="netMetrics" />
         </div>
         <router-link class="link" :to="`/host-metrics?agent=${encodeURIComponent(id)}`">{{ t('agentStatus.fullHistory') }} →</router-link>

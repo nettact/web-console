@@ -142,7 +142,6 @@ const PARAM_RANGES: Record<string, ReadonlyArray<{ key: string; labelKey: string
   ],
   icmp: [
     { key: 'packet_count', labelKey: 'mform.packetCount', min: 0, max: 100 },
-    { key: 'retries', labelKey: 'mform.packetCount', min: 0, max: 100 },
     { key: 'packet_size', labelKey: 'mform.packetSize', min: 0, max: 65500 },
     { key: 'global_timeout_ms', labelKey: 'mform.globalTimeout', min: 0, max: 300000 },
   ],
@@ -151,7 +150,6 @@ const PARAM_RANGES: Record<string, ReadonlyArray<{ key: string; labelKey: string
   http: [
     { key: 'max_redirects', labelKey: 'mform.maxRedirects', min: -1, max: 20 },
     { key: 'max_response_bytes', labelKey: 'mform.maxResponseBytes', min: 0, max: 10485760 },
-    { key: 'expected_status', labelKey: 'mform.acceptedStatuses', min: 100, max: 599 },
   ],
 }
 
@@ -169,8 +167,6 @@ export function paramsRangeError(kind: string, params: Record<string, unknown> |
       const raw = params[r.key]
       if (raw === undefined || raw === null || raw === '') continue
       const v = Number(raw)
-      // expected_status is optional and 0 means "unset" (any 2xx/3xx).
-      if (r.key === 'expected_status' && v === 0) continue
       if (!Number.isFinite(v)) continue // a non-numeric entry is dropped before save
       if (v < r.min || v > r.max) return { labelKey: r.labelKey, min: r.min, max: r.max }
     }

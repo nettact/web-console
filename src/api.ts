@@ -481,7 +481,6 @@ export interface ProbeParams {
   timeout_ms?: number
   // icmp / ping
   packet_size?: number
-  retries?: number
   packet_count?: number
   global_timeout_ms?: number
   // dns
@@ -491,7 +490,6 @@ export interface ProbeParams {
   resolver_protocol?: string
   // http
   method?: string
-  expected_status?: number
   accepted_statuses?: string
   keyword?: string
   keyword_invert?: boolean
