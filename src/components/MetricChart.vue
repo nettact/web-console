@@ -7,6 +7,7 @@ import { toDateLocale } from '../i18n'
 import { theme } from '../theme'
 import { type Seg, boolSegments, toPoints, uptimeSegments } from '../lib/timeline'
 import { fmtByUnit, isByteUnit } from '../lib/format'
+import { lineDataWithGaps } from '../lib/chartSeries'
 
 const { t, locale } = useI18n()
 
@@ -161,7 +162,8 @@ function renderLines(ms: ChartMetric[]) {
       smooth: !isBool,
       step: isBool ? ('end' as const) : (false as const),
       yAxisIndex: ai,
-      data: m.samples.map((s) => [new Date(s.ts).getTime(), s.value] as [number, number]),
+      data: lineDataWithGaps(m.samples),
+      connectNulls: false,
       lineStyle: { width: 2, color: m.color },
       itemStyle: { color: m.color },
       // Fill only when a single line owns the chart; overlaid areas muddy each other.
