@@ -2,8 +2,10 @@ import { defineConfig } from 'vite'
 import vue from '@vitejs/plugin-vue'
 
 // Dev proxy: the Vite dev server forwards /api to the Go server so the SPA and
-// API share an origin during development. In production the SPA is embedded in
-// the Go binary (go:embed, M4) and served same-origin.
+// API share an origin during development. In production the SPA is served
+// same-origin by the Go server, from one of two places: server deployments
+// download this repo's release tarball at runtime, while the desktop app
+// compiles it into its binary (store review disallows the runtime fetch).
 export default defineConfig({
   plugins: [vue()],
   server: {
@@ -13,8 +15,8 @@ export default defineConfig({
     },
   },
   build: {
-    // Self-contained output. The M4 embed step copies dist/ into the
-    // server-lite repo (server-lite/internal/webui/dist) for go:embed.
+    // Self-contained output: release.yml tars this directory as the
+    // web-console-dist-<tag>.tar.gz release asset that both consumers unpack.
     outDir: 'dist',
     emptyOutDir: true,
   },
