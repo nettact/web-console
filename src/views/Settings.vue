@@ -22,6 +22,7 @@ import WebhookChannelForm from '../components/WebhookChannelForm.vue'
 import ChannelAddForm from '../components/ChannelAddForm.vue'
 import DataCleanup from '../components/DataCleanup.vue'
 import PolicyFields from '../components/PolicyFields.vue'
+import InfoTip from '../components/InfoTip.vue'
 
 const { t } = useI18n()
 const router = useRouter()
@@ -263,6 +264,22 @@ const AGENT_DISPLAY_BOUNDS: [number, number] = [30, 3600]
 const agentDisplaySaved = ref(false)
 const agentDisplayError = ref('')
 
+// Alert-storm correlation (ALERT-001). This is a NOTIFICATION decision — how
+// many messages leave the building when one Agent's vantage point goes dark —
+// not a detection one: every fault is still recorded and still listed either
+// way. That is why it sits under Notifications rather than beside the detector
+// timings.
+const storm = reactive({
+  threshold: 3, // incident_storm_threshold (0 = off)
+  windowS: 300, // incident_storm_window_seconds
+})
+const STORM_BOUNDS: Record<string, [number, number]> = {
+  threshold: [0, 50],
+  windowS: [30, 3600],
+}
+const stormSaved = ref(false)
+const stormError = ref('')
+
 // LAN device retention. Discovery only ever adds devices (an Agent never reports
 // a departure), so age is the only thing that removes them. `randomDays` is a
 // narrowing override for randomized MACs, not an independent window: the two
@@ -289,6 +306,33 @@ function populateAgentSettings(s: Record<string, string>) {
   connectivity.graceS = settingInt(s, 'agent_connectivity_grace_seconds', 60)
   connectivity.recoverS = settingInt(s, 'agent_connectivity_recover_seconds', 30)
   agentDisplay.staleS = settingInt(s, 'agent_status_stale_seconds', 120)
+}
+
+function populateStorm(s: Record<string, string>) {
+  storm.threshold = settingInt(s, 'incident_storm_threshold', 3)
+  storm.windowS = settingInt(s, 'incident_storm_window_seconds', 300)
+}
+
+async function saveStorm() {
+  stormError.value = ''
+  const inRange = Object.entries(STORM_BOUNDS).every(([k, [min, max]]) => {
+    const v = (storm as unknown as Record<string, number>)[k]
+    return Number.isFinite(v) && v >= min && v <= max
+  })
+  if (!inRange) {
+    stormError.value = t('settings.alertStorm.rangeErr')
+    return
+  }
+  try {
+    await api.updateSettings({
+      incident_storm_threshold: String(storm.threshold),
+      incident_storm_window_seconds: String(storm.windowS),
+    })
+    stormSaved.value = true
+    setTimeout(() => (stormSaved.value = false), 2000)
+  } catch (e) {
+    stormError.value = String((e as Error).message || e)
+  }
 }
 
 function populateDeviceRetention(s: Record<string, string>) {
@@ -539,6 +583,7 @@ async function load() {
     consoleUrl.value = settings['console_base_url'] || window.location.origin
     populateDiag(settings)
     populateAgentSettings(settings)
+    populateStorm(settings)
     populateDeviceRetention(settings)
     populateListen()
   } catch (e) {
@@ -561,11 +606,18 @@ async function onWebhookSaved() {
   await load()
 }
 async function toggleChannel(c: Channel) {
-  await api.updateChannel(c.id, { name: c.name, enabled: !c.enabled })
+  await api.updateChannel(c.id, { name: c.name, enabled: !c.enabled, storm_merge: c.storm_merge })
+  await load()
+}
+// Per-channel storm merging (ALERT-001): one summary when many faults break out
+// at once, or one message per fault. On by default; off suits a machine consumer
+// that needs a record per incident.
+async function toggleStormMerge(c: Channel) {
+  await api.updateChannel(c.id, { name: c.name, enabled: c.enabled, storm_merge: !c.storm_merge })
   await load()
 }
 async function renameChannel(c: Channel) {
-  await api.updateChannel(c.id, { name: c.name, enabled: c.enabled })
+  await api.updateChannel(c.id, { name: c.name, enabled: c.enabled, storm_merge: c.storm_merge })
 }
 async function removeChannel(id: string) {
   await api.deleteChannel(id)
@@ -880,15 +932,26 @@ onMounted(() => {
       </div>
       <div class="table-wrap">
         <table class="data-table">
-          <thead><tr><th>{{ t('settings.thName') }}</th><th>{{ t('settings.thType') }}</th><th>{{ t('settings.thConfig') }}</th><th class="center">{{ t('settings.thEnabled') }}</th><th></th></tr></thead>
+          <thead><tr><th>{{ t('settings.thName') }}</th><th>{{ t('settings.thType') }}</th><th>{{ t('settings.thConfig') }}</th><th class="center">{{ t('settings.thEnabled') }}</th><th class="center">
+            {{ t('settings.thStormMerge') }}
+            <InfoTip :text="t('settings.alertStorm.channelHint')" />
+          </th><th></th></tr></thead>
           <tbody>
-            <tr v-if="!channels.length"><td colspan="5" class="hint">{{ t('settings.noChannels') }}</td></tr>
+            <tr v-if="!channels.length"><td colspan="6" class="hint">{{ t('settings.noChannels') }}</td></tr>
             <template v-for="c in channels" :key="c.id">
               <tr>
                 <td><input v-model="c.name" class="name-in" @blur="renameChannel(c)" /></td>
                 <td><span class="badge neutral">{{ c.type }}</span></td>
                 <td class="mono">{{ channelConfigLabel(c) }}</td>
                 <td class="center"><input type="checkbox" :checked="c.enabled" @change="toggleChannel(c)" /></td>
+                <td class="center">
+                  <input
+                    type="checkbox"
+                    :checked="c.storm_merge"
+                    :aria-label="t('settings.thStormMerge')"
+                    @change="toggleStormMerge(c)"
+                  />
+                </td>
                 <td class="row-actions">
                   <button
                     v-if="c.type === 'webhook'" class="link-btn"
@@ -899,11 +962,12 @@ onMounted(() => {
                 </td>
               </tr>
               <tr v-if="editingId === c.id" class="wh-edit-row">
-                <td colspan="5">
+                <td colspan="6">
                   <WebhookChannelForm
                     mode="edit"
                     :channel-id="c.id"
                     :enabled="c.enabled"
+                    :storm-merge="c.storm_merge"
                     :initial-name="c.name"
                     :initial-config="c.config"
                     @saved="onWebhookSaved"
@@ -914,6 +978,39 @@ onMounted(() => {
             </template>
           </tbody>
         </table>
+      </div>
+    </section>
+
+    <!-- Alert-storm suppression (ALERT-001). Sits under Notifications, not with
+         the detector timings: it decides how many MESSAGES leave, never whether a
+         fault is recorded. Every fault is in the fault centre either way. -->
+    <section class="panel">
+      <div class="panel-head"><h3>{{ t('settings.alertStorm.title') }}</h3></div>
+      <div class="panel-body">
+        <p class="hint">{{ t('settings.alertStorm.hint') }}</p>
+        <div class="knobs">
+          <label class="knob">
+            <span class="knob-label">{{ t('settings.alertStorm.threshold') }}</span>
+            <span class="knob-field">
+              <input v-model.number="storm.threshold" type="number" min="0" max="50" />
+              <span class="unit">{{ t('settings.alertStorm.unitFaults') }}</span>
+            </span>
+            <span class="knob-help hint">{{ t('settings.alertStorm.thresholdHelp') }}</span>
+          </label>
+          <label class="knob">
+            <span class="knob-label">{{ t('settings.alertStorm.window') }}</span>
+            <span class="knob-field">
+              <input v-model.number="storm.windowS" type="number" min="30" max="3600" />
+              <span class="unit">{{ t('settings.unit.seconds') }}</span>
+            </span>
+            <span class="knob-help hint">{{ t('settings.alertStorm.windowHelp') }}</span>
+          </label>
+        </div>
+        <div class="row field-row">
+          <button class="btn btn-primary" @click="saveStorm">{{ t('common.save') }}</button>
+          <span v-if="stormSaved" class="hint saved">✓ {{ t('common.saved') }}</span>
+        </div>
+        <p v-if="stormError" class="err inline">{{ stormError }}</p>
       </div>
     </section>
 

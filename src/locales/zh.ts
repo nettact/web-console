@@ -347,6 +347,20 @@ export default {
     notifySent: '已通知',
     notifyPending: '等待延迟',
     notifyRecordedOnly: '仅记录',
+    notifyInStorm: '已并入风暴',
+    // 报警风暴（ALERT-001）：同一 Agent 视角下多个故障几乎同时发生，合并成一条通知。
+    storm: {
+      title: '疑似{layer}层故障',
+      sub: '{faults} 个故障几乎同时发生，涉及 {groups} 个监控组（来自 {agent}）',
+      open: '{n} 个仍在故障中',
+      notified: '已合并通知',
+      showMembers: '只看这批故障 ›',
+      showAll: '显示全部故障 ›',
+      chip: '已筛选：来自 {agent} 的这批故障',
+      chipUnknown: '已筛选：某次报警风暴',
+      badge: '风暴',
+      badgeHint: '该故障与同时发生的其他故障合并成了一条通知，不会单独打扰。',
+    },
     durSeconds: '{n} 秒',
     durMinutes: '{n} 分钟',
     durHours: '{n} 小时',
@@ -381,6 +395,9 @@ export default {
       diag: {
         started: '路径诊断开始',
         completed: '路径诊断完成',
+      },
+      storm: {
+        joined: '并入报警风暴',
       },
     },
     resolveReason: {
@@ -444,6 +461,11 @@ export default {
         incident: {
           opened: '故障通知',
           resolved: '恢复通知',
+        },
+        // 本故障被并入报警风暴时，通知由风暴统一发出，这两行即那条汇总。
+        storm: {
+          opened: '风暴汇总通知',
+          resolved: '风暴恢复汇总',
         },
       },
       delivery: {
@@ -1149,6 +1171,18 @@ export default {
       routingNote: 'Agent 离线故障固定为 critical 严重度，通知发给谁由通知策略决定。',
       rangeErr: '数值超出允许范围。',
     },
+    // 报警风暴抑制（ALERT-001）。决定「发多少条」，不影响「记不记录」。
+    alertStorm: {
+      title: '报警风暴抑制',
+      hint: '出口断网时，同一 Agent 下的多个监控组会前后脚告警，各发一条通知就成了骚扰。达到阈值时合并成一条「N 个故障同时告警」，恢复时也只发一条汇总。故障本身照常逐条记录，故障中心一条不少。',
+      threshold: '触发阈值',
+      thresholdHelp: '同一 Agent 在时间窗内新增的故障数达到该值时合并通知。填 0 表示关闭合并，每个故障各发各的。',
+      unitFaults: '个故障',
+      window: '关联时间窗',
+      windowHelp: '只有在该时长内先后出现的故障才算「同时」。默认与通知延迟一致，使整个延迟窗内的故障都能并成一条。',
+      channelHint: '开启后，该渠道在报警风暴期间只收到一条汇总通知。关闭则仍逐条接收——适合需要每个故障一条记录的工单系统或日志接收端。',
+      rangeErr: '数值超出允许范围。',
+    },
     agentDisplay: {
       title: 'Agent 状态显示',
       hint: '只影响 Agent 列表的展示，不参与任何故障判定。',
@@ -1297,6 +1331,7 @@ export default {
     thType: '类型',
     thConfig: '配置',
     thEnabled: '启用',
+    thStormMerge: '风暴合并',
     noChannels: '暂无渠道',
     unit: {
       seconds: '秒',

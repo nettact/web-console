@@ -404,6 +404,7 @@ async function applyNotifyAndNext(): Promise<void> {
         await api.updateChannel(existing.id, {
           name: existing.name,
           enabled: true,
+          storm_merge: existing.storm_merge,
           config: { lang: sysLang.value },
         })
       } else {

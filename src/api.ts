@@ -664,6 +664,10 @@ export interface Incident {
   // fault is recorded but no channel is configured to hear about it.
   notified_count: number
   pending_notify_count: number
+  // Set when this fault was correlated into a burst that was announced once as a
+  // whole (ALERT-001). Both notify counts can then be 0 while everyone WAS told,
+  // so the list reads this before concluding "recorded only".
+  storm_id?: string
   opened_at: string
   resolved_at: string | null
 }
@@ -744,6 +748,8 @@ export interface IncidentFilter {
   // A probe kind (icmp | tcp | http | dns | nat | gateway) or a detector key
   // (agent_connectivity).
   kind?: string
+  // Narrow to the members of one correlated burst.
+  storm?: string
   q?: string
   since?: string
   until?: string
@@ -754,12 +760,35 @@ export interface IncidentPage {
   page: number
   page_size: number
   summary: IncidentSummary
+  // Open storms for the site. Like `summary`, deliberately UNFILTERED: "several
+  // things broke at once" is a fact about the site right now, not about the
+  // narrowing the reader happens to have applied to the table.
+  storms: AlertStorm[]
 }
 export interface IncidentSummary {
   open: number
   opened_24h: number
   resolved_24h: number
   top_layer: string
+}
+// A correlated burst of faults seen from one Agent's vantage point, announced
+// once instead of once per fault (ALERT-001). It is a heading over its member
+// incidents, never a replacement for them — every member is still listed.
+export interface AlertStorm {
+  id: string
+  site_id: string
+  agent_id: string
+  agent_name: string
+  state: 'open' | 'resolved'
+  severity: string
+  suspected_layer: string
+  fault_count: number
+  open_fault_count: number
+  group_count: number
+  notified_count: number
+  pending_notify_count: number
+  opened_at: string
+  resolved_at: string | null
 }
 
 // Snapshot lifecycle status (shared by the snapshot and each per-Agent entry).
@@ -986,8 +1015,12 @@ export interface EffectivePolicy {
 // was announced, is still waiting out its delay, or was deliberately not sent.
 export interface NotificationDelivery {
   id: string
-  incident_id: string
-  event_kind: 'incident.opened' | 'incident.resolved'
+  incident_id?: string
+  // Set instead of incident_id on the records that announced a correlated burst.
+  // A member fault surfaces these too, so its detail panel can say "told once, as
+  // part of a storm" rather than showing only canceled rows.
+  storm_id?: string
+  event_kind: 'incident.opened' | 'incident.resolved' | 'storm.opened' | 'storm.resolved'
   channel_id: string
   channel_name?: string
   policy_id?: string
@@ -1053,6 +1086,10 @@ export interface Channel {
   type: string
   config: Record<string, string>
   enabled: boolean
+  // Receive ONE summary when many faults break out at once under a single Agent,
+  // instead of one message per fault (ALERT-001). On by default; turn it off for
+  // a machine consumer that needs one record per incident.
+  storm_merge: boolean
 }
 // Outcome of a webhook test send: the request always returns 200, carrying the
 // delivery result (ok=false on a transport error or a >=300 status).
@@ -1503,10 +1540,16 @@ export const api = {
       `/api/v1/targets/${encodeURIComponent(targetID)}/availability?windows=${windows.join(',')}`,
     ),
   channels: () => req<Channel[]>('GET', '/api/v1/channels'),
+  // A new channel always starts with storm merging on; it is changed afterwards
+  // through updateChannel.
   createChannel: (name: string, type: string, config: Record<string, string>) =>
     req<{ id: string }>('POST', '/api/v1/channels', { name, type, config }),
-  updateChannel: (id: string, body: { name: string; enabled: boolean; config?: Record<string, string> }) =>
-    req<unknown>('PUT', `/api/v1/channels/${encodeURIComponent(id)}`, body),
+  // A full PUT of the channel's flags: every caller must send the current
+  // storm_merge along with name/enabled, or it is turned off.
+  updateChannel: (
+    id: string,
+    body: { name: string; enabled: boolean; storm_merge: boolean; config?: Record<string, string> },
+  ) => req<unknown>('PUT', `/api/v1/channels/${encodeURIComponent(id)}`, body),
   deleteChannel: (id: string) => req<unknown>('DELETE', `/api/v1/channels/${encodeURIComponent(id)}`),
   // Send a sample incident to a webhook config without saving a channel.
   testChannel: (type: string, config: Record<string, string>) =>

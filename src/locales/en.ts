@@ -337,6 +337,21 @@ export default {
     notifySent: 'Notified',
     notifyPending: 'Waiting out delay',
     notifyRecordedOnly: 'Recorded only',
+    notifyInStorm: 'Told via storm',
+    // Alert storm (ALERT-001): many faults at once from one Agent's vantage
+    // point, announced as a single message.
+    storm: {
+      title: 'Suspected {layer}-layer fault',
+      sub: '{faults} faults broke out together across {groups} monitor group(s) (on {agent})',
+      open: '{n} still down',
+      notified: 'Announced once',
+      showMembers: 'Show just these ›',
+      showAll: 'Show all faults ›',
+      chip: 'Filtered: this burst on {agent}',
+      chipUnknown: 'Filtered: one alert storm',
+      badge: 'Storm',
+      badgeHint: 'This fault was announced together with the others that broke at the same time, so it did not send its own message.',
+    },
     durSeconds: '{n}s',
     durMinutes: '{n} min',
     durHours: '{n} h',
@@ -371,6 +386,9 @@ export default {
       diag: {
         started: 'Path diagnostic started',
         completed: 'Path diagnostic completed',
+      },
+      storm: {
+        joined: 'Merged into an alert storm',
       },
     },
     resolveReason: {
@@ -434,6 +452,12 @@ export default {
         incident: {
           opened: 'Fault notice',
           resolved: 'Recovery notice',
+        },
+        // When this fault was merged into an alert storm, the storm sent the
+        // message on its behalf; these two rows are that summary.
+        storm: {
+          opened: 'Storm summary',
+          resolved: 'Storm recovery summary',
         },
       },
       delivery: {
@@ -1134,6 +1158,19 @@ export default {
       routingNote: 'An Agent-offline fault is always critical; who hears about it is decided by the notification policy.',
       rangeErr: 'A value is out of the allowed range.',
     },
+    // Alert-storm suppression (ALERT-001). Decides how many MESSAGES leave, never
+    // whether a fault is recorded.
+    alertStorm: {
+      title: 'Alert storm suppression',
+      hint: 'When the upstream link dies, every monitor group under one Agent breaches within seconds of the others, and one message per group is pure harassment. Past the threshold they are merged into a single "N faults at once" notice, with one summary when they recover. Every fault is still recorded individually in the fault centre.',
+      threshold: 'Trigger threshold',
+      thresholdHelp: 'Merge once this many faults open under one Agent inside the window. 0 turns merging off and every fault announces itself.',
+      unitFaults: 'faults',
+      window: 'Correlation window',
+      windowHelp: 'Only faults appearing within this span count as "at once". The default matches the notification delay, so a whole delay window can collapse into one message.',
+      channelHint: 'On: this channel receives one summary during an alert storm. Off: it keeps getting one message per fault — right for a ticketing system or log sink that needs a record per incident.',
+      rangeErr: 'A value is out of the allowed range.',
+    },
     agentDisplay: {
       title: 'Agent status display',
       hint: 'Affects only how the Agent list is presented; it takes no part in fault detection.',
@@ -1284,6 +1321,7 @@ export default {
     thType: 'Type',
     thConfig: 'Config',
     thEnabled: 'Enabled',
+    thStormMerge: 'Merge storms',
     noChannels: 'No channels',
     unit: {
       seconds: 's',

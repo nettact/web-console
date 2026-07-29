@@ -18,6 +18,7 @@ const KINDS = [
   'incident.updated',
   'incident.resolved',
   'incident.terminated',
+  'storm.joined',
 ]
 
 describe('incident timeline kind labels', () => {
@@ -28,6 +29,26 @@ describe('incident timeline kind labels', () => {
     for (const k of KINDS) {
       it(`${locale}: resolves incidents.kind.${k}`, () => {
         const path = `incidents.kind.${k}`
+        expect(te(path)).toBe(true)
+        expect(t(path)).not.toBe(path)
+      })
+    }
+  }
+})
+
+// Delivery event kinds are dotted the same way and rendered through
+// t('incidents.detail.ntKind.' + event_kind), so they need the same guard: a
+// missing branch shows the operator a raw key where a delivery label belongs.
+const DELIVERY_KINDS = ['incident.opened', 'incident.resolved', 'storm.opened', 'storm.resolved']
+
+describe('notification delivery kind labels', () => {
+  for (const locale of ['zh', 'en'] as const) {
+    const i18n = createI18n({ legacy: false, locale, fallbackLocale: 'zh', messages: { zh, en } })
+    const t = i18n.global.t as (k: string) => string
+    const te = i18n.global.te as (k: string) => boolean
+    for (const k of DELIVERY_KINDS) {
+      it(`${locale}: resolves incidents.detail.ntKind.${k}`, () => {
+        const path = `incidents.detail.ntKind.${k}`
         expect(te(path)).toBe(true)
         expect(t(path)).not.toBe(path)
       })

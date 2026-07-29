@@ -16,10 +16,14 @@ const props = withDefaults(
     mode: 'add' | 'edit'
     channelId?: string
     enabled?: boolean
+    // The channel's current storm-merge flag. An update is a full PUT of the
+    // channel's flags, so this form has to carry it through untouched — it edits
+    // the webhook config, not the notification-grouping policy.
+    stormMerge?: boolean
     initialName?: string
     initialConfig?: Record<string, string>
   }>(),
-  { channelId: '', enabled: true, initialName: '', initialConfig: () => ({}) },
+  { channelId: '', enabled: true, stormMerge: true, initialName: '', initialConfig: () => ({}) },
 )
 const emit = defineEmits<{
   (e: 'saved'): void
@@ -160,7 +164,12 @@ async function onSave() {
   localError.value = ''
   try {
     if (props.mode === 'edit') {
-      await api.updateChannel(props.channelId, { name: label, enabled: props.enabled, config: cfg })
+      await api.updateChannel(props.channelId, {
+        name: label,
+        enabled: props.enabled,
+        storm_merge: props.stormMerge,
+        config: cfg,
+      })
     } else {
       await api.createChannel(label, 'webhook', cfg)
       resetFields()

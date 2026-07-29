@@ -10,7 +10,7 @@
 import { ref, computed, onMounted, onBeforeUnmount, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
-import { api, type Incident, type IncidentFilter } from '../api'
+import { api, type AlertStorm, type Incident, type IncidentFilter } from '../api'
 import { toDateLocale } from '../i18n'
 import { useIncidentLabels, severityTone } from '../composables/useIncidentLabels'
 import IncidentDetail from '../components/incident/IncidentDetail.vue'
@@ -23,6 +23,8 @@ const { sevLabel, layerLabel } = useIncidentLabels()
 
 const incidents = ref<Incident[]>([])
 const summary = ref({ open: 0, opened_24h: 0, resolved_24h: 0, top_layer: '' })
+// Open storms for the site, unfiltered — see IncidentPage.storms.
+const storms = ref<AlertStorm[]>([])
 const selected = ref<string>('')
 const error = ref('')
 const loading = ref(false)
@@ -34,8 +36,12 @@ const fmtDateTime = (s: string | null) =>
 
 // duration renders how long a fault lasted (or has lasted), from opened_at.
 function duration(i: Incident): string {
-  const end = i.resolved_at ? new Date(i.resolved_at).getTime() : Date.now()
-  const secs = Math.max(0, Math.round((end - new Date(i.opened_at).getTime()) / 1000))
+  return since(i.opened_at, i.resolved_at)
+}
+
+function since(from: string, to: string | null): string {
+  const end = to ? new Date(to).getTime() : Date.now()
+  const secs = Math.max(0, Math.round((end - new Date(from).getTime()) / 1000))
   if (secs < 60) return t('incidents.durSeconds', { n: secs })
   if (secs < 3600) return t('incidents.durMinutes', { n: Math.round(secs / 60) })
   if (secs < 86400) return t('incidents.durHours', { n: Math.round(secs / 360) / 10 })
@@ -47,15 +53,42 @@ const tab = ref<'open' | 'resolved'>('open')
 const severity = ref('')
 const groupId = ref('')
 const kind = ref('')
+const stormId = ref('')
 const search = ref('')
 
 const filter = computed<IncidentFilter>(() => ({
-  state: tab.value,
+  // Filtering to a storm deliberately drops the open/resolved constraint: a
+  // burst is ONE event, and splitting its members across two tabs would make a
+  // recovery notification's deep link land on an empty table (every member is
+  // resolved by the time that notification is sent). "Show me this burst" means
+  // all of it.
+  state: stormId.value ? undefined : tab.value,
   severity: severity.value || undefined,
   group: groupId.value || undefined,
   kind: kind.value || undefined,
+  storm: stormId.value || undefined,
   q: search.value.trim() || undefined,
 }))
+
+// The storm currently being filtered to, if it is still open. Resolved storms
+// fall out of the banner list but the filter stays valid, so the chip below the
+// banner is what tells the reader a narrowing is active.
+const activeStorm = computed(() => storms.value.find((s) => s.id === stormId.value))
+
+function showStorm(id: string) {
+  stormId.value = stormId.value === id ? '' : id
+}
+
+// Keep ?storm= in step with the filter. Without this a page opened from a storm
+// notification keeps the original id in its URL after the reader clears or
+// switches the filter, so a reload silently restores a narrowing they dismissed
+// — and openIncident would spread the stale id into every detail link it builds.
+watch(stormId, (id) => {
+  const q = { ...route.query }
+  if (id) q.storm = id
+  else delete q.storm
+  router.replace({ query: q })
+})
 
 // Group choices come from the site's actual monitor groups, not from the page of
 // incidents on screen: filtering is server-side, so deriving the options from the
@@ -80,8 +113,18 @@ const PROBE_KINDS = ['icmp', 'gateway', 'tcp', 'http', 'dns', 'nat', 'agent_conn
 // notifyState summarizes an incident's delivery records for the list: announced,
 // waiting out its delay, or recorded only. "Recorded only" is a legitimate state,
 // not a failure, so it reads as neutral rather than as a warning.
+//
+// Both counts already include the records of the storm that announced this fault
+// on its behalf (see deliveryForIncident server-side), so the state is derived
+// from what was actually SENT — never from storm membership alone. A storm can
+// form with no channels configured, with every channel opted out of merging, or
+// while its summary is still waiting out the delay; in all three cases nobody
+// has been told yet, and saying otherwise would be a lie about the one thing
+// this column exists to answer.
 function notifyState(i: Incident): { key: string; tone: string } {
-  if (i.notified_count > 0) return { key: 'incidents.notifySent', tone: 'ok' }
+  if (i.notified_count > 0) {
+    return { key: i.storm_id ? 'incidents.notifyInStorm' : 'incidents.notifySent', tone: 'ok' }
+  }
   if (i.pending_notify_count > 0) return { key: 'incidents.notifyPending', tone: 'neutral' }
   return { key: 'incidents.notifyRecordedOnly', tone: 'neutral' }
 }
@@ -114,6 +157,7 @@ async function load() {
     incidents.value = res.items
     total.value = res.total
     summary.value = res.summary
+    storms.value = res.storms
     const tp = Math.max(1, Math.ceil(total.value / pageSize.value))
     if (page.value > tp) {
       page.value = tp
@@ -155,6 +199,10 @@ onMounted(async () => {
   // Deep link from a notification or the tray: ?incident=<id> auto-opens it.
   const deep = route.query.incident
   if (typeof deep === 'string' && deep) selected.value = deep
+  // ?storm=<id> comes from a storm summary notification and lands on exactly the
+  // faults that notification summarized.
+  const deepStorm = route.query.storm
+  if (typeof deepStorm === 'string' && deepStorm) stormId.value = deepStorm
   // The filter list is a convenience, not a prerequisite: if it cannot be read
   // the page still works, falling back to the groups visible on the page.
   api
@@ -203,21 +251,59 @@ onBeforeUnmount(() => {
       </div>
     </section>
 
+    <!-- Storm banner: when many faults break out at once under one Agent, the
+         page must read as ONE event with N parts, not as N unrelated rows. -->
+    <section v-if="storms.length" class="storms">
+      <button
+        v-for="s in storms"
+        :key="s.id"
+        type="button"
+        class="storm-card"
+        :class="{ active: stormId === s.id }"
+        :aria-pressed="stormId === s.id"
+        @click="showStorm(s.id)"
+      >
+        <div class="storm-head">
+          <span class="badge" :class="severityTone(s.severity)">{{ sevLabel(s.severity) }}</span>
+          <span class="storm-title">
+            {{ t('incidents.storm.title', { layer: layerLabel(s.suspected_layer) }) }}
+          </span>
+        </div>
+        <p class="storm-sub">
+          {{ t('incidents.storm.sub', { faults: s.fault_count, groups: s.group_count, agent: s.agent_name }) }}
+        </p>
+        <p class="storm-meta hint">
+          <span>{{ t('incidents.storm.open', { n: s.open_fault_count }) }}</span>
+          <span>{{ since(s.opened_at, s.resolved_at) }}</span>
+          <span v-if="s.notified_count > 0">{{ t('incidents.storm.notified') }}</span>
+          <span v-else-if="s.pending_notify_count > 0">{{ t('incidents.notifyPending') }}</span>
+          <span v-else>{{ t('incidents.notifyRecordedOnly') }}</span>
+        </p>
+        <span class="storm-cta">
+          {{ stormId === s.id ? t('incidents.storm.showAll') : t('incidents.storm.showMembers') }}
+        </span>
+      </button>
+    </section>
+
     <section class="panel">
       <div class="tabs" role="tablist">
+        <!-- Picking a tab means "browse by state", which is the opposite of the
+             storm narrowing (that spans both states), so it clears it — leaving a
+             tab looking selected while a storm filter overrode it would be a lie
+             about what the table below is showing. -->
         <button
           class="tab"
           role="tab"
-          :class="{ active: tab === 'open' }"
-          :aria-selected="tab === 'open'"
-          @click="tab = 'open'"
+          :class="{ active: tab === 'open' && !stormId }"
+          :aria-selected="tab === 'open' && !stormId"
+          @click="tab = 'open'; stormId = ''"
         >{{ t('incidents.tabCurrent') }}</button>
         <button
           class="tab"
           role="tab"
-          :class="{ active: tab === 'resolved' }"
-          :aria-selected="tab === 'resolved'"
-          @click="tab = 'resolved'"
+          :class="{ active: tab === 'resolved' && !stormId }"
+          :aria-selected="tab === 'resolved' && !stormId"
+          @click="tab = 'resolved'; stormId = ''"
         >{{ t('incidents.tabHistory') }}</button>
         <span class="count">{{ total }}</span>
       </div>
@@ -251,6 +337,15 @@ onBeforeUnmount(() => {
           <span class="hint">{{ t('incidents.filterSearch') }}</span>
           <input v-model="search" type="search" :placeholder="t('incidents.searchPlaceholder')" />
         </label>
+        <!-- The storm narrowing has no select of its own (it is set from the
+             banner or a notification deep link), so it needs a visible, clearable
+             chip — otherwise a filtered-looking table has no explanation. -->
+        <button v-if="stormId" type="button" class="filter-chip" @click="stormId = ''">
+          {{ activeStorm
+            ? t('incidents.storm.chip', { agent: activeStorm.agent_name })
+            : t('incidents.storm.chipUnknown') }}
+          <span aria-hidden="true">×</span>
+        </button>
       </div>
 
       <div class="table-wrap">
@@ -288,6 +383,12 @@ onBeforeUnmount(() => {
             >
               <td>
                 <span class="title">{{ i.title || i.summary || '—' }}</span>
+                <span
+                  v-if="i.storm_id"
+                  class="badge tiny"
+                  :class="{ neutral: true }"
+                  :title="t('incidents.storm.badgeHint')"
+                >{{ t('incidents.storm.badge') }}</span>
                 <span
                   v-if="i.state === 'resolved' && i.resolve_reason && i.resolve_reason !== 'recovered'"
                   class="badge warn tiny"
@@ -374,6 +475,77 @@ onBeforeUnmount(() => {
   font-size: 12px;
   color: var(--text-dim);
 }
+/* ---------- storm banner ---------- */
+.storms {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+.storm-card {
+  flex: 1 1 320px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 14px 16px;
+  text-align: left;
+  border: 1px solid var(--danger);
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--danger) 8%, var(--surface));
+  color: var(--text);
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s;
+}
+.storm-card:hover,
+.storm-card.active {
+  background: color-mix(in srgb, var(--danger) 14%, var(--surface));
+}
+.storm-card:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
+.storm-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.storm-title {
+  font-size: 15px;
+  font-weight: 700;
+}
+.storm-sub {
+  margin: 0;
+  font-size: 13px;
+}
+.storm-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin: 0;
+  font-size: 12px;
+}
+.storm-cta {
+  align-self: flex-start;
+  font-size: 11px;
+  font-weight: 650;
+  color: var(--primary);
+}
+.filter-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-pill);
+  background: var(--primary-soft);
+  color: var(--text);
+  font-size: 12px;
+  cursor: pointer;
+}
+.filter-chip:hover {
+  border-color: var(--primary);
+}
+
 .tabs {
   display: flex;
   align-items: center;
