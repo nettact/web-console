@@ -255,6 +255,11 @@ export interface Issue {
   ref_id: string
   monitor_name: string
   reason: string
+  // The agent's specific cause behind `reason` (proxy_missing, literal_denied,
+  // method_requires_extended…). Absent for a server-evaluated host monitor. It exists
+  // because the coarse status alone can mislead: an egress-proxy problem reports as
+  // `unsupported`, which otherwise reads as "your platform cannot do this".
+  detail_reason?: string
   missing_permissions: string[]
   matched_selector: string
   policy_hash: string
@@ -515,6 +520,69 @@ export interface ProbeTarget {
   target: string
   params?: ProbeParams
   enabled: boolean
+  // Pins this monitor's egress to a site proxy (Proxy.id). Empty/absent = direct.
+  // It is a MATERIAL field: changing it changes what the agent does on the wire.
+  proxy_id?: string
+}
+
+// Proxy types. socks5/http are relays (CONNECT); wireguard is a userspace tunnel
+// the agent dials from inside, which is why it is the only type that can carry
+// ICMP and UDP probes. Mirrors protocol/config/proxy.go.
+export type ProxyType = 'socks5' | 'http' | 'wireguard'
+// Where the target hostname is resolved. 'local' (default) resolves on the agent so
+// its target-access policy still vets the concrete address; 'remote' hands the name
+// to the proxy (needed for split-horizon DNS, but the agent can then only vet the
+// name).
+export type ProxyDNSMode = 'local' | 'remote'
+
+// An egress proxy a monitoring target can be pinned to.
+//
+// Credential fields (password, wg_private_key, wg_preshared_key) are WRITE-ONLY:
+// reads return REDACTED_SECRET when one is set, and sending that value back means
+// "keep what is stored". Sending an empty string clears it.
+export interface Proxy {
+  id: string
+  site_id: string
+  name: string
+  type: ProxyType
+  enabled: boolean
+
+  // socks5 / http
+  host?: string
+  port?: number
+  username?: string
+  password?: string
+  dns_mode?: ProxyDNSMode
+  connect_timeout_ms?: number
+
+  // wireguard
+  wg_private_key?: string
+  wg_peer_public_key?: string
+  wg_preshared_key?: string
+  wg_endpoint?: string
+  wg_allowed_ips?: string
+  wg_local_addrs?: string
+  wg_dns?: string
+  wg_mtu?: number
+  wg_keepalive_seconds?: number
+
+  // Number of monitors pinned to this proxy (read-only). A referenced proxy cannot
+  // be deleted.
+  used_by: number
+}
+
+// REDACTED_SECRET is what the API returns in place of a stored credential, and what
+// a write may send back to mean "unchanged". It must match api.redactedSecret in
+// server-core/api/proxies.go.
+export const REDACTED_SECRET = '••••••'
+
+export type ProxyInput = Omit<Proxy, 'id' | 'site_id' | 'used_by'>
+
+// The 409 body returned when deleting a proxy that monitors still reference.
+export interface ProxyInUseError {
+  error: string
+  monitors: string[]
+  used_by: number
 }
 // First-run onboarding progress, stored server-side so the wizard is
 // interruptible and re-enterable across reloads/devices. status/step carry the
@@ -1398,6 +1466,15 @@ export const api = {
   updateMonitorGroup: (id: string, body: MonitorGroupInput) =>
     req<unknown>('PUT', `/api/v1/monitor-groups/${encodeURIComponent(id)}`, body),
   deleteMonitorGroup: (id: string) => req<unknown>('DELETE', `/api/v1/monitor-groups/${encodeURIComponent(id)}`),
+  // Egress proxies a monitor can be pinned to. Credentials are write-only: reads
+  // return REDACTED_SECRET, and sending it back means "keep the stored value".
+  // Deleting a proxy that monitors still reference is refused with 409.
+  proxies: (siteID: string) => req<Proxy[]>('GET', `/api/v1/sites/${encodeURIComponent(siteID)}/proxies`),
+  createProxy: (siteID: string, body: ProxyInput) =>
+    req<{ id: string }>('POST', `/api/v1/sites/${encodeURIComponent(siteID)}/proxies`, body),
+  updateProxy: (id: string, body: ProxyInput) =>
+    req<unknown>('PUT', `/api/v1/proxies/${encodeURIComponent(id)}`, body),
+  deleteProxy: (id: string) => req<unknown>('DELETE', `/api/v1/proxies/${encodeURIComponent(id)}`),
   // Notification policies: whether/when/where a recorded fault is announced. The
   // site default is created on first read and cannot be deleted.
   notificationPolicies: (siteID: string) =>

@@ -101,6 +101,8 @@ describe('group-centric target-status page', () => {
     expect(wrapper.text()).toContain('Empty Group')
     // 24h availability is a server ratio rendered as a percentage, never re-derived.
     expect(wrapper.get('.availability-cell').text()).toBe('92%')
+    expect(wrapper.get('.availability-fact').text()).toContain(i18n.global.t('targetStatus.availability24h'))
+    expect(wrapper.get('.availability-fact').text()).toContain('92%')
     expect(router.currentRoute.value.query).toEqual({ target: 'target-1', agent: 'agent-1' })
     expect(wrapper.findAll('.group-head[role="button"]')[0].attributes('aria-expanded')).toBe('true')
     const targetSummary = wrapper.get('.target-summary[role="button"]')

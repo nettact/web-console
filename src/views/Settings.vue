@@ -263,6 +263,22 @@ const AGENT_DISPLAY_BOUNDS: [number, number] = [30, 3600]
 const agentDisplaySaved = ref(false)
 const agentDisplayError = ref('')
 
+// LAN device retention. Discovery only ever adds devices (an Agent never reports
+// a departure), so age is the only thing that removes them. `randomDays` is a
+// narrowing override for randomized MACs, not an independent window: the two
+// zeros mean different things (see the locale help text), which is what keeps a
+// throwaway address from outliving a real one.
+const deviceRetention = reactive({
+  days: 7, // device_retention_days
+  randomDays: 1, // device_random_mac_retention_days
+})
+const DEVICE_RETENTION_BOUNDS: Record<string, [number, number]> = {
+  days: [0, 365],
+  randomDays: [0, 365],
+}
+const deviceRetentionSaved = ref(false)
+const deviceRetentionError = ref('')
+
 function settingInt(s: Record<string, string>, k: string, def: number): number {
   const v = parseInt(s[k] ?? '', 10)
   return Number.isFinite(v) ? v : def
@@ -273,6 +289,11 @@ function populateAgentSettings(s: Record<string, string>) {
   connectivity.graceS = settingInt(s, 'agent_connectivity_grace_seconds', 60)
   connectivity.recoverS = settingInt(s, 'agent_connectivity_recover_seconds', 30)
   agentDisplay.staleS = settingInt(s, 'agent_status_stale_seconds', 120)
+}
+
+function populateDeviceRetention(s: Record<string, string>) {
+  deviceRetention.days = settingInt(s, 'device_retention_days', 7)
+  deviceRetention.randomDays = settingInt(s, 'device_random_mac_retention_days', 1)
 }
 
 async function saveConnectivity() {
@@ -311,6 +332,37 @@ async function saveAgentDisplay() {
     setTimeout(() => (agentDisplaySaved.value = false), 2000)
   } catch (e) {
     agentDisplayError.value = String((e as Error).message || e)
+  }
+}
+
+async function saveDeviceRetention() {
+  deviceRetentionError.value = ''
+  const inRange = Object.entries(DEVICE_RETENTION_BOUNDS).every(([k, [min, max]]) => {
+    const v = (deviceRetention as unknown as Record<string, number>)[k]
+    return Number.isFinite(v) && v >= min && v <= max
+  })
+  if (!inRange) {
+    deviceRetentionError.value = t('settings.deviceRetention.rangeErr')
+    return
+  }
+  // The randomized-MAC window only ever NARROWS the master one. Each key passes its own
+  // bounds independently, so without this a 7-day master with a 30-day random window
+  // saved cleanly and left throwaway addresses outliving real devices — the opposite of
+  // what the setting is for. The server clamps it too; rejecting here means the user
+  // sees why instead of having their value silently altered.
+  if (deviceRetention.randomDays > 0 && deviceRetention.randomDays > deviceRetention.days) {
+    deviceRetentionError.value = t('settings.deviceRetention.randomNarrowErr')
+    return
+  }
+  try {
+    await api.updateSettings({
+      device_retention_days: String(deviceRetention.days),
+      device_random_mac_retention_days: String(deviceRetention.randomDays),
+    })
+    deviceRetentionSaved.value = true
+    setTimeout(() => (deviceRetentionSaved.value = false), 2000)
+  } catch (e) {
+    deviceRetentionError.value = String((e as Error).message || e)
   }
 }
 
@@ -487,6 +539,7 @@ async function load() {
     consoleUrl.value = settings['console_base_url'] || window.location.origin
     populateDiag(settings)
     populateAgentSettings(settings)
+    populateDeviceRetention(settings)
     populateListen()
   } catch (e) {
     error.value = String((e as Error).message || e)
@@ -1040,6 +1093,36 @@ onMounted(() => {
       <p class="hint storage-note" v-if="stats">
         {{ t('settings.storageNote') }}
       </p>
+
+      <section class="panel">
+        <div class="panel-head"><h3>{{ t('settings.deviceRetention.title') }}</h3></div>
+        <div class="panel-body">
+          <p class="hint">{{ t('settings.deviceRetention.hint') }}</p>
+          <div class="knob-grid">
+            <label class="knob">
+              <span class="knob-label">{{ t('settings.deviceRetention.days') }}</span>
+              <span class="knob-input">
+                <input type="number" v-model.number="deviceRetention.days" min="0" max="365" step="1" />
+                <span class="unit">{{ t('settings.unit.days') }}</span>
+              </span>
+              <span class="knob-help hint">{{ t('settings.deviceRetention.daysHelp') }}</span>
+            </label>
+            <label class="knob">
+              <span class="knob-label">{{ t('settings.deviceRetention.randomDays') }}</span>
+              <span class="knob-input">
+                <input type="number" v-model.number="deviceRetention.randomDays" min="0" max="365" step="1" />
+                <span class="unit">{{ t('settings.unit.days') }}</span>
+              </span>
+              <span class="knob-help hint">{{ t('settings.deviceRetention.randomDaysHelp') }}</span>
+            </label>
+          </div>
+          <div class="row field-row">
+            <button class="btn btn-primary" @click="saveDeviceRetention">{{ t('common.save') }}</button>
+            <span v-if="deviceRetentionSaved" class="hint saved">✓ {{ t('common.saved') }}</span>
+          </div>
+          <p v-if="deviceRetentionError" class="err inline">{{ deviceRetentionError }}</p>
+        </div>
+      </section>
 
       <DataCleanup />
     </div>

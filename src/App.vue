@@ -76,6 +76,7 @@ const nav = [
   { to: '/processes', label: 'nav.processes' },
   { to: '/agents', label: 'nav.agents' },
   { to: '/monitoring', label: 'nav.monitoring' },
+  { to: '/proxies', label: 'nav.proxies' },
   { to: '/settings', label: 'nav.settings' },
 ]
 
@@ -166,6 +167,15 @@ async function dismissBanner(): Promise<void> {
               <rect x="3" y="4" width="18" height="7" rx="2" />
               <rect x="3" y="13" width="18" height="7" rx="2" />
               <path d="M7 7.5h.01M7 16.5h.01" />
+            </svg>
+            <!-- 代理：出站流量经中转节点绕行 -->
+            <svg v-else-if="n.to === '/proxies'" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+              stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="4" cy="12" r="2" />
+              <circle cx="12" cy="5" r="2" />
+              <circle cx="20" cy="12" r="2" />
+              <path d="M5.6 10.6 10.5 6.2M13.5 6.2l4.9 4.4" />
+              <path d="M6 13.5c3 3.5 9 3.5 12 0" stroke-dasharray="2 2.5" />
             </svg>
             <!-- 设置 -->
             <svg v-else viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"

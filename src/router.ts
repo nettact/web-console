@@ -11,6 +11,8 @@ import HostMetrics from './views/HostMetrics.vue'
 import Monitoring from './views/Monitoring.vue'
 import MonitorForm from './views/MonitorForm.vue'
 import MonitorGroupForm from './views/MonitorGroupForm.vue'
+import Proxies from './views/Proxies.vue'
+import ProxyForm from './views/ProxyForm.vue'
 import Incidents from './views/Incidents.vue'
 import Agents from './views/Agents.vue'
 import AgentDetail from './views/AgentDetail.vue'
@@ -32,6 +34,10 @@ const router = createRouter({
     { path: '/monitoring/new', component: MonitorForm },
     { path: '/monitoring/new-host', component: MonitorForm },
     { path: '/monitoring/:id/edit', component: MonitorForm },
+    // Egress proxies: site-scoped, reusable outbound paths a monitor can be pinned to.
+    { path: '/proxies', component: Proxies },
+    { path: '/proxies/new', component: ProxyForm },
+    { path: '/proxies/:id/edit', component: ProxyForm },
     { path: '/incidents', component: Incidents },
     { path: '/agents', component: Agents },
     { path: '/agents/:id', component: AgentDetail },

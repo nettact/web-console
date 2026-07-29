@@ -12,7 +12,7 @@ const state = vi.hoisted(() => ({
   push: vi.fn(),
 }))
 const apiMock = vi.hoisted(() => ({
-  listTargets: vi.fn(), monitorGroups: vi.fn(), setTargets: vi.fn(), channels: vi.fn(),
+  listTargets: vi.fn(), monitorGroups: vi.fn(), setTargets: vi.fn(), channels: vi.fn(), proxies: vi.fn(),
   detectionSettings: vi.fn(), updateDetectionSettings: vi.fn(),
 }))
 
@@ -30,6 +30,7 @@ async function render(targets: ProbeTarget[] = []) {
   }])
   apiMock.setTargets.mockResolvedValue({ ok: true, warnings: [] })
   apiMock.channels.mockResolvedValue([])
+  apiMock.proxies.mockResolvedValue([])
   const i18n = createI18n({ legacy: false, locale: 'en', messages: { en } })
   const page = mount(MonitorForm, {
     global: { plugins: [i18n], stubs: { RouterLink: true } },

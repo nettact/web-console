@@ -42,7 +42,12 @@ export function issueLink(iss: Issue): RouteLocationRaw {
 export function issueReasonText(iss: Issue): string {
   const t = i18n.global.t
   const te = i18n.global.te
-  const key = `issues.reason.${iss.reason}`
+  // Prefer the agent's DETAILED cause when we have a label for it: the coarse status
+  // can actively mislead. A disabled egress proxy arrives as `unsupported`, which in
+  // this product means "your agent or platform cannot do this" — while the fix is to
+  // re-enable the proxy. Falling back to the status keeps every existing reason working.
+  const detailKey = iss.detail_reason ? `issues.reason.${iss.detail_reason}` : ''
+  const key = detailKey && te(detailKey) ? detailKey : `issues.reason.${iss.reason}`
   const base = te(key) ? t(key) : iss.reason
   if (iss.missing_permissions.length) {
     return t('issues.missingSuffix', { base, perms: iss.missing_permissions.length })

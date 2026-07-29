@@ -10,11 +10,18 @@ import {
   type MonitorGroup,
   type ProbeParams,
   type ProbeTarget,
+  type Proxy,
   type SaveWarning,
 } from '../api'
 import ComboInput from '../components/ComboInput.vue'
 import { pushToast } from '../toasts'
 import { LEADING_SCHEME, paramsRangeError, retargetForKind, targetError } from '../lib/targetValidation'
+import {
+  anyProxyCapable,
+  proxyDisabledWarning,
+  proxyUnusableReason,
+  usableProxies,
+} from '../lib/proxyCapability'
 
 const { t: tr } = useI18n()
 const route = useRoute()
@@ -83,8 +90,30 @@ const hasChannels = ref(true)
 const loaded = ref(false)
 
 function blank(): ProbeTarget {
-  return { group_id: '', kind: 'icmp', name: '', target: '', params: {}, enabled: true }
+  return { group_id: '', kind: 'icmp', name: '', target: '', params: {}, enabled: true, proxy_id: '' }
 }
+
+// ---- egress proxy ----
+// A monitor may be pinned to one site proxy. The picker only appears for kinds a
+// proxy can actually carry, and only offers proxies whose transport can carry THIS
+// kind (protocol/config/proxy.go's capability matrix, mirrored in
+// lib/proxyCapability.ts) — offering an option the server rejects and the agent
+// refuses to run would be worse than not offering it.
+const proxies = ref<Proxy[]>([])
+// The panel also stays visible whenever a pin EXISTS, even if the current kind/params
+// can no longer use one. Otherwise clearing a DNS monitor's resolver server hid the
+// only control that could unpin it while the save stayed blocked — a dead end the user
+// could escape only by restoring settings they were deliberately changing.
+const showProxy = computed(() => anyProxyCapable(form.kind, form.params) || !!form.proxy_id)
+const proxyOptions = computed(() => usableProxies(proxies.value, form.kind, form.params))
+const selectedProxy = computed(() => proxies.value.find((p) => p.id === form.proxy_id))
+// A selection can be invalidated by an edit elsewhere on this form (switching the
+// kind, changing the resolver protocol or NAT transport) or by the proxy being
+// disabled since. Say which, rather than letting the option quietly disappear.
+const proxyProblemKey = computed(() => proxyUnusableReason(selectedProxy.value, form.kind, form.params))
+// A disabled pin is a WARNING, not an error: the server accepts it and the agent fails
+// the monitor closed by design, so it must not block unrelated edits to the monitor.
+const proxyWarningKey = computed(() => proxyDisabledWarning(selectedProxy.value))
 
 // Every <select> needs its bound param to hold a real option value: an undefined
 // binding matches no <option>, so the browser renders a blank row instead of the
@@ -261,10 +290,11 @@ function placeholderFor(kind: string): string {
 async function loadAll() {
   let chans: Channel[] = []
   try {
-    ;[all.value, groups.value, chans] = await Promise.all([
+    ;[all.value, groups.value, chans, proxies.value] = await Promise.all([
       api.listTargets(SITE),
       api.monitorGroups(SITE),
       api.channels(),
+      api.proxies(SITE),
     ])
   } catch (e) {
     // Leave loaded=false so Save stays disabled — reconciling against an empty
@@ -363,6 +393,13 @@ async function save() {
     error.value = detErr
     return
   }
+  // An unhonorable proxy pin is rejected by the server (and would make the monitor
+  // un-runnable rather than direct), so it is caught here where the field that caused
+  // it is visible.
+  if (proxyProblemKey.value) {
+    error.value = tr(proxyProblemKey.value, { name: selectedProxy.value?.name ?? '' })
+    return
+  }
   busy.value = true
   saved.value = false
   error.value = ''
@@ -440,6 +477,11 @@ watch(
     // error names it.
     form.target = retargetForKind(form.target, prev, k)
     applyKindDefaults()
+    // A kind with no proxy support at all (gateway, host) cannot keep a pin: the
+    // server would reject the save, and the picker is no longer shown to clear it by
+    // hand. A pin that is merely now-incapable is LEFT in place so proxyProblemKey
+    // can explain it — silently dropping the user's choice is worse than naming it.
+    if (!showProxy.value) form.proxy_id = ''
   },
 )
 
@@ -623,6 +665,52 @@ onMounted(loadAll)
         </div>
       </section>
 
+      <!-- Egress proxy: shown only for kinds a proxy can carry. It sits with the
+           connection settings rather than after the detection panel, because it is
+           part of HOW the probe runs, not of how a fault is confirmed. The dropdown
+           offers only proxies whose transport can carry THIS kind; a pin the agent
+           cannot honor fails the monitor closed rather than dialing directly, which
+           is why an invalidated selection is explained, not silently dropped. -->
+      <section class="panel" v-if="showProxy">
+        <div class="panel-head"><h3>{{ tr('mform.secProxy') }}</h3></div>
+        <p class="hint panel-hint">{{ tr('mform.proxyHint') }}</p>
+        <div class="panel-body">
+          <label class="field group-field">
+            <span>{{ tr('mform.proxy') }}</span>
+            <select v-model="form.proxy_id">
+              <option value="">{{ tr('mform.proxyNone') }}</option>
+              <option v-for="p in proxyOptions" :key="p.id" :value="p.id">
+                {{ p.name }} · {{ tr(`proxies.type_${p.type}`) }}
+              </option>
+              <!-- Keep an invalidated selection visible so the inline explanation below
+                   has something to point at; saving it is blocked. -->
+              <option
+                v-if="selectedProxy && !proxyOptions.some((p) => p.id === selectedProxy!.id)"
+                :value="selectedProxy.id"
+              >
+                {{ selectedProxy.name }} · {{ tr(`proxies.type_${selectedProxy.type}`) }}
+              </option>
+            </select>
+            <small v-if="proxyProblemKey" class="field-err">
+              {{ tr(proxyProblemKey, { name: selectedProxy?.name ?? '' }) }}
+            </small>
+            <small v-else-if="proxyWarningKey" class="field-warn">
+              {{ tr(proxyWarningKey, { name: selectedProxy?.name ?? '' }) }}
+            </small>
+          </label>
+          <p class="hint tiny" v-if="!proxyOptions.length && !selectedProxy">
+            {{ tr('mform.proxyNoneUsable') }}
+            <router-link to="/proxies/new">{{ tr('mform.proxyCreate') }}</router-link>
+          </p>
+          <p class="hint tiny" v-else>
+            {{ tr('mform.proxyManageHint') }}
+            <router-link to="/proxies">{{ tr('mform.proxyManage') }}</router-link>
+          </p>
+          <p class="hint tiny" v-if="form.proxy_id && !proxyProblemKey">{{ tr('mform.proxyFailClosed') }}</p>
+        </div>
+      </section>
+
+
       <!-- Detection sensitivity is available for every supported
            probe type. Fault recording itself is not configurable: only the
            confirmation and recovery thresholds can be tuned. -->
@@ -730,6 +818,13 @@ onMounted(loadAll)
 .field-err {
   margin-top: 4px;
   color: var(--danger, #f87171);
+  font-size: 11.5px;
+}
+/* A warning the save does not block — visually distinct from .field-err so a
+   disabled-but-valid proxy pin does not read as an error. */
+.field-warn {
+  margin-top: 4px;
+  color: var(--warning, #fbbf24);
   font-size: 11.5px;
 }
 .save-warn h4 {

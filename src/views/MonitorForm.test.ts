@@ -12,7 +12,7 @@ const state = vi.hoisted(() => ({
   push: vi.fn(),
 }))
 const apiMock = vi.hoisted(() => ({
-  listTargets: vi.fn(), monitorGroups: vi.fn(), setTargets: vi.fn(), channels: vi.fn(),
+  listTargets: vi.fn(), monitorGroups: vi.fn(), setTargets: vi.fn(), channels: vi.fn(), proxies: vi.fn(),
   detectionSettings: vi.fn(), updateDetectionSettings: vi.fn(),
   notificationPolicies: vi.fn(), createNotificationPolicy: vi.fn(),
   updateNotificationPolicy: vi.fn(), deleteNotificationPolicy: vi.fn(),
@@ -35,6 +35,7 @@ async function render(targets: ProbeTarget[] = [], det = detection()) {
     merge_enabled: true, all_agents: true, agent_group_ids: [],
   }])
   apiMock.channels.mockResolvedValue([])
+  apiMock.proxies.mockResolvedValue([])
   apiMock.detectionSettings.mockResolvedValue(det)
   apiMock.updateDetectionSettings.mockImplementation((_id: string, body: Record<string, unknown>) =>
     Promise.resolve({ ...detection(), ...body }),

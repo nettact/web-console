@@ -46,6 +46,9 @@ export function useMetricMeta() {
     41: 'dnsNxdomain', 42: 'dnsServfail', 43: 'dnsNoRecord',
     51: 'tlsExpired', 52: 'tlsUntrusted', 53: 'tlsHostname',
     71: 'httpStatus', 72: 'httpKeyword',
+    // The 8x family failed on the EGRESS PATH, never at the target. Rendering these
+    // as generic failures would erase the one distinction the proxy feature adds.
+    81: 'proxyConnect', 82: 'proxyAuth', 83: 'proxyDns', 84: 'proxyRefused', 85: 'proxyConfig',
   }
   const probeReasonLabel = (code: number) => t(`metrics.probeReason.${PROBE_REASON_KEY[Math.round(code)] ?? 'other'}`)
   const probeReasonInfo = () => t('metrics.probeReason.info')

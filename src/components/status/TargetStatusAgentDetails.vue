@@ -3,8 +3,7 @@ import { ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import type { TargetAgentStatusRow, TargetStatusRow } from '../../api'
-import { useMetricMeta } from '../../composables/useMetricMeta'
-import { fmtNum } from '../../lib/metricMeta'
+import { formatAvailability } from '../../lib/targetStatus'
 import { toDateLocale } from '../../i18n'
 import { notifications } from '../../notifications'
 import { serverInfo, ensureServerInfo } from '../../serverInfo'
@@ -20,7 +19,6 @@ const props = defineProps<{
 
 const router = useRouter()
 const { t, te, locale } = useI18n()
-const { unitLabel } = useMetricMeta()
 
 // Remediation dialog for a clicked missing permission. A missing permission on a
 // target×agent pair is permission_blocked (not granted) unless the pair's whole
@@ -68,14 +66,12 @@ function fmtTime(value?: string): string {
   return new Date(value).toLocaleString(toDateLocale(locale.value), { hour12: false })
 }
 
-function lastValueLabel(agent: TargetAgentStatusRow): string {
-  if (agent.last_value == null || !agent.last_metric_kind) return t('targetStatus.noLatestValue')
-  const unit = agent.last_unit ? unitLabel(agent.last_unit) : ''
-  return `${fmtNum(agent.last_value)}${unit ? ` ${unit}` : ''}`
-}
-
 function reasonLabel(agent: TargetAgentStatusRow): string {
   return t(`targetStatus.reason.${agent.reason_code}`)
+}
+
+function availabilityLabel(agent: TargetAgentStatusRow): string {
+  return formatAvailability(agent.availability_24h) ?? t('targetStatus.availabilityUnknown')
 }
 
 // Native tooltip for the stale probe badge: explains the per-agent freshness
@@ -158,20 +154,15 @@ function openHistory(agentID: string): void {
           <span>{{ t('targetStatus.statusLabel') }}</span>
           <strong>{{ reasonLabel(agent) }}</strong>
         </div>
-        <div class="fact-card">
-          <span>{{ t('targetStatus.lastValue') }}</span>
-          <strong>{{ lastValueLabel(agent) }}</strong>
-          <small>{{ t('targetStatus.observedAt', { time: fmtTime(agent.last_observed_at) }) }}</small>
+        <div class="fact-card availability-fact">
+          <span>{{ t('targetStatus.availability24h') }}</span>
+          <strong>{{ availabilityLabel(agent) }}</strong>
+          <small>{{ t('targetStatus.availabilityHint') }}</small>
         </div>
         <div class="fact-card">
           <span>{{ t('targetStatus.executionContext') }}</span>
           <strong>{{ executionContextLabel(agent) }}</strong>
           <small v-if="agent.pending_since">{{ t('targetStatus.pendingSince', { time: fmtTime(agent.pending_since) }) }}</small>
-        </div>
-        <div v-if="agent.stale_after_seconds != null" class="fact-card">
-          <span>{{ t('targetStatus.staleWindow') }}</span>
-          <strong>{{ t('targetStatus.staleSeconds', { n: agent.stale_after_seconds }) }}</strong>
-          <small>{{ t('targetStatus.staleAfter', { n: agent.stale_after_seconds }) }}</small>
         </div>
       </div>
 

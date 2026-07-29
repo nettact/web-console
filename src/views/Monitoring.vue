@@ -7,18 +7,15 @@ import {
   type MonitorGroup,
   type ProbeTarget,
   type TargetStatusRow,
-  type TargetAgentStatusRow,
 } from '../api'
 import MonitorStateBadge from '../components/status/MonitorStateBadge.vue'
 import ConfirmDialog from '../components/ConfirmDialog.vue'
 import { targetStatus, targetIndex } from '../targetStatus'
-import { useMetricMeta } from '../composables/useMetricMeta'
 import { typeLabel, targetLabel } from '../lib/targetLabels'
-import { fmtNum } from '../lib/metricMeta'
+import { formatAvailability } from '../lib/targetStatus'
 import { toDateLocale } from '../i18n'
 
 const { t: tr, locale } = useI18n()
-const { unitLabel } = useMetricMeta()
 
 const SITE = 'site_default'
 const groups = ref<MonitorGroup[]>([])
@@ -74,13 +71,9 @@ function mergeLabel(g: MonitorGroup): string {
 const fmtTime = (s: string | null | undefined) =>
   s ? new Date(s).toLocaleString(toDateLocale(locale.value), { hour12: false }) : '—'
 
-// The latest sample's display text is derived on the client from the stable
-// machine values (value + unit) — the server never sends display text.
-function lastValueLabel(a: TargetAgentStatusRow): string {
-  if (a.last_value == null || !a.last_metric_kind) return '—'
-  const unit = a.last_unit ? unitLabel(a.last_unit) : ''
-  return `${fmtNum(a.last_value)}${unit ? ' ' + unit : ''}`
-}
+const agentAvailabilityLabel = (value?: number) =>
+  formatAvailability(value) ?? tr('targetStatus.availabilityUnknown')
+
 // Distinct current-generation incident deep links for an abnormal target.
 function incidentLinks(row: TargetStatusRow) {
   return row.incident_ids.map((id) => ({ id, to: { path: '/incidents', query: { incident: id } } }))
@@ -263,9 +256,8 @@ onMounted(load)
                       </div>
                       <div class="agent-facts">
                         <span class="fact-item">{{ tr('targetStatus.statusLabel') }}: {{ tr('targetStatus.reason.' + a.reason_code) }}</span>
-                        <span v-if="a.last_metric_kind" class="fact-item">
-                          {{ tr('targetStatus.lastValue') }}: {{ lastValueLabel(a) }}
-                          <template v-if="a.last_observed_at"> · {{ tr('targetStatus.observedAt', { time: fmtTime(a.last_observed_at) }) }}</template>
+                        <span class="fact-item">
+                          {{ tr('targetStatus.availability24h') }}: {{ agentAvailabilityLabel(a.availability_24h) }}
                         </span>
                         <span v-if="a.execution_state === 'pending' && a.pending_since" class="fact-item">
                           {{ tr('targetStatus.pendingSince', { time: fmtTime(a.pending_since) }) }}
