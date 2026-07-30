@@ -213,23 +213,13 @@ function step(index: number): string {
 </template>
 
 <style scoped>
+/* Hallmark · pre-emit critique: P5 H5 E4 S5 R5 V4
+ * component: operational path · design-system: design.md
+ */
 .path-card-body {
   position: relative;
-  isolation: isolate;
   padding: 22px;
   overflow: hidden;
-}
-.path-card-body::before {
-  position: absolute;
-  z-index: -1;
-  top: -110px;
-  right: -90px;
-  width: 340px;
-  height: 250px;
-  border-radius: 50%;
-  background: radial-gradient(circle, color-mix(in srgb, var(--primary) 10%, transparent), transparent 68%);
-  content: '';
-  pointer-events: none;
 }
 .path-card-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; }
 .path-card-title h3 { margin-top: 5px; font-size: 19px; letter-spacing: -.02em; }
@@ -240,12 +230,12 @@ function step(index: number): string {
   gap: 7px;
   min-height: 27px;
   padding: 0 10px;
-  color: var(--text-muted);
+  color: var(--color-muted);
   font-size: 10px;
   font-weight: 750;
   border: 1px solid currentColor;
   border-radius: 999px;
-  background: color-mix(in srgb, currentColor 7%, var(--surface-solid));
+  background: color-mix(in srgb, currentColor 7%, var(--color-paper-2));
 }
 .path-summary i, .path-node-meta em i {
   width: 6px;
@@ -255,22 +245,25 @@ function step(index: number): string {
   background: currentColor;
   box-shadow: 0 0 0 3px color-mix(in srgb, currentColor 13%, transparent);
 }
-.path-summary.tone-good { color: var(--success); }
-.path-summary.tone-warn { color: var(--warning); }
-.path-summary.tone-bad { color: var(--danger); }
-.path-summary.tone-muted { color: var(--text-dim); }
+.path-summary.tone-good { color: var(--color-success); }
+.path-summary.tone-warn { color: var(--color-warning); }
+.path-summary.tone-bad { color: var(--color-danger); }
+.path-summary.tone-muted { color: var(--color-ink-2); }
 .path-view-link {
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  color: var(--primary);
+  min-height: 44px;
+  color: var(--color-accent);
   font-size: 10px;
   font-weight: 700;
   text-decoration: none;
   white-space: nowrap;
 }
-.path-view-link svg { width: 14px; fill: none; stroke: currentColor; stroke-linecap: round; stroke-linejoin: round; stroke-width: 1.6; transition: transform .16s ease; }
-.path-view-link:hover svg { transform: translateX(2px); }
+.path-view-link svg { width: 14px; fill: none; stroke: currentColor; stroke-linecap: round; stroke-linejoin: round; stroke-width: 1.6; transition: transform var(--dur-micro) var(--ease-out); }
+.path-view-link:hover svg,
+.path-view-link:focus-visible svg { transform: translateX(2px); }
+.path-view-link:focus-visible { border-radius: var(--radius-xs); outline: 2px solid var(--color-focus); outline-offset: 3px; }
 .path-flow {
   display: grid;
   grid-template-columns:
@@ -285,25 +278,22 @@ function step(index: number): string {
   margin-top: 20px;
 }
 .path-node {
-  --node-color: var(--text-dim);
+  --node-color: var(--color-ink-2);
   min-width: 0;
   min-height: 104px;
   padding: 11px;
-  border: 1px solid color-mix(in srgb, var(--node-color) 22%, var(--border));
+  border: 1px solid color-mix(in srgb, var(--node-color) 22%, var(--color-rule));
   border-radius: 15px;
-  background:
-    linear-gradient(145deg, color-mix(in srgb, var(--node-color) 5%, var(--surface-solid)), var(--surface-solid) 58%),
-    var(--surface-solid);
-  box-shadow: 0 10px 24px -24px color-mix(in srgb, var(--node-color) 65%, transparent);
-  transition: border-color .16s ease, box-shadow .16s ease, transform .16s ease;
+  background: color-mix(in srgb, var(--node-color) 5%, var(--color-glass-subtle));
 }
-.path-node.tone-good { --node-color: var(--success); }
-.path-node.tone-warn { --node-color: var(--warning); }
-.path-node.tone-bad { --node-color: var(--danger); }
-.path-node.tone-muted { --node-color: var(--text-dim); }
+.path-node.tone-good { --node-color: var(--color-success); }
+.path-node.tone-warn { --node-color: var(--color-warning); }
+.path-node.tone-bad { --node-color: var(--color-danger); }
+.path-node.tone-muted { --node-color: var(--color-ink-2); }
 .path-node.root {
-  border-color: color-mix(in srgb, var(--node-color) 62%, var(--border));
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--node-color) 11%, transparent), 0 14px 30px -22px color-mix(in srgb, var(--node-color) 72%, transparent);
+  border-color: color-mix(in srgb, var(--node-color) 62%, var(--color-rule));
+  outline: 2px solid color-mix(in srgb, var(--node-color) 14%, transparent);
+  outline-offset: 2px;
   transform: translateY(-2px);
 }
 .path-node.affected { opacity: .65; filter: saturate(.72); }
@@ -327,13 +317,13 @@ function step(index: number): string {
   color: var(--node-color);
   border: 1px solid color-mix(in srgb, var(--node-color) 27%, transparent);
   border-radius: 11px;
-  background: color-mix(in srgb, var(--node-color) 10%, var(--surface-solid));
+  background: color-mix(in srgb, var(--node-color) 10%, var(--color-paper-2));
 }
 .path-icon svg { width: 21px; height: 21px; fill: none; stroke: currentColor; stroke-linecap: round; stroke-linejoin: round; stroke-width: 1.55; }
-.path-step { color: var(--text-dim); font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: 9px; font-weight: 700; letter-spacing: .1em; }
+.path-step { color: var(--color-ink-2); font-family: var(--font-outlier); font-size: 9px; font-weight: 700; letter-spacing: .1em; }
 .path-node-copy { display: grid; gap: 2px; min-width: 0; }
 .path-layer {
-  color: color-mix(in srgb, var(--node-color) 78%, var(--text-muted));
+  color: color-mix(in srgb, var(--node-color) 78%, var(--color-muted));
   font-size: 8px;
   font-weight: 800;
   letter-spacing: .08em;
@@ -344,7 +334,7 @@ function step(index: number): string {
 .path-node-copy small {
   min-width: 0;
   overflow: hidden;
-  color: var(--text-muted);
+  color: var(--color-muted);
   font-size: 9px;
   line-height: 1.35;
   text-overflow: ellipsis;
@@ -374,29 +364,29 @@ function step(index: number): string {
   align-items: center;
   min-width: 0;
   padding-top: 7px;
-  border-top: 1px solid color-mix(in srgb, var(--node-color) 13%, var(--border));
+  border-top: 1px solid color-mix(in srgb, var(--node-color) 13%, var(--color-rule));
 }
 .path-node-fact small {
   width: 100%;
   min-width: 0;
   overflow: hidden;
-  color: var(--text-muted);
+  color: var(--color-muted);
   font-size: 8px;
   line-height: 1.25;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 .path-node-fact.is-fault small { color: var(--node-color); font-weight: 750; }
-.path-node-fact.is-target:not(.is-fault) small { color: var(--text); }
+.path-node-fact.is-target:not(.is-fault) small { color: var(--color-ink); }
 .path-connector {
-  --connector-color: var(--success);
+  --connector-color: var(--color-success);
   position: relative;
   display: flex;
   align-items: center;
   min-width: 0;
   color: var(--connector-color);
 }
-.path-connector i { width: 100%; height: 1px; background: color-mix(in srgb, currentColor 45%, var(--border)); }
+.path-connector i { width: 100%; height: 1px; background: color-mix(in srgb, currentColor 45%, var(--color-rule)); }
 .path-connector b {
   position: absolute;
   right: 3px;
@@ -406,24 +396,24 @@ function step(index: number): string {
   border-right: 1.5px solid currentColor;
   transform: rotate(45deg);
 }
-.path-connector.broken { --connector-color: var(--danger); }
+.path-connector.broken { --connector-color: var(--color-danger); }
 .path-connector.broken i { height: 2px; background: repeating-linear-gradient(90deg, currentColor 0 5px, transparent 5px 9px); }
-.path-connector.affected { --connector-color: var(--text-dim); }
+.path-connector.affected { --connector-color: var(--color-ink-2); }
 .path-diagnosis {
-  --diagnosis-color: var(--success);
+  --diagnosis-color: var(--color-success);
   display: flex;
   align-items: center;
   gap: 11px;
   margin-top: 14px;
   padding: 11px 13px;
   color: var(--diagnosis-color);
-  border: 1px solid color-mix(in srgb, var(--diagnosis-color) 28%, var(--border));
+  border: 1px solid color-mix(in srgb, var(--diagnosis-color) 28%, var(--color-rule));
   border-radius: 12px;
-  background: linear-gradient(90deg, color-mix(in srgb, var(--diagnosis-color) 9%, var(--surface-solid)), color-mix(in srgb, var(--diagnosis-color) 2%, var(--surface-solid)));
+  background: color-mix(in srgb, var(--diagnosis-color) 7%, var(--color-glass-subtle));
 }
-.path-diagnosis.tone-warn { --diagnosis-color: var(--warning); }
-.path-diagnosis.tone-bad { --diagnosis-color: var(--danger); }
-.path-diagnosis.tone-muted { --diagnosis-color: var(--text-dim); }
+.path-diagnosis.tone-warn { --diagnosis-color: var(--color-warning); }
+.path-diagnosis.tone-bad { --diagnosis-color: var(--color-danger); }
+.path-diagnosis.tone-muted { --diagnosis-color: var(--color-ink-2); }
 .path-diagnosis-icon {
   display: grid;
   width: 29px;
@@ -436,16 +426,16 @@ function step(index: number): string {
 .path-diagnosis-icon svg { width: 18px; fill: none; stroke: currentColor; stroke-linecap: round; stroke-linejoin: round; stroke-width: 1.6; }
 .path-diagnosis > div { display: grid; flex: 1; gap: 2px; min-width: 0; }
 .path-diagnosis strong { font-size: 10px; }
-.path-diagnosis p { margin: 0; color: var(--text-muted); font-size: 10px; line-height: 1.4; }
+.path-diagnosis p { margin: 0; color: var(--color-muted); font-size: 10px; line-height: 1.4; }
 .path-diagnosis-target {
   display: grid;
   min-width: 150px;
   max-width: 280px;
   padding: 7px 10px;
   color: var(--diagnosis-color);
-  border: 1px solid color-mix(in srgb, var(--diagnosis-color) 23%, var(--border));
+  border: 1px solid color-mix(in srgb, var(--diagnosis-color) 23%, var(--color-rule));
   border-radius: 9px;
-  background: color-mix(in srgb, var(--diagnosis-color) 6%, var(--surface-solid));
+  background: color-mix(in srgb, var(--diagnosis-color) 6%, var(--color-paper-2));
 }
 .path-diagnosis-target small { color: currentColor; font-size: 7px; font-weight: 800; letter-spacing: .08em; }
 .path-diagnosis-target strong, .path-diagnosis-target em {
@@ -455,7 +445,7 @@ function step(index: number): string {
   white-space: nowrap;
 }
 .path-diagnosis-target strong { margin-top: 2px; font-size: 10px; }
-.path-diagnosis-target em { color: var(--text-muted); font-size: 8px; font-style: normal; }
+.path-diagnosis-target em { color: var(--color-muted); font-size: 8px; font-style: normal; }
 @media (max-width: 1500px) {
   .path-node { min-height: 122px; }
   .path-node-main {
@@ -476,7 +466,7 @@ function step(index: number): string {
     align-items: center;
     justify-content: space-between;
     padding-top: 6px;
-    border-top: 1px solid color-mix(in srgb, var(--node-color) 13%, var(--border));
+    border-top: 1px solid color-mix(in srgb, var(--node-color) 13%, var(--color-rule));
   }
   .path-node-meta em { align-self: auto; }
   .path-node-fact {
@@ -496,7 +486,7 @@ function step(index: number): string {
   .path-flow { grid-template-columns: 1fr; overflow: visible; padding-bottom: 0; }
   .path-node { width: auto; min-height: 122px; }
   .path-connector { width: 100%; height: 22px; justify-content: flex-start; padding-left: 31px; }
-  .path-connector i { width: 1px; height: 100%; background: color-mix(in srgb, currentColor 45%, var(--border)); }
+  .path-connector i { width: 1px; height: 100%; background: color-mix(in srgb, currentColor 45%, var(--color-rule)); }
   .path-connector b { right: auto; bottom: 3px; left: 27px; transform: rotate(135deg); }
   .path-diagnosis { align-items: flex-start; flex-wrap: wrap; }
   .path-diagnosis-target { width: 100%; max-width: none; margin-left: 40px; }

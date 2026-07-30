@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRouter, useRoute, RouterLink, RouterView } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { auth, logout } from './auth'
@@ -15,6 +15,7 @@ import Toasts from './components/Toasts.vue'
 const router = useRouter()
 const route = useRoute()
 const { t } = useI18n()
+const navOpen = ref(false)
 
 async function doLogout() {
   await logout()
@@ -82,6 +83,13 @@ const nav = [
 
 const navItemActive = (to: string) => route.path === to || (to !== '/' && route.path.startsWith(`${to}/`))
 
+watch(
+  () => route.fullPath,
+  () => {
+    navOpen.value = false
+  },
+)
+
 const sectionTitle = computed(() => {
   const key = nav.find((n) => navItemActive(n.to))?.label ?? 'nav.overview'
   return t(key)
@@ -104,8 +112,14 @@ async function dismissBanner(): Promise<void> {
 </script>
 
 <template>
-  <div v-if="auth.user && !isBare" class="app-shell">
-    <aside class="sidebar">
+  <div v-if="auth.user && !isBare" class="app-shell" :class="{ 'nav-open': navOpen }">
+    <button
+      v-if="navOpen"
+      class="nav-backdrop"
+      aria-label="Close navigation"
+      @click="navOpen = false"
+    ></button>
+    <aside id="primary-navigation" class="sidebar" :class="{ 'is-open': navOpen }">
       <div class="logo">
         <span class="logo-mark">
           <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2.2"
@@ -120,7 +134,14 @@ async function dismissBanner(): Promise<void> {
       </div>
 
       <nav class="nav">
-        <RouterLink v-for="n in nav" :key="n.to" :to="n.to" class="nav-link" :class="{ 'is-active': navItemActive(n.to) }">
+        <RouterLink
+          v-for="n in nav"
+          :key="n.to"
+          :to="n.to"
+          class="nav-link"
+          :class="{ 'is-active': navItemActive(n.to) }"
+          @click="navOpen = false"
+        >
           <span class="nav-ico" aria-hidden="true">
             <!-- 总览 -->
             <svg v-if="n.to === '/'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"
@@ -196,6 +217,18 @@ async function dismissBanner(): Promise<void> {
 
     <div class="main">
       <header class="topbar">
+        <button
+          class="menu-toggle"
+          type="button"
+          aria-label="Open navigation"
+          aria-controls="primary-navigation"
+          :aria-expanded="navOpen"
+          @click="navOpen = true"
+        >
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M4 7h16M4 12h16M4 17h16" />
+          </svg>
+        </button>
         <div class="crumb">
           <span class="crumb-root">NetTact</span>
           <span class="crumb-sep">/</span>
@@ -477,6 +510,292 @@ async function dismissBanner(): Promise<void> {
 @media (max-width: 560px) {
   .uname {
     display: none;
+  }
+}
+
+/* Hallmark material overrides: shell glass owns depth; page content stays legible. */
+.app-shell {
+  grid-template-columns: 16rem minmax(0, 1fr);
+}
+
+.sidebar {
+  top: var(--space-xs);
+  height: calc(100dvh - var(--space-md));
+  margin: var(--space-xs) 0 var(--space-xs) var(--space-xs);
+  padding: var(--space-sm) var(--space-xs);
+  border: var(--rule-hair) solid var(--glass-border);
+  border-radius: var(--radius-panel);
+  background: var(--glass-specular), var(--color-glass-strong);
+  box-shadow:
+    inset 0 var(--rule-hair) var(--glass-highlight),
+    var(--shadow-card);
+  backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
+}
+
+.logo {
+  gap: var(--space-xs);
+  padding: var(--space-2xs) var(--space-2xs) var(--space-md);
+}
+
+.logo-mark {
+  width: 2.5rem;
+  height: 2.5rem;
+  border-radius: var(--radius-input);
+  color: var(--color-accent-ink);
+  background: var(--color-accent);
+  box-shadow: none;
+}
+
+.logo-text b {
+  font-family: var(--font-display);
+  font-size: var(--text-base);
+  font-weight: 760;
+  letter-spacing: -0.028em;
+}
+
+.logo-text small {
+  color: var(--color-muted);
+  font-size: var(--text-xs);
+}
+
+.nav {
+  gap: var(--space-3xs);
+}
+
+.nav-link {
+  min-height: 2.75rem;
+  gap: var(--space-xs);
+  padding-inline: var(--space-xs);
+  border: var(--rule-hair) solid transparent;
+  border-radius: var(--radius-input);
+  color: var(--color-ink-2);
+  font-size: var(--text-sm);
+  font-weight: 620;
+  white-space: nowrap;
+  transition:
+    transform var(--dur-micro) var(--ease-out),
+    opacity var(--dur-micro) var(--ease-out);
+}
+
+.nav-link.is-active {
+  border-color: var(--color-rule);
+  color: var(--color-ink);
+  background: var(--color-glass-hover);
+  box-shadow: inset 0 var(--rule-hair) color-mix(in oklch, var(--color-ink) 9%, transparent);
+}
+
+.nav-link.is-active::before {
+  display: none;
+}
+
+.nav-link.is-active .nav-ico {
+  color: var(--color-accent);
+}
+
+.sidebar-foot {
+  margin-top: var(--space-xs);
+  padding: var(--space-sm) var(--space-xs) var(--space-2xs);
+  border-top-color: var(--color-rule);
+  color: var(--color-muted);
+  font-size: var(--text-xs);
+}
+
+.main {
+  min-height: 100dvh;
+}
+
+.topbar {
+  top: var(--space-xs);
+  z-index: var(--z-sticky);
+  height: 3.5rem;
+  margin: var(--space-xs) var(--page-edge) 0;
+  padding-inline: var(--space-xs);
+  border: var(--rule-hair) solid var(--glass-border);
+  border-radius: var(--radius-card);
+  background: var(--glass-specular-soft), var(--color-glass);
+  box-shadow:
+    inset 0 var(--rule-hair) var(--glass-highlight),
+    var(--shadow-card);
+  backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
+}
+
+.crumb {
+  min-width: 0;
+  font-size: var(--text-sm);
+}
+
+.crumb-root,
+.crumb-sep {
+  color: var(--color-muted);
+}
+
+.crumb-cur {
+  overflow: hidden;
+  color: var(--color-ink);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.user-chip {
+  min-height: 2.5rem;
+  padding: var(--space-3xs) var(--space-xs) var(--space-3xs) var(--space-3xs);
+  border-color: var(--color-rule);
+  background: var(--color-glass-subtle);
+}
+
+.avatar {
+  width: 2rem;
+  height: 2rem;
+  color: var(--color-accent-ink);
+  background: var(--color-accent);
+}
+
+.menu-toggle,
+.nav-backdrop {
+  display: none;
+}
+
+.menu-toggle {
+  width: 2.75rem;
+  height: 2.75rem;
+  place-items: center;
+  flex: none;
+  padding: 0;
+  border: var(--rule-hair) solid var(--color-rule);
+  border-radius: var(--radius-input);
+  color: var(--color-ink);
+  background: var(--color-glass-subtle);
+}
+
+.menu-toggle svg {
+  width: 1.25rem;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+}
+
+.setup-banner {
+  margin: var(--space-xs) var(--page-edge) 0;
+  padding: var(--space-xs) var(--space-sm);
+  border: var(--rule-hair) solid var(--color-rule-2);
+  border-radius: var(--radius-card);
+  background: var(--glass-specular), var(--color-glass-strong);
+  box-shadow: var(--shadow-card);
+  backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
+}
+
+.banner-close {
+  min-width: 2.75rem;
+  min-height: 2.75rem;
+  color: var(--color-muted);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .nav-link:hover {
+    color: var(--color-ink);
+    background: var(--color-glass-hover);
+    transform: translateX(var(--rule-hair));
+  }
+}
+
+@media (max-width: 60rem) {
+  .app-shell {
+    grid-template-columns: 5rem minmax(0, 1fr);
+  }
+
+  .sidebar {
+    margin-inline-start: var(--space-2xs);
+    padding-inline: var(--space-2xs);
+  }
+
+  .nav-link.is-active::before {
+    display: none;
+  }
+}
+
+@media (max-width: 46rem) {
+  .app-shell {
+    display: block;
+  }
+
+  .menu-toggle {
+    display: grid;
+  }
+
+  .sidebar {
+    position: fixed;
+    top: var(--space-2xs);
+    bottom: var(--space-2xs);
+    left: var(--space-2xs);
+    z-index: var(--z-modal);
+    width: min(19rem, calc(100% - var(--space-xl)));
+    height: auto;
+    margin: 0;
+    padding: var(--space-sm);
+    transform: translateX(calc(-100% - var(--space-md)));
+    transition:
+      transform var(--dur-long) var(--ease-out),
+      opacity var(--dur-short) var(--ease-out);
+    opacity: 0;
+  }
+
+  .sidebar.is-open {
+    transform: translateX(0);
+    opacity: 1;
+  }
+
+  .logo-text,
+  .nav-label,
+  .sidebar-foot span:last-child {
+    display: flex;
+  }
+
+  .logo,
+  .nav-link,
+  .sidebar-foot {
+    justify-content: flex-start;
+  }
+
+  .nav-link {
+    padding-inline: var(--space-xs);
+  }
+
+  .nav-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: calc(var(--z-modal) - 1);
+    display: block;
+    border: 0;
+    background: var(--color-backdrop);
+    backdrop-filter: blur(var(--space-2xs));
+    -webkit-backdrop-filter: blur(var(--space-2xs));
+  }
+
+  .topbar {
+    top: var(--space-2xs);
+    gap: var(--space-2xs);
+    margin: var(--space-2xs) var(--space-2xs) 0;
+  }
+
+  .crumb-root,
+  .crumb-sep,
+  .user-chip,
+  .topbar .btn-ghost {
+    display: none;
+  }
+
+  .setup-banner {
+    align-items: flex-start;
+    flex-wrap: wrap;
+    margin-inline: var(--space-2xs);
+  }
+
+  .setup-banner-text {
+    flex-basis: calc(100% - 3.5rem);
   }
 }
 </style>

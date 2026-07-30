@@ -41,7 +41,10 @@ function pick(sec: number) {
   padding: 6px 12px;
   border-radius: 6px;
   cursor: pointer;
-  transition: all 0.15s;
+  transition:
+    color var(--dur-micro) var(--ease-out),
+    background-color var(--dur-micro) var(--ease-out),
+    border-color var(--dur-micro) var(--ease-out);
 }
 .segmented button:hover {
   color: var(--text);

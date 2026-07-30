@@ -1,0 +1,23 @@
+{
+  "date": "2026-07-30",
+  "commit": "084e55ce389370fcbe8d0fb016ee7653d1e5aac3",
+  "framework": "Vue 3 + Vite 6 + TypeScript",
+  "font_stack": "No bundled web fonts at base commit; system UI fallbacks only",
+  "palette": "Dark-first cyan and indigo values with a light override",
+  "motion": "CSS motion present; no motion dependency",
+  "spacing": "Mixed raw values with no portable named token source",
+  "design_assets": "Inline pulse-line wordmark and one outline icon family",
+  "preserve": [
+    "pulse-line brand mark",
+    "light and dark preference",
+    "semantic status colours",
+    "route and component ownership",
+    "application logic"
+  ],
+  "introduce": [
+    "portable OKLCH token system",
+    "purposeful glass material hierarchy",
+    "responsive navigation sheet",
+    "display/body/mono typography roles"
+  ]
+}

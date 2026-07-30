@@ -178,19 +178,21 @@ onBeforeUnmount(() => document.removeEventListener('click', onDocClick, true))
   position: relative;
   display: grid;
   place-items: center;
-  width: 34px;
-  height: 34px;
-  border: 1px solid var(--border);
+  width: 2.75rem;
+  height: 2.75rem;
+  border: var(--rule-hair) solid var(--color-rule);
   border-radius: var(--radius-pill);
-  background: var(--surface-2);
-  color: var(--text-dim);
+  background: var(--color-glass-subtle);
+  color: var(--color-ink-2);
   cursor: pointer;
-  transition: color 0.15s, border-color 0.15s;
+  transition:
+    transform var(--dur-micro) var(--ease-out),
+    opacity var(--dur-micro) var(--ease-out);
 }
 .bell-btn:hover,
 .bell-btn.active {
-  color: var(--text);
-  border-color: var(--border-strong);
+  color: var(--color-ink);
+  border-color: var(--color-rule-2);
 }
 .badge {
   position: absolute;
@@ -204,22 +206,24 @@ onBeforeUnmount(() => document.removeEventListener('click', onDocClick, true))
   font-weight: 700;
   line-height: 17px;
   text-align: center;
-  color: #fff;
-  background: var(--danger);
+  color: var(--color-paper);
+  background: var(--color-danger);
 }
 .panel {
   position: absolute;
-  top: 44px;
+  top: calc(100% + var(--space-2xs));
   right: 0;
-  width: 340px;
-  max-height: 60vh;
+  width: min(22rem, calc(100vw - var(--space-lg)));
+  max-height: min(60dvh, 36rem);
   display: flex;
   flex-direction: column;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  background: var(--surface);
-  box-shadow: 0 16px 40px -14px rgba(0, 0, 0, 0.5);
-  z-index: 40;
+  border: var(--rule-hair) solid var(--color-rule-2);
+  border-radius: var(--radius-card);
+  background: var(--color-glass-strong);
+  box-shadow: var(--shadow-float);
+  z-index: var(--z-dropdown);
+  backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
 }
 .panel-head {
   display: flex;
@@ -254,13 +258,13 @@ onBeforeUnmount(() => document.removeEventListener('click', onDocClick, true))
   opacity: 0.72;
 }
 .resolved-dot {
-  background: var(--ok, #34d399);
-  border-color: var(--ok, #34d399);
+  background: var(--color-success);
+  border-color: var(--color-success);
 }
 .resolved-tag {
   margin-left: 6px;
   font-size: 11px;
-  color: #6ee7b7;
+  color: var(--color-success);
 }
 .item {
   display: flex;
@@ -276,7 +280,7 @@ onBeforeUnmount(() => document.removeEventListener('click', onDocClick, true))
   background: var(--surface-2);
 }
 .item.unread {
-  background: var(--primary-soft, rgba(56, 189, 248, 0.06));
+  background: var(--primary-soft);
 }
 .dot {
   flex: none;
@@ -333,7 +337,7 @@ onBeforeUnmount(() => document.removeEventListener('click', onDocClick, true))
 }
 .rem-env {
   display: block;
-  font-family: var(--mono, monospace);
+  font-family: var(--font-outlier);
   font-size: 11px;
   line-height: 1.5;
   color: var(--text-dim);
@@ -370,5 +374,16 @@ onBeforeUnmount(() => document.removeEventListener('click', onDocClick, true))
 }
 .link-btn:hover {
   text-decoration: underline;
+}
+@media (max-width: 30rem) {
+  .panel {
+    position: fixed;
+    top: auto;
+    right: var(--space-2xs);
+    bottom: var(--space-2xs);
+    left: var(--space-2xs);
+    width: auto;
+    max-height: 72dvh;
+  }
 }
 </style>

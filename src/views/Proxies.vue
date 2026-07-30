@@ -132,24 +132,30 @@ onMounted(async () => {
 </script>
 
 <template>
-  <main class="page">
-    <div class="page-head">
-      <h2>{{ tr('proxies.title') }}</h2>
+  <main class="page data-workbench" aria-labelledby="proxies-title">
+    <div class="page-head workbench-head">
+      <h2 id="proxies-title">{{ tr('proxies.title') }}</h2>
       <p class="sub">{{ tr('proxies.sub') }}</p>
       <router-link to="/proxies/new" class="btn btn-primary head-action">
         {{ tr('proxies.create') }}
       </router-link>
     </div>
-    <p v-if="error" class="err">{{ error }}</p>
+    <p v-if="error" class="err" role="alert">{{ error }}</p>
 
-    <section class="panel">
+    <section class="panel table-sheet" :aria-labelledby="'proxies-list-title'">
       <div class="panel-head">
-        <h3>{{ tr('proxies.listTitle') }}</h3>
+        <h3 id="proxies-list-title">{{ tr('proxies.listTitle') }}</h3>
         <span class="count">{{ proxies.length }}</span>
       </div>
       <p class="hint panel-hint">{{ tr('proxies.listHint') }}</p>
 
-      <div class="table-wrap" v-if="anyProxies">
+      <div
+        class="table-wrap"
+        v-if="anyProxies"
+        role="region"
+        tabindex="0"
+        :aria-label="tr('proxies.listTitle')"
+      >
         <table class="data-table">
           <thead>
             <tr>
@@ -235,6 +241,14 @@ onMounted(async () => {
 </template>
 
 <style scoped>
+/* Hallmark · designed-as-app · design-system: design.md · page: Proxies */
+.data-workbench {
+  font-variant-numeric: tabular-nums;
+}
+.workbench-head h2 {
+  font-family: var(--font-display);
+  letter-spacing: -0.028em;
+}
 .page-head {
   display: flex;
   flex-wrap: wrap;
@@ -248,7 +262,23 @@ onMounted(async () => {
   margin-left: auto;
 }
 .panel {
-  margin-bottom: 18px;
+  margin-bottom: var(--space-md);
+}
+.table-sheet {
+  background: var(--color-glass-strong);
+  border-color: var(--color-rule);
+  border-radius: var(--radius-panel);
+  box-shadow: var(--shadow-card);
+  backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
+}
+.table-sheet .panel-head {
+  min-height: 56px;
+  border-bottom-color: var(--color-rule);
+}
+.table-sheet .panel-head h3 {
+  font-family: var(--font-display);
+  letter-spacing: -0.018em;
 }
 .panel-hint {
   margin: 0 18px 6px;
@@ -268,17 +298,55 @@ onMounted(async () => {
   font-size: 12px;
 }
 .egress-bad {
-  color: var(--bad, #d64545);
-  background: color-mix(in srgb, var(--bad, #d64545) 12%, transparent);
+  color: var(--color-danger);
+  background: var(--color-glass-subtle);
 }
 .egress-warn {
-  color: var(--warn, #c98a00);
-  background: color-mix(in srgb, var(--warn, #c98a00) 12%, transparent);
+  color: var(--color-warning);
+  background: var(--color-glass-subtle);
 }
 .actions {
   white-space: nowrap;
 }
 .link-btn.danger {
-  color: var(--bad, #d64545);
+  color: var(--color-danger);
+}
+.table-wrap {
+  overflow-x: auto;
+  overscroll-behavior-inline: contain;
+  scrollbar-gutter: stable;
+}
+.table-wrap:focus-visible {
+  outline: var(--rule-fine) solid var(--color-focus);
+  outline-offset: calc(-1 * var(--rule-fine));
+}
+.data-table {
+  min-width: 820px;
+}
+.data-table thead th {
+  background: var(--color-glass-subtle);
+}
+.data-table tbody tr:focus-within td {
+  background: var(--color-glass-hover);
+}
+
+@media (max-width: 768px) {
+  .page-head .sub {
+    flex-basis: 100%;
+  }
+  .head-action {
+    margin-left: 0;
+  }
+  .panel-hint,
+  .pbody-hint {
+    margin-inline: 0;
+    padding-inline: var(--space-sm);
+  }
+}
+
+@media (max-width: 414px) {
+  .head-action {
+    width: 100%;
+  }
 }
 </style>

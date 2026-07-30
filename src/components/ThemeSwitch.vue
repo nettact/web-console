@@ -36,13 +36,13 @@ const label = computed(() => (isDark.value ? t('app.themeLight') : t('app.themeD
 .theme-switch {
   display: grid;
   place-items: center;
-  width: 34px;
-  height: 34px;
+  width: 2.75rem;
+  height: 2.75rem;
   padding: 0;
   border-radius: var(--radius-pill);
-  color: var(--text-dim);
+  color: var(--color-ink-2);
 }
 .theme-switch:hover {
-  color: var(--text);
+  color: var(--color-ink);
 }
 </style>

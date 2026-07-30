@@ -778,4 +778,145 @@ const copy = computed(() => {
 @media (prefers-reduced-motion: reduce) {
   .network-links circle, .hub-radar, .hub-radar::after, :deep(.step) { animation: none; }
 }
+
+/* Hallmark · Narrative Workflow · design-system: design.md */
+.onboarding-shell {
+  color-scheme: inherit;
+  --text: var(--color-ink);
+  --text-dim: var(--color-ink-2);
+  --text-muted: var(--color-muted);
+  --surface: var(--color-glass);
+  --surface-solid: var(--color-paper-2);
+  --surface-2: var(--color-glass-subtle);
+  --surface-hover: var(--color-glass-hover);
+  --border: var(--color-rule);
+  --border-strong: var(--color-rule-2);
+  --input-bg: color-mix(in oklch, var(--color-paper-2) 72%, transparent);
+  --input-bg-focus: color-mix(in oklch, var(--color-paper-2) 88%, transparent);
+  min-height: 100dvh;
+  background: var(--app-bg-image);
+  background-size: cover;
+  font-family: var(--font-body);
+}
+
+.onboarding-shell::before,
+.ambient,
+.network-stage {
+  display: none;
+}
+
+.story-pane {
+  justify-content: space-between;
+  min-height: calc(100dvh - var(--space-xl));
+  padding: clamp(var(--space-lg), 5vw, var(--space-2xl));
+  border: var(--rule-hair) solid var(--color-rule);
+  border-radius: var(--radius-panel);
+  background: var(--color-glass);
+  box-shadow: var(--shadow-card);
+  backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
+}
+
+.brand {
+  gap: var(--space-xs);
+}
+
+.brand-mark {
+  width: 3rem;
+  height: 3rem;
+  border: 0;
+  border-radius: var(--radius-input);
+  color: var(--color-accent-ink);
+  background: var(--color-accent);
+  box-shadow: none;
+}
+
+.brand-name {
+  font-family: var(--font-display);
+  font-size: var(--text-xl);
+  font-weight: 760;
+}
+
+.story-copy {
+  margin-top: auto;
+  margin-bottom: var(--space-xl);
+}
+
+.story-copy h1 {
+  max-width: 12ch;
+  color: var(--color-ink);
+  font-family: var(--font-display);
+  font-size: clamp(var(--text-2xl), 5vw, var(--text-display));
+  font-weight: 750;
+  letter-spacing: -0.035em;
+}
+
+.story-copy h1 span {
+  color: var(--color-accent);
+  background: none;
+  background-clip: border-box;
+  -webkit-background-clip: border-box;
+}
+
+.story-copy p {
+  max-width: 52ch;
+  margin-top: var(--space-md);
+  color: var(--color-ink-2);
+  font-size: var(--text-base);
+}
+
+.flow-pane {
+  height: min(61rem, calc(100dvh - var(--space-xl)));
+  min-height: min(44rem, calc(100dvh - var(--space-xl)));
+}
+
+:deep(.wizard.card) {
+  gap: var(--space-md);
+  padding: clamp(var(--space-md), 3vw, var(--space-xl));
+  border: var(--rule-hair) solid var(--color-rule-2);
+  border-radius: var(--radius-panel);
+  background: var(--color-glass-strong);
+  box-shadow:
+    inset 0 var(--rule-hair) color-mix(in oklch, var(--color-ink) 10%, transparent),
+    var(--shadow-float);
+  backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
+}
+
+:deep(.wiz-head .brand-text small) {
+  color: var(--color-ink);
+  font-size: var(--text-base);
+}
+
+:deep(.wiz-head .skip) {
+  color: var(--color-muted);
+}
+
+@media (max-width: 60rem) {
+  .story-pane {
+    min-height: auto;
+    padding: var(--space-md);
+  }
+
+  .flow-pane {
+    height: calc(100dvh - 7rem);
+    min-height: 36rem;
+  }
+}
+
+@media (max-width: 40rem) {
+  .onboarding-shell {
+    padding: var(--space-2xs);
+  }
+
+  .flow-pane {
+    height: calc(100dvh - 6rem);
+    min-height: 34rem;
+  }
+
+  :deep(.wizard.card) {
+    padding: var(--space-md);
+    border-radius: var(--radius-card);
+  }
+}
 </style>

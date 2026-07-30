@@ -236,12 +236,12 @@ onMounted(load)
 </script>
 
 <template>
-  <main class="page">
-    <div class="page-head">
-      <h2>{{ editingId ? tr('pform.editTitle') : tr('pform.newTitle') }}</h2>
+  <main class="page config-page" aria-labelledby="proxy-form-title">
+    <div class="page-head config-head">
+      <h2 id="proxy-form-title">{{ editingId ? tr('pform.editTitle') : tr('pform.newTitle') }}</h2>
       <p class="sub">{{ tr('pform.sub') }}</p>
     </div>
-    <p v-if="error" class="err">{{ error }}</p>
+    <p v-if="error" class="err" role="alert">{{ error }}</p>
 
     <p v-if="notFound" class="hint">
       {{ tr('pform.notFound') }}
@@ -249,6 +249,7 @@ onMounted(load)
     </p>
 
     <template v-else>
+      <div class="config-canvas">
       <section class="panel">
         <div class="panel-head"><h3>{{ tr('pform.secGeneral') }}</h3></div>
         <div class="pbody">
@@ -374,7 +375,12 @@ onMounted(load)
             monitors: strandedByType.map((t) => t.name || t.target).join('、'),
           }) }}
         </p>
-        <div class="table-wrap">
+        <div
+          class="table-wrap"
+          role="region"
+          tabindex="0"
+          :aria-label="tr('pform.usedByTitle')"
+        >
           <table class="data-table">
             <thead>
               <tr>
@@ -405,15 +411,38 @@ onMounted(load)
         <button class="btn btn-primary" :disabled="busy || !loaded" @click="save">
           {{ busy ? tr('pform.saving') : editingId ? tr('pform.save') : tr('pform.create') }}
         </button>
-        <span v-if="saved" class="ok">{{ tr('pform.savedShort') }}</span>
+        <span v-if="saved" class="ok" role="status" aria-live="polite">{{ tr('pform.savedShort') }}</span>
+      </div>
       </div>
     </template>
   </main>
 </template>
 
 <style scoped>
+/* Hallmark · designed-as-app · design-system: design.md · page: Proxy form */
+.config-canvas {
+  width: min(100%, 1040px);
+}
+.config-head h2 {
+  font-family: var(--font-display);
+  letter-spacing: -0.028em;
+}
 .panel {
-  margin-bottom: 18px;
+  margin-bottom: var(--space-md);
+  background: var(--color-glass);
+  border-color: var(--color-rule);
+  border-radius: var(--radius-card);
+  box-shadow: var(--shadow-card);
+  backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
+}
+.panel-head {
+  min-height: 52px;
+  border-bottom-color: var(--color-rule);
+}
+.panel-head h3 {
+  font-family: var(--font-display);
+  letter-spacing: -0.018em;
 }
 .pbody {
   padding: 14px 18px;
@@ -460,5 +489,64 @@ onMounted(load)
 }
 .actions {
   white-space: nowrap;
+}
+.table-wrap {
+  overflow-x: auto;
+  overscroll-behavior-inline: contain;
+}
+.table-wrap:focus-visible {
+  outline: var(--rule-fine) solid var(--color-focus);
+  outline-offset: calc(-1 * var(--rule-fine));
+}
+.data-table {
+  min-width: 640px;
+  font-variant-numeric: tabular-nums;
+}
+.form-foot {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  position: sticky;
+  bottom: var(--space-sm);
+  z-index: var(--z-sticky);
+  margin: var(--space-sm) 0 var(--space-md);
+  padding: var(--space-xs);
+  border: var(--rule-hair) solid var(--color-rule);
+  border-radius: var(--radius-card);
+  background: var(--color-glass-strong);
+  box-shadow: var(--shadow-float);
+  backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
+}
+
+@media (max-width: 768px) {
+  .form-grid {
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--space-sm);
+  }
+  .field.wide,
+  .wide {
+    grid-column: auto;
+  }
+  .pbody,
+  .panel-head {
+    padding-inline: var(--space-sm);
+  }
+  .panel-hint {
+    margin-inline: var(--space-sm);
+  }
+  .form-foot {
+    position: static;
+  }
+}
+
+@media (max-width: 414px) {
+  .form-foot {
+    align-items: stretch;
+    flex-direction: column;
+  }
+  .form-foot .btn {
+    width: 100%;
+  }
 }
 </style>

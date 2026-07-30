@@ -489,12 +489,12 @@ onMounted(loadAll)
 </script>
 
 <template>
-  <main class="page">
-    <div class="page-head">
-      <h2>{{ isHostMode ? (editingId ? tr('mform.hostEditTitle') : tr('mform.hostNewTitle')) : (editingId ? tr('mform.editTitle') : tr('mform.newTitle')) }}</h2>
+  <main class="page config-page" aria-labelledby="monitor-form-title">
+    <div class="page-head config-head">
+      <h2 id="monitor-form-title">{{ isHostMode ? (editingId ? tr('mform.hostEditTitle') : tr('mform.hostNewTitle')) : (editingId ? tr('mform.editTitle') : tr('mform.newTitle')) }}</h2>
       <p class="sub">{{ isHostMode ? tr('mform.hostSub') : tr('mform.sub') }}</p>
     </div>
-    <p v-if="error" class="err">{{ error }}</p>
+    <p v-if="error" class="err" role="alert">{{ error }}</p>
 
     <p v-if="notFound" class="hint">
       {{ tr('mform.notFound') }}
@@ -502,6 +502,7 @@ onMounted(loadAll)
     </p>
 
     <template v-else>
+      <div class="config-canvas">
       <p v-if="isHostMode" class="host-intro">{{ tr('mform.hostIntro') }}</p>
       <section class="panel">
         <div class="panel-head"><h3>{{ tr('mform.secGeneral') }}</h3></div>
@@ -780,7 +781,7 @@ onMounted(loadAll)
         <span v-if="saved" class="ok">{{ tr('mform.saved') }}</span>
       </div>
 
-      <p v-if="saved && showDetection" class="hint saved-note">
+      <p v-if="saved && showDetection" class="hint saved-note" role="status" aria-live="polite">
         {{ tr('mform.savedDetectionOn', { fail: detection.fail_rounds, recover: detection.recover_rounds }) }}
         <template v-if="!hasChannels"> {{ tr('mform.savedNoChannels') }}</template>
       </p>
@@ -800,31 +801,42 @@ onMounted(loadAll)
           <span class="warn-capable-names">{{ saveWarning.capable_agent_list.map((a) => a.agent_name || a.agent_id).join(', ') }}</span>
         </p>
       </div>
+      </div>
 
     </template>
   </main>
 </template>
 
 <style scoped>
+/* Hallmark · designed-as-app · design-system: design.md · page: Monitor form */
+.config-canvas {
+  width: min(100%, 1040px);
+}
+.config-head h2 {
+  font-family: var(--font-display);
+  letter-spacing: -0.028em;
+}
 .save-warn {
-  margin-top: 14px;
-  padding: 14px 16px;
-  border-left: 3px solid var(--warning, #fbbf24);
+  margin-top: var(--space-sm);
+  padding: var(--space-sm);
+  border-color: var(--color-warning);
+  background: var(--color-glass-subtle);
+  box-shadow: none;
 }
 /* Shape error on the target field: the value can never probe successfully. */
 .field input.invalid {
-  border-color: var(--danger, #f87171);
+  border-color: var(--color-danger);
 }
 .field-err {
   margin-top: 4px;
-  color: var(--danger, #f87171);
+  color: var(--color-danger);
   font-size: 11.5px;
 }
 /* A warning the save does not block — visually distinct from .field-err so a
    disabled-but-valid proxy pin does not read as an error. */
 .field-warn {
   margin-top: 4px;
-  color: var(--warning, #fbbf24);
+  color: var(--color-warning);
   font-size: 11.5px;
 }
 .save-warn h4 {
@@ -851,7 +863,7 @@ onMounted(loadAll)
   color: var(--text);
 }
 .warn-state {
-  color: #fca5a5;
+  color: var(--color-danger);
   font-size: 12px;
 }
 .warn-perms {
@@ -874,18 +886,31 @@ onMounted(loadAll)
   color: var(--text-dim);
 }
 .host-intro {
-  margin: 0 0 16px;
-  padding: 11px 14px;
+  margin: 0 0 var(--space-sm);
+  padding: var(--space-xs) var(--space-sm);
   font-size: 12.5px;
   line-height: 1.6;
-  color: var(--text-dim);
-  background: var(--primary-soft, var(--surface-2));
-  border: 1px solid var(--border);
-  border-left: 3px solid var(--primary);
-  border-radius: var(--radius-sm);
+  color: var(--color-ink-2);
+  background: var(--color-glass-subtle);
+  border: var(--rule-hair) solid var(--color-rule);
+  border-radius: var(--radius-input);
 }
 .panel {
-  margin-bottom: 18px;
+  margin-bottom: var(--space-md);
+  background: var(--color-glass);
+  border-color: var(--color-rule);
+  border-radius: var(--radius-card);
+  box-shadow: var(--shadow-card);
+  backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
+}
+.panel-head {
+  min-height: 52px;
+  border-bottom-color: var(--color-rule);
+}
+.panel-head h3 {
+  font-family: var(--font-display);
+  letter-spacing: -0.018em;
 }
 .form-grid {
   display: grid;
@@ -953,9 +978,15 @@ onMounted(loadAll)
 .advanced summary {
   cursor: pointer;
   padding: 10px 18px;
+  min-height: 44px;
   font-size: 13px;
-  color: var(--text-dim);
+  color: var(--color-ink-2);
   user-select: none;
+}
+.advanced summary:focus-visible,
+.profile-opt:has(input:focus-visible) {
+  outline: var(--rule-fine) solid var(--color-focus);
+  outline-offset: var(--space-3xs);
 }
 .det-body {
   padding: 4px 18px 16px;
@@ -975,6 +1006,9 @@ onMounted(loadAll)
   gap: 8px;
   font-size: 13px;
   color: var(--text);
+  min-height: 44px;
+  padding-inline: var(--space-2xs);
+  border-radius: var(--radius-xs);
 }
 .profile-opt input {
   width: auto;
@@ -999,6 +1033,58 @@ onMounted(loadAll)
   display: flex;
   align-items: center;
   gap: 12px;
-  padding: 4px 0 20px;
+  position: sticky;
+  bottom: var(--space-sm);
+  z-index: var(--z-sticky);
+  margin: var(--space-sm) 0 var(--space-md);
+  padding: var(--space-xs);
+  border: var(--rule-hair) solid var(--color-rule);
+  border-radius: var(--radius-card);
+  background: var(--color-glass-strong);
+  box-shadow: var(--shadow-float);
+  backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
+}
+
+@media (max-width: 768px) {
+  .form-grid,
+  .det-grid {
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--space-sm);
+  }
+  .field.wide {
+    grid-column: auto;
+  }
+  .panel-head,
+  .form-grid,
+  .panel-body,
+  .det-body {
+    padding-inline: var(--space-sm);
+  }
+  .panel-hint {
+    margin-inline: var(--space-sm);
+  }
+  .form-foot {
+    position: static;
+  }
+}
+
+@media (max-width: 414px) {
+  .form-foot {
+    align-items: stretch;
+    flex-direction: column;
+  }
+  .form-foot .btn {
+    width: 100%;
+  }
+  .group-field {
+    max-width: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .form-foot {
+    transition-duration: var(--dur-micro);
+  }
 }
 </style>

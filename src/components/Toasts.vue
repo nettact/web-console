@@ -26,38 +26,39 @@ const state = useToasts()
 <style scoped>
 .toast-host {
   position: fixed;
-  right: 20px;
-  bottom: 20px;
-  z-index: 60;
+  right: var(--space-md);
+  bottom: var(--space-md);
+  z-index: var(--z-toast);
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  max-width: 360px;
+  gap: var(--space-xs);
+  width: min(22rem, calc(100% - var(--space-lg)));
 }
 .toast {
   position: relative;
   display: flex;
-  align-items: flex-start;
-  gap: 10px;
-  padding: 12px 12px 12px 16px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  background: var(--surface);
-  box-shadow: 0 12px 30px -12px rgba(0, 0, 0, 0.45);
+  align-items: center;
+  gap: var(--space-xs);
+  padding: var(--space-xs);
+  border: var(--rule-hair) solid var(--color-rule-2);
+  border-radius: var(--radius-card);
+  background: var(--color-glass-strong);
+  box-shadow: var(--shadow-float);
+  backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
   overflow: hidden;
 }
 .toast .bar {
-  position: absolute;
-  left: 0;
-  top: 0;
-  bottom: 0;
-  width: 3px;
+  width: var(--space-2xs);
+  height: var(--space-2xs);
+  flex: none;
+  border-radius: var(--radius-pill);
 }
 .toast.is-info .bar {
   background: var(--primary);
 }
 .toast.is-warn .bar {
-  background: var(--warn, #fbbf24);
+  background: var(--color-warning);
 }
 .toast.is-danger .bar {
   background: var(--danger);
@@ -68,32 +69,43 @@ const state = useToasts()
 }
 .title {
   margin: 0;
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--text);
+  color: var(--color-ink);
+  font-size: var(--text-sm);
+  font-weight: 650;
 }
 .text {
-  margin: 3px 0 0;
-  font-size: 12px;
-  color: var(--text-dim);
+  margin: var(--space-3xs) 0 0;
+  color: var(--color-ink-2);
+  font-size: var(--text-xs);
   word-break: break-word;
 }
 .link {
   display: inline-block;
-  margin-top: 6px;
-  font-size: 12px;
-  color: var(--primary);
+  margin-top: var(--space-2xs);
+  color: var(--color-accent);
+  font-size: var(--text-xs);
 }
 .x {
+  display: grid;
+  place-items: center;
+  width: 2.75rem;
+  height: 2.75rem;
   border: none;
   background: transparent;
-  color: var(--text-muted);
-  font-size: 18px;
+  color: var(--color-muted);
+  font-size: var(--text-lg);
   line-height: 1;
   cursor: pointer;
-  padding: 0 2px;
+  padding: 0;
 }
 .x:hover {
   color: var(--text);
+}
+@media (max-width: 30rem) {
+  .toast-host {
+    right: var(--space-2xs);
+    bottom: var(--space-2xs);
+    width: calc(100% - var(--space-sm));
+  }
 }
 </style>

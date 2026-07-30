@@ -263,12 +263,12 @@ onMounted(load)
 </script>
 
 <template>
-  <main class="page">
-    <div class="page-head">
-      <h2>{{ editingId ? tr('mgroup.editTitle') : tr('mgroup.newTitle') }}</h2>
+  <main class="page config-page" aria-labelledby="monitor-group-form-title">
+    <div class="page-head config-head">
+      <h2 id="monitor-group-form-title">{{ editingId ? tr('mgroup.editTitle') : tr('mgroup.newTitle') }}</h2>
       <p class="sub">{{ tr('mgroup.sub') }}</p>
     </div>
-    <p v-if="error" class="err">{{ error }}</p>
+    <p v-if="error" class="err" role="alert">{{ error }}</p>
 
     <p v-if="notFound" class="hint">
       {{ tr('mgroup.notFound') }}
@@ -276,6 +276,7 @@ onMounted(load)
     </p>
 
     <template v-else>
+      <div class="config-canvas">
       <!-- General -->
       <section class="panel">
         <div class="panel-head">
@@ -410,7 +411,7 @@ onMounted(load)
         >
           {{ tr('mgroup.deleteGroup') }}
         </button>
-        <span v-if="saved" class="ok">{{ tr('mgroup.saved') }}</span>
+        <span v-if="saved" class="ok" role="status" aria-live="polite">{{ tr('mgroup.saved') }}</span>
       </div>
 
       <!-- Members (static target context) -->
@@ -423,7 +424,13 @@ onMounted(load)
           </router-link>
         </div>
         <p class="hint panel-hint">{{ tr('mgroup.membersHint') }}</p>
-        <div class="table-wrap" v-if="members.length">
+        <div
+          class="table-wrap"
+          v-if="members.length"
+          role="region"
+          tabindex="0"
+          :aria-label="tr('mgroup.membersTitle')"
+        >
           <table class="data-table">
             <thead>
               <tr>
@@ -453,6 +460,7 @@ onMounted(load)
       </section>
 
       <p v-if="!editingId" class="hint save-first">{{ tr('mgroup.saveGroupFirst') }}</p>
+      </div>
     </template>
 
     <!-- Confirmations -->
@@ -482,8 +490,30 @@ onMounted(load)
 </template>
 
 <style scoped>
+/* Hallmark · designed-as-app · design-system: design.md · page: Monitor group form */
+.config-canvas {
+  width: min(100%, 1040px);
+}
+.config-head h2 {
+  font-family: var(--font-display);
+  letter-spacing: -0.028em;
+}
 .panel {
-  margin-bottom: 18px;
+  margin-bottom: var(--space-md);
+  background: var(--color-glass);
+  border-color: var(--color-rule);
+  border-radius: var(--radius-card);
+  box-shadow: var(--shadow-card);
+  backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
+}
+.panel-head {
+  min-height: 52px;
+  border-bottom-color: var(--color-rule);
+}
+.panel-head h3 {
+  font-family: var(--font-display);
+  letter-spacing: -0.018em;
 }
 .pbody {
   padding: 14px 18px;
@@ -554,9 +584,14 @@ onMounted(load)
   gap: 6px;
   font-size: 12.5px;
   padding: 4px 8px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  background: var(--surface);
+  min-height: 44px;
+  border: var(--rule-hair) solid var(--color-rule);
+  border-radius: var(--radius-input);
+  background: var(--color-glass-subtle);
+}
+.group-chip:has(input:focus-visible) {
+  outline: var(--rule-fine) solid var(--color-focus);
+  outline-offset: var(--space-3xs);
 }
 .group-chip input {
   width: auto;
@@ -620,6 +655,13 @@ onMounted(load)
 .table-wrap {
   overflow-x: auto;
 }
+.table-wrap:focus-visible {
+  outline: var(--rule-fine) solid var(--color-focus);
+  outline-offset: calc(-1 * var(--rule-fine));
+}
+.data-table {
+  min-width: 640px;
+}
 .mono {
   font-family: var(--mono);
   font-size: 12.5px;
@@ -638,9 +680,60 @@ onMounted(load)
   display: flex;
   align-items: center;
   gap: 12px;
-  padding: 4px 0 20px;
+  position: sticky;
+  bottom: var(--space-sm);
+  z-index: var(--z-sticky);
+  margin: var(--space-sm) 0 var(--space-md);
+  padding: var(--space-xs);
+  border: var(--rule-hair) solid var(--color-rule);
+  border-radius: var(--radius-card);
+  background: var(--color-glass-strong);
+  box-shadow: var(--shadow-float);
+  backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
 }
 .save-first {
   margin-top: 4px;
+}
+
+@media (max-width: 768px) {
+  .pbody,
+  .panel-head {
+    padding-inline: var(--space-sm);
+  }
+  .panel-hint {
+    margin-inline: var(--space-sm);
+  }
+  .sum-row {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: var(--space-3xs);
+  }
+  .sum-k {
+    min-width: 0;
+  }
+  .table-wrap {
+    overscroll-behavior-inline: contain;
+  }
+  .form-foot {
+    position: static;
+  }
+}
+
+@media (max-width: 414px) {
+  .field {
+    max-width: none;
+  }
+  .form-foot {
+    align-items: stretch;
+    flex-direction: column;
+  }
+  .form-foot .btn {
+    width: 100%;
+  }
+  .head-btn {
+    width: 100%;
+    margin-left: 0;
+  }
 }
 </style>

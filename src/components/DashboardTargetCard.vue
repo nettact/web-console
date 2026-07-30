@@ -121,27 +121,40 @@ const typeLabel = computed(() => {
 </template>
 
 <style scoped>
-.target-card-body { position: relative; min-height: 190px; padding: 20px; overflow: hidden; }
-.target-card-body::before { content: ''; position: absolute; inset: 0 0 auto; height: 2px; background: var(--text-dim); }
-.target-card-body.tone-good::before { background: var(--success); }
-.target-card-body.tone-warn::before { background: var(--warning); }
-.target-card-body.tone-bad::before { background: var(--danger); }
+/* Hallmark · pre-emit critique: P5 H5 E4 S5 R5 V4
+ * component: monitor target · design-system: design.md
+ */
+.target-card-body {
+  --target-tone: var(--color-neutral);
+  position: relative;
+  min-height: 190px;
+  padding: 20px;
+  overflow: hidden;
+  background: color-mix(in srgb, var(--target-tone) 4%, transparent);
+}
+.target-card-body.tone-good { --target-tone: var(--color-success); }
+.target-card-body.tone-warn { --target-tone: var(--color-warning); }
+.target-card-body.tone-bad { --target-tone: var(--color-danger); }
 .target-card-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
-.target-kind { padding: 4px 8px; color: var(--primary); font-size: 10px; font-weight: 800; letter-spacing: .08em; border: 1px solid color-mix(in srgb, var(--primary) 48%, transparent); border-radius: 6px; background: var(--primary-soft); }
-.target-kind.kind-http { color: var(--warning); border-color: color-mix(in srgb, var(--warning) 48%, transparent); background: var(--warning-soft); }
-.target-kind.kind-tcp { color: #38bdf8; }
-.target-kind.kind-nat { color: #a78bfa; border-color: color-mix(in srgb, #a78bfa 48%, transparent); background: color-mix(in srgb, #a78bfa 12%, transparent); }
-.target-state { display: inline-flex; align-items: center; gap: 6px; color: var(--text-muted); font-size: 11px; }
+.target-kind { padding: 4px 8px; color: var(--color-accent); font-size: 10px; font-weight: 800; letter-spacing: .08em; border: 1px solid color-mix(in srgb, var(--color-accent) 48%, transparent); border-radius: 6px; background: color-mix(in srgb, var(--color-accent) 14%, transparent); }
+.target-kind.kind-http { color: var(--color-warning); border-color: color-mix(in srgb, var(--color-warning) 48%, transparent); background: color-mix(in srgb, var(--color-warning) 14%, transparent); }
+.target-kind.kind-tcp { color: var(--color-info); }
+.target-kind.kind-nat { color: var(--color-accent); border-color: color-mix(in srgb, var(--color-accent) 48%, transparent); background: color-mix(in srgb, var(--color-accent) 12%, transparent); }
+.target-state { display: inline-flex; align-items: center; gap: 6px; color: var(--color-muted); font-size: 11px; }
 .target-state i { width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
-.target-state.good { color: var(--success); }.target-state.warn { color: var(--warning); }.target-state.bad { color: var(--danger); }
-.target-title { display: block; width: fit-content; max-width: 100%; margin-top: 15px; overflow: hidden; color: var(--text); font-size: 16px; font-weight: 750; text-decoration: none; text-overflow: ellipsis; white-space: nowrap; }
-.target-title:hover { color: var(--primary); }
-.target-address { margin: 4px 0 0; overflow: hidden; color: var(--text-muted); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
-.target-primary { display: block; margin-top: 20px; color: var(--text); font-size: 32px; line-height: 1; letter-spacing: -.04em; }
-.tone-bad .target-primary { color: var(--danger); }
-.target-details { display: flex; flex-wrap: wrap; gap: 8px 18px; margin-top: 18px; padding-top: 13px; border-top: 1px solid var(--border); }
+.target-state.good { color: var(--color-success); }.target-state.warn { color: var(--color-warning); }.target-state.bad { color: var(--color-danger); }
+.target-title { display: block; width: fit-content; max-width: 100%; margin-top: 15px; overflow: hidden; color: var(--color-ink); font-size: 16px; font-weight: 750; text-decoration: none; text-overflow: ellipsis; white-space: nowrap; }
+.target-title:hover,
+.target-title:focus-visible { color: var(--color-accent); }
+.target-title:focus-visible { border-radius: var(--radius-xs); outline: 2px solid var(--color-focus); outline-offset: 3px; }
+.target-address { margin: 4px 0 0; overflow: hidden; color: var(--color-muted); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.target-primary { display: block; margin-top: 20px; color: var(--color-ink); font-size: 32px; line-height: 1; letter-spacing: -.04em; }
+.target-primary,
+.target-details b { font-variant-numeric: tabular-nums; }
+.tone-bad .target-primary { color: var(--color-danger); }
+.target-details { display: flex; flex-wrap: wrap; gap: 8px 18px; margin-top: 18px; padding-top: 13px; border-top: 1px solid var(--color-rule); }
 .target-details span { display: grid; gap: 3px; }
-.target-details small { color: var(--text-muted); font-size: 9px; }
+.target-details small { color: var(--color-muted); font-size: 9px; }
 .target-details b { font-size: 11px; font-weight: 700; }
-.target-empty { margin: 18px 0 0; color: var(--text-muted); font-size: 11px; }
+.target-empty { margin: 18px 0 0; color: var(--color-muted); font-size: 11px; }
 </style>

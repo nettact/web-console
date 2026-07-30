@@ -117,27 +117,33 @@ function onKeydown(e: KeyboardEvent) {
 .cd-backdrop {
   position: fixed;
   inset: 0;
-  z-index: 60;
+  z-index: var(--z-modal);
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 20px;
-  background: rgba(0, 0, 0, 0.5);
-  backdrop-filter: blur(2px);
+  padding: var(--space-md);
+  background: var(--color-backdrop);
+  backdrop-filter: blur(var(--space-2xs));
+  -webkit-backdrop-filter: blur(var(--space-2xs));
 }
 .cd-dialog {
   width: 100%;
-  max-width: 460px;
-  padding: 20px 22px;
+  max-width: 29rem;
+  padding: var(--space-md);
+  border-radius: var(--radius-panel);
+  background: var(--color-glass-strong);
+  box-shadow: var(--shadow-float);
+  backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
 }
 .cd-title {
-  margin: 0 0 10px;
-  font-size: 16px;
+  margin: 0 0 var(--space-xs);
+  font-size: var(--text-md);
 }
 .cd-body {
-  margin: 0 0 18px;
-  font-size: 13.5px;
-  color: var(--text-dim);
+  margin: 0 0 var(--space-md);
+  color: var(--color-ink-2);
+  font-size: var(--text-sm);
   line-height: 1.6;
 }
 .cd-body p {
@@ -149,14 +155,28 @@ function onKeydown(e: KeyboardEvent) {
 .cd-actions {
   display: flex;
   justify-content: flex-end;
-  gap: 10px;
+  gap: var(--space-xs);
 }
 .fade-enter-active,
 .fade-leave-active {
-  transition: opacity 0.18s ease;
+  transition: opacity var(--dur-long) var(--ease-out);
 }
 .fade-enter-from,
 .fade-leave-to {
   opacity: 0;
+}
+@media (max-width: 30rem) {
+  .cd-backdrop {
+    align-items: end;
+    padding: var(--space-2xs);
+  }
+  .cd-dialog {
+    max-width: none;
+    border-radius: var(--radius-panel) var(--radius-panel) var(--radius-card) var(--radius-card);
+  }
+  .cd-actions {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  }
 }
 </style>

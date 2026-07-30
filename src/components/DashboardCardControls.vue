@@ -44,6 +44,9 @@ const emit = defineEmits<{
 </template>
 
 <style scoped>
+/* Hallmark · pre-emit critique: P5 H5 E4 S5 R5 V4
+ * component: dashboard edit controls · design-system: design.md
+ */
 .dashboard-card-controls {
   position: absolute;
   top: 8px;
@@ -54,29 +57,32 @@ const emit = defineEmits<{
   align-items: center;
   gap: 6px;
   min-width: 0;
-  height: 38px;
+  min-height: 54px;
   padding: 4px 5px 4px 9px;
-  color: var(--text);
-  border: 1px solid color-mix(in srgb, var(--primary) 38%, var(--border));
-  border-radius: 11px;
-  background: color-mix(in srgb, var(--surface-solid) 94%, transparent);
-  box-shadow: 0 8px 24px -16px rgba(15, 23, 42, .8);
-  backdrop-filter: blur(14px);
+  color: var(--color-ink);
+  border: 1px solid color-mix(in srgb, var(--color-accent) 38%, var(--color-rule));
+  border-radius: var(--radius-input);
+  background: var(--color-glass-strong);
+  box-shadow: var(--shadow-card);
+  backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
 }
 .direct-drag-handle { display: grid; grid-template-columns: repeat(2, 3px); gap: 2px; padding: 5px 3px; cursor: grab; touch-action: none; }
-.direct-drag-handle i { width: 3px; height: 3px; border-radius: 50%; background: var(--text-muted); }
+.direct-drag-handle i { width: 3px; height: 3px; border-radius: 50%; background: var(--color-muted); }
 .control-title { min-width: 0; margin-right: auto; overflow: hidden; font-size: 10px; font-weight: 750; text-overflow: ellipsis; white-space: nowrap; }
 .ratio-buttons, .card-order-buttons { display: flex; gap: 3px; }
-button { display: grid; width: 27px; height: 27px; place-items: center; padding: 0; color: var(--text-muted); border: 1px solid var(--border); border-radius: 7px; background: var(--surface); cursor: pointer; }
-button:hover, button.active { color: var(--primary); border-color: var(--primary); background: var(--primary-soft); }
+button { display: grid; width: 44px; height: 44px; place-items: center; padding: 0; color: var(--color-muted); border: 1px solid var(--color-rule); border-radius: var(--radius-xs); background: var(--color-glass-subtle); cursor: pointer; }
+button:hover, button.active { color: var(--color-accent); border-color: var(--color-accent); background: color-mix(in srgb, var(--color-accent) 14%, transparent); }
+button:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 2px; }
 button:disabled { opacity: .3; cursor: default; }
 .ratio-icon { display: block; height: 8px; border: 1.5px solid currentColor; border-radius: 2px; }
 .ratio-icon.is-compact { width: 8px; }
 .ratio-icon.is-medium { width: 14px; }
 .ratio-icon.is-wide { width: 20px; }
 .ratio-icon.is-tall { width: 13px; height: 15px; }
-.remove-card-button { color: var(--danger); font-size: 17px; }
-.remove-card-button:hover { color: #fff; border-color: var(--danger); background: var(--danger); }
+.remove-card-button { color: var(--color-danger); font-size: 17px; }
+.remove-card-button:hover,
+.remove-card-button:focus-visible { color: var(--color-accent-ink); border-color: var(--color-danger); background: var(--color-danger); }
 @media (max-width: 560px) {
   .control-title { display: none; }
   .dashboard-card-controls { left: auto; }

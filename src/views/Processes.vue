@@ -375,9 +375,9 @@ onBeforeUnmount(stopPoll)
 </script>
 
 <template>
-  <main class="page">
-    <div class="page-head">
-      <h2>{{ t('processes.title') }}</h2>
+  <main class="page data-workbench" aria-labelledby="processes-title">
+    <div class="page-head workbench-head">
+      <h2 id="processes-title">{{ t('processes.title') }}</h2>
       <span class="spacer"></span>
       <div class="picker" v-if="agents.length">
         <label>Agent</label>
@@ -393,7 +393,7 @@ onBeforeUnmount(stopPoll)
     </div>
 
     <p class="hint sub">{{ t('processes.sub') }}</p>
-    <p v-if="error" class="err">{{ error }}</p>
+    <p v-if="error" class="err" role="alert">{{ error }}</p>
 
     <!-- Scopes the agent could not collect this round (shown for both the
          partial-permission and the no-permission case, always with remediation). -->
@@ -414,13 +414,16 @@ onBeforeUnmount(stopPoll)
     </div>
 
     <template v-if="permitted">
-      <div class="tabs" role="tablist">
+      <div class="tabs workbench-tabs" role="tablist" :aria-label="t('processes.title')">
         <button
           v-if="canProcs"
+          id="processes-tab-processes"
           class="tab"
           role="tab"
           :class="{ active: tab === 'processes' }"
           :aria-selected="tab === 'processes'"
+          :tabindex="tab === 'processes' ? 0 : -1"
+          aria-controls="processes-panel-processes"
           @click="tab = 'processes'"
         >
           {{ t('processes.tabProcesses') }}
@@ -428,10 +431,13 @@ onBeforeUnmount(stopPoll)
         </button>
         <button
           v-if="canConns"
+          id="processes-tab-connections"
           class="tab"
           role="tab"
           :class="{ active: tab === 'connections' }"
           :aria-selected="tab === 'connections'"
+          :tabindex="tab === 'connections' ? 0 : -1"
+          aria-controls="processes-panel-connections"
           @click="tab = 'connections'"
         >
           {{ t('processes.tabConnections') }}
@@ -440,7 +446,14 @@ onBeforeUnmount(stopPoll)
       </div>
 
       <!-- processes -->
-      <section class="panel" v-if="canProcs" v-show="tab === 'processes'">
+      <section
+        id="processes-panel-processes"
+        class="panel table-sheet"
+        v-if="canProcs"
+        v-show="tab === 'processes'"
+        role="tabpanel"
+        aria-labelledby="processes-tab-processes"
+      >
         <div class="panel-head">
           <span class="spacer"></span>
           <div class="sort" v-if="colResource">
@@ -452,7 +465,7 @@ onBeforeUnmount(stopPoll)
             </select>
           </div>
         </div>
-        <div class="table-wrap">
+        <div class="table-wrap" role="region" tabindex="0" :aria-label="t('processes.tabProcesses')">
           <table class="data-table">
             <thead>
               <tr>
@@ -497,7 +510,14 @@ onBeforeUnmount(stopPoll)
       </section>
 
       <!-- connections -->
-      <section class="panel" v-if="canConns" v-show="tab === 'connections'">
+      <section
+        id="processes-panel-connections"
+        class="panel table-sheet"
+        v-if="canConns"
+        v-show="tab === 'connections'"
+        role="tabpanel"
+        aria-labelledby="processes-tab-connections"
+      >
         <div class="panel-head">
           <div class="basis" v-if="colConnOwner" role="group" :aria-label="t('processes.connBasisLabel')">
             <span class="basis-label">{{ t('processes.connBasisLabel') }}</span>
@@ -535,7 +555,7 @@ onBeforeUnmount(stopPoll)
             </select>
           </div>
         </div>
-        <div class="table-wrap">
+        <div class="table-wrap" role="region" tabindex="0" :aria-label="t('processes.tabConnections')">
           <table class="data-table">
             <thead>
               <tr>
@@ -584,10 +604,29 @@ onBeforeUnmount(stopPoll)
 </template>
 
 <style scoped>
+/* Hallmark · designed-as-app · design-system: design.md · page: Processes */
+.data-workbench {
+  font-variant-numeric: tabular-nums;
+}
+.workbench-head h2 {
+  font-family: var(--font-display);
+  letter-spacing: -0.028em;
+}
 .picker {
   display: flex;
   align-items: center;
   gap: 10px;
+  min-width: 0;
+  padding: var(--space-2xs);
+  border: var(--rule-hair) solid var(--color-rule);
+  border-radius: var(--radius-input);
+  background: var(--color-glass);
+  backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
+}
+.picker select {
+  min-width: 0;
+  max-width: min(42vw, 420px);
 }
 .picker label,
 .sort label {
@@ -601,9 +640,11 @@ onBeforeUnmount(stopPoll)
   margin-bottom: 14px;
 }
 .denial {
-  padding: 14px 16px;
-  margin-bottom: 16px;
-  border-left: 3px solid var(--warn, #fbbf24);
+  padding: var(--space-sm);
+  margin-bottom: var(--space-sm);
+  border-color: var(--color-warning);
+  background: var(--color-glass-subtle);
+  box-shadow: none;
 }
 .denial h4 {
   margin: 0 0 4px;
@@ -631,32 +672,85 @@ onBeforeUnmount(stopPoll)
 .tabs {
   display: flex;
   gap: 6px;
-  margin-bottom: 14px;
-  border-bottom: 1px solid var(--border);
+  width: fit-content;
+  max-width: 100%;
+  margin-bottom: var(--space-sm);
+  padding: var(--space-3xs);
+  overflow-x: auto;
+  border: var(--rule-hair) solid var(--color-rule);
+  border-radius: var(--radius-input);
+  background: var(--color-glass-strong);
+  box-shadow: var(--shadow-card);
+  backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
+  scrollbar-width: none;
 }
+.tabs::-webkit-scrollbar { display: none; }
 .tab {
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  padding: 8px 16px;
+  min-height: 44px;
+  padding: var(--space-2xs) var(--space-sm);
   border: none;
   background: transparent;
-  color: var(--text-muted);
-  font-size: 14px;
+  color: var(--color-muted);
+  border-radius: var(--radius-xs);
+  font-size: var(--text-sm);
   font-weight: 600;
   cursor: pointer;
-  border-bottom: 2px solid transparent;
-  margin-bottom: -1px;
+  white-space: nowrap;
+  transition:
+    color var(--dur-micro) var(--ease-out),
+    background-color var(--dur-micro) var(--ease-out),
+    transform var(--dur-micro) var(--ease-out);
 }
-.tab:hover {
-  color: var(--text);
+.tab:hover,
+.tab:focus-visible {
+  color: var(--color-ink);
+  background: var(--color-glass-hover);
 }
 .tab.active {
-  color: var(--primary);
-  border-bottom-color: var(--primary);
+  color: var(--color-ink);
+  background: var(--color-glass-hover);
+  box-shadow: inset 0 0 0 var(--rule-hair) var(--color-rule-2);
+}
+.tab:focus-visible {
+  outline: var(--rule-fine) solid var(--color-focus);
+  outline-offset: var(--space-3xs);
+}
+.tab:active {
+  transform: translateY(1px);
 }
 .table-wrap {
   overflow-x: auto;
+  overscroll-behavior-inline: contain;
+  scrollbar-gutter: stable;
+}
+.table-wrap:focus-visible {
+  outline: var(--rule-fine) solid var(--color-focus);
+  outline-offset: calc(-1 * var(--rule-fine));
+}
+.table-sheet {
+  background: var(--color-glass-strong);
+  border-color: var(--color-rule);
+  border-radius: var(--radius-panel);
+  box-shadow: var(--shadow-card);
+  backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
+}
+.table-sheet .data-table {
+  min-width: 820px;
+}
+.table-sheet .panel-head {
+  min-height: 56px;
+  border-bottom-color: var(--color-rule);
+}
+.data-table thead th {
+  background: var(--color-glass-subtle);
+}
+.data-table tbody tr:focus-within td {
+  background: var(--color-glass-hover);
 }
 .num {
   text-align: right;
@@ -694,9 +788,10 @@ onBeforeUnmount(stopPoll)
 }
 .seg {
   padding: 4px 12px;
-  border: 1px solid var(--border);
-  background: var(--surface);
-  color: var(--text-muted);
+  min-height: 44px;
+  border: var(--rule-hair) solid var(--color-rule);
+  background: var(--color-glass-subtle);
+  color: var(--color-muted);
   font: inherit;
   font-size: 13px;
   cursor: pointer;
@@ -709,12 +804,16 @@ onBeforeUnmount(stopPoll)
   border-left: none;
 }
 .seg:hover {
-  color: var(--text);
+  color: var(--color-ink);
 }
 .seg.active {
-  color: var(--primary);
-  border-color: var(--primary);
-  background: var(--primary-soft, var(--surface-2));
+  color: var(--color-accent);
+  border-color: var(--color-accent);
+  background: var(--color-glass-hover);
+}
+.seg:focus-visible {
+  outline: var(--rule-fine) solid var(--color-focus);
+  outline-offset: var(--space-3xs);
 }
 .panel-head {
   flex-wrap: wrap;
@@ -735,6 +834,54 @@ onBeforeUnmount(stopPoll)
 }
 .empty {
   text-align: center;
-  padding: 40px 20px;
+  padding: var(--space-xl) var(--space-md);
+}
+
+@media (max-width: 768px) {
+  .workbench-head {
+    align-items: stretch;
+  }
+  .picker {
+    width: 100%;
+    flex-wrap: wrap;
+  }
+  .picker select {
+    flex: 1 1 220px;
+    max-width: none;
+  }
+  .panel-head {
+    align-items: stretch;
+    flex-direction: column;
+  }
+  .panel-head .spacer {
+    display: none;
+  }
+  .sort,
+  .basis {
+    width: 100%;
+    flex-wrap: wrap;
+  }
+  .sort select {
+    flex: 1 1 180px;
+  }
+}
+
+@media (max-width: 414px) {
+  .picker .btn {
+    width: 100%;
+  }
+  .workbench-tabs {
+    width: 100%;
+  }
+  .workbench-tabs .tab {
+    flex: 1 0 auto;
+  }
+  .basis-label,
+  .sort label {
+    flex-basis: 100%;
+  }
+  .seg {
+    flex: 1;
+  }
 }
 </style>

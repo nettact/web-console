@@ -636,40 +636,55 @@ onMounted(() => {
 </script>
 
 <template>
-  <main class="page">
-    <div class="page-head">
+  <main class="page settings-page">
+    <div class="page-head settings-head">
       <h2>{{ t('settings.title') }}</h2>
       <p class="sub">{{ t('settings.sub') }}</p>
     </div>
 
-    <div class="tabs" role="tablist">
+    <div class="tabs settings-tabs" role="tablist" :aria-label="t('settings.title')">
       <button
+        id="settings-tab-general"
         class="tab" role="tab"
         :class="{ active: tab === 'general' }" :aria-selected="tab === 'general'"
+        :tabindex="tab === 'general' ? 0 : -1"
+        aria-controls="settings-panel-general"
         @click="tab = 'general'"
       >
         {{ t('settings.tabs.general') }}
       </button>
       <button
+        id="settings-tab-notifications"
         class="tab" role="tab"
         :class="{ active: tab === 'notifications' }" :aria-selected="tab === 'notifications'"
+        :tabindex="tab === 'notifications' ? 0 : -1"
+        aria-controls="settings-panel-notifications"
         @click="tab = 'notifications'"
       >
         {{ t('settings.tabs.notifications') }}
         <span class="count">{{ channels.length }}</span>
       </button>
       <button
+        id="settings-tab-data"
         class="tab" role="tab"
         :class="{ active: tab === 'data' }" :aria-selected="tab === 'data'"
+        :tabindex="tab === 'data' ? 0 : -1"
+        aria-controls="settings-panel-data"
         @click="tab = 'data'"
       >
         {{ t('settings.tabs.data') }}
       </button>
     </div>
 
-    <p v-if="error" class="err">{{ error }}</p>
+    <p v-if="error" class="err" role="alert">{{ error }}</p>
 
-    <div v-show="tab === 'general'">
+    <div
+      v-show="tab === 'general'"
+      id="settings-panel-general"
+      class="preference-workspace"
+      role="tabpanel"
+      aria-labelledby="settings-tab-general"
+    >
     <section class="panel">
       <div class="panel-head"><h3>{{ t('setup.settingsTitle') }}</h3></div>
       <div class="panel-body">
@@ -922,7 +937,13 @@ onMounted(() => {
 
     </div><!-- /general -->
 
-    <div v-show="tab === 'notifications'">
+    <div
+      v-show="tab === 'notifications'"
+      id="settings-panel-notifications"
+      class="preference-workspace"
+      role="tabpanel"
+      aria-labelledby="settings-tab-notifications"
+    >
     <section class="panel">
       <div class="panel-head"><h3>{{ t('settings.channels') }}</h3><span class="count">{{ channels.length }}</span></div>
       <div class="panel-body">
@@ -930,7 +951,12 @@ onMounted(() => {
 
         <ChannelAddForm :native-notify="serverInfo?.native_notify === true" @added="load" />
       </div>
-      <div class="table-wrap">
+      <div
+        class="table-wrap"
+        role="region"
+        tabindex="0"
+        :aria-label="t('settings.channels')"
+      >
         <table class="data-table">
           <thead><tr><th>{{ t('settings.thName') }}</th><th>{{ t('settings.thType') }}</th><th>{{ t('settings.thConfig') }}</th><th class="center">{{ t('settings.thEnabled') }}</th><th class="center">
             {{ t('settings.thStormMerge') }}
@@ -1045,7 +1071,12 @@ onMounted(() => {
       <div class="panel-body">
         <p class="hint">{{ t('notificationPolicy.overridesHint') }}</p>
       </div>
-      <div class="table-wrap">
+      <div
+        class="table-wrap"
+        role="region"
+        tabindex="0"
+        :aria-label="t('notificationPolicy.overridesTitle')"
+      >
         <table class="data-table">
           <thead>
             <tr>
@@ -1161,7 +1192,13 @@ onMounted(() => {
     </section>
     </div><!-- /notifications -->
 
-    <div v-show="tab === 'data'">
+    <div
+      v-show="tab === 'data'"
+      id="settings-panel-data"
+      class="preference-workspace data-workspace"
+      role="tabpanel"
+      aria-labelledby="settings-tab-data"
+    >
       <div class="stat-grid">
         <div class="stat" v-if="quota">
           <div class="label">{{ t('settings.agentQuota') }}</div>
@@ -1227,43 +1264,106 @@ onMounted(() => {
 </template>
 
 <style scoped>
+/* Hallmark · designed-as-app · design-system: design.md · page: Settings */
 .tabs {
   display: flex;
   gap: 6px;
-  margin-bottom: 18px;
-  border-bottom: 1px solid var(--border);
+  width: fit-content;
+  max-width: 100%;
+  margin-bottom: var(--space-md);
+  padding: var(--space-3xs);
+  overflow-x: auto;
+  border: var(--rule-hair) solid var(--color-rule);
+  border-radius: var(--radius-input);
+  background: var(--color-glass-strong);
+  box-shadow: var(--shadow-card);
+  backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
+  scrollbar-width: none;
 }
+.tabs::-webkit-scrollbar { display: none; }
 .tab {
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   gap: 8px;
-  padding: 8px 16px;
+  min-height: 44px;
+  padding: var(--space-2xs) var(--space-sm);
   border: none;
   background: transparent;
-  color: var(--text-muted);
-  font-size: 14px;
+  color: var(--color-muted);
+  border-radius: var(--radius-xs);
+  font-size: var(--text-sm);
   font-weight: 600;
   cursor: pointer;
-  border-bottom: 2px solid transparent;
-  margin-bottom: -1px;
+  white-space: nowrap;
+  transition:
+    color var(--dur-micro) var(--ease-out),
+    background-color var(--dur-micro) var(--ease-out),
+    transform var(--dur-micro) var(--ease-out);
 }
-.tab:hover {
-  color: var(--text);
+.tab:hover,
+.tab:focus-visible {
+  color: var(--color-ink);
+  background: var(--color-glass-hover);
 }
 .tab.active {
-  color: var(--primary);
-  border-bottom-color: var(--primary);
+  color: var(--color-ink);
+  background: var(--color-glass-hover);
+  box-shadow: inset 0 0 0 var(--rule-hair) var(--color-rule-2);
+}
+.tab:focus-visible {
+  outline: var(--rule-fine) solid var(--color-focus);
+  outline-offset: var(--space-3xs);
+}
+.tab:active {
+  transform: translateY(1px);
 }
 /* Neutralize the panel-head `.count` auto-margin when used as a tab badge. */
 .tabs .count {
   margin-left: 2px;
 }
 .panel {
-  margin-bottom: 20px;
+  margin-bottom: var(--space-md);
+  background: var(--color-glass);
+  border-color: var(--color-rule);
+  border-radius: var(--radius-card);
+  box-shadow: var(--shadow-card);
+  backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
+}
+.preference-workspace {
+  width: min(100%, 1180px);
+}
+.preference-workspace > .panel:last-child {
+  margin-bottom: 0;
+}
+.panel :deep(.panel) {
+  background: var(--color-glass-subtle);
+  box-shadow: none;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+.panel-head {
+  min-height: 52px;
+  border-bottom-color: var(--color-rule);
+}
+.panel-head h3 {
+  font-family: var(--font-display);
+  letter-spacing: -0.018em;
 }
 .table-wrap {
   overflow-x: auto;
   border-top: 1px solid var(--border);
+  overscroll-behavior-inline: contain;
+  scrollbar-gutter: stable;
+}
+.table-wrap:focus-visible {
+  outline: var(--rule-fine) solid var(--color-focus);
+  outline-offset: calc(-1 * var(--rule-fine));
+}
+.data-table {
+  min-width: 780px;
 }
 .count {
   margin-left: auto;
@@ -1474,5 +1574,74 @@ input.port-in {
 :root.dark .warn-box,
 .dark .warn-box {
   color: #fbbf24;
+}
+
+@media (max-width: 768px) {
+  .settings-head {
+    margin-bottom: var(--space-sm);
+  }
+  .settings-tabs {
+    position: sticky;
+    top: var(--space-xs);
+    z-index: var(--z-sticky);
+    width: 100%;
+  }
+  .settings-tabs .tab {
+    flex: 1 0 auto;
+  }
+  .panel-body,
+  .panel-head {
+    padding-inline: var(--space-sm);
+  }
+  .knob-grid {
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--space-sm);
+  }
+  .sum-row {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: var(--space-3xs);
+  }
+  .sum-k {
+    min-width: 0;
+  }
+}
+
+@media (max-width: 414px) {
+  input,
+  input.wide,
+  select.wide {
+    min-width: 0;
+    width: 100%;
+    max-width: 100%;
+  }
+  .field-row > .btn {
+    width: 100%;
+  }
+  .listen-modes {
+    flex-direction: column;
+    gap: var(--space-xs);
+  }
+  .row-actions {
+    width: 100%;
+    flex-wrap: wrap;
+  }
+  .panel-foot {
+    align-items: stretch;
+    flex-direction: column;
+    padding-inline: var(--space-sm);
+  }
+  .panel-foot .btn {
+    width: 100%;
+  }
+  .stat-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tab {
+    transition-duration: var(--dur-micro);
+  }
 }
 </style>

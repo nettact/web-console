@@ -16,30 +16,34 @@ const pick = (l: Lang) => setLocale(l)
 <style scoped>
 .lang-switch {
   display: inline-flex;
-  padding: 3px;
-  gap: 2px;
-  background: var(--surface-2);
-  border: 1px solid var(--border);
+  min-height: 2.75rem;
+  padding: var(--space-3xs);
+  gap: var(--space-3xs);
+  border: var(--rule-hair) solid var(--color-rule);
   border-radius: var(--radius-pill);
+  background: var(--color-glass-subtle);
 }
 .lang-switch button {
+  min-width: 2.25rem;
   border: none;
   background: transparent;
-  color: var(--text-dim);
-  font: inherit;
-  font-size: 12.5px;
-  font-weight: 600;
+  color: var(--color-ink-2);
+  font-family: var(--font-body);
+  font-size: var(--text-xs);
+  font-weight: 650;
   line-height: 1;
-  padding: 4px 10px;
+  padding: var(--space-2xs);
   border-radius: var(--radius-pill);
   cursor: pointer;
-  transition: background 0.16s, color 0.16s;
+  transition:
+    transform var(--dur-micro) var(--ease-out),
+    opacity var(--dur-micro) var(--ease-out);
 }
 .lang-switch button:hover {
-  color: var(--text);
+  color: var(--color-ink);
 }
 .lang-switch button.active {
-  color: #04121c;
-  background: linear-gradient(150deg, #7dd3fc, var(--primary-strong));
+  color: var(--color-accent-ink);
+  background: var(--color-accent);
 }
 </style>
