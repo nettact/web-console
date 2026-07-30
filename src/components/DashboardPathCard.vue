@@ -218,6 +218,7 @@ function step(index: number): string {
  * pre-emit critique: P5 H5 E5 S5 R5 V5 · contrast: pass (40–41)
  */
 .path-card-body {
+  container: dashboard-path / inline-size;
   position: relative;
   padding: 22px;
   overflow: hidden;
@@ -500,7 +501,7 @@ function step(index: number): string {
 }
 .path-diagnosis-target strong { margin-top: 2px; font-size: 10px; }
 .path-diagnosis-target em { color: var(--color-muted); font-size: 8px; font-style: normal; }
-@media (max-width: 1500px) {
+@container dashboard-path (max-width: 93.75rem) {
   .path-node { min-height: 122px; }
   .path-node-main {
     grid-template-columns: 34px minmax(0, 1fr);
@@ -528,21 +529,30 @@ function step(index: number): string {
     padding-top: 6px;
   }
 }
-@media (max-width: 1320px) {
-  .path-flow { grid-template-columns: repeat(13, minmax(0, auto)); overflow-x: auto; padding-bottom: 4px; scrollbar-width: thin; }
-  .path-node { width: 176px; }
+@container dashboard-path (max-width: 82.5rem) {
+  .path-flow {
+    grid-template-columns: 176px repeat(6, 22px 176px);
+    overflow-x: auto;
+    overscroll-behavior-inline: contain;
+    padding-bottom: 4px;
+    scrollbar-width: thin;
+    scroll-snap-type: inline proximity;
+  }
+  .path-node { width: 176px; scroll-snap-align: start; }
   .path-connector { width: 22px; }
 }
-@media (max-width: 680px) {
-  .path-card-body { padding: 18px; }
+@container dashboard-path (max-width: 32.5rem) {
   .path-card-head { align-items: stretch; flex-direction: column; gap: 12px; }
   .path-card-actions { justify-content: space-between; }
-  .path-flow { grid-template-columns: 1fr; overflow: visible; padding-bottom: 0; }
+  .path-flow { grid-template-columns: minmax(0, 1fr); overflow-x: visible; padding-bottom: 0; scroll-snap-type: none; }
   .path-node { width: auto; min-height: 122px; }
   .path-connector { width: 100%; height: 22px; justify-content: flex-start; padding-left: 31px; }
   .path-connector i { width: 1px; height: 100%; background: color-mix(in srgb, currentColor 45%, var(--color-rule)); }
   .path-connector b { right: auto; bottom: 3px; left: 27px; transform: rotate(135deg); }
   .path-diagnosis { align-items: flex-start; flex-wrap: wrap; }
   .path-diagnosis-target { width: 100%; max-width: none; margin-left: 40px; }
+}
+@media (max-width: 42.5rem) {
+  .path-card-body { padding: 18px; }
 }
 </style>
