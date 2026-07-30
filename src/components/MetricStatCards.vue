@@ -33,4 +33,13 @@ defineProps<{ cards: Card[] }>()
 .value.sm {
   font-size: 20px;
 }
+
+.value,
+.value .unit {
+  white-space: nowrap;
+}
+
+.value .unit {
+  display: inline-block;
+}
 </style>

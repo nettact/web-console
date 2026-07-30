@@ -1333,7 +1333,7 @@ onMounted(() => {
   -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
 }
 .preference-workspace {
-  width: min(100%, 1180px);
+  width: 100%;
 }
 .preference-workspace > .panel:last-child {
   margin-bottom: 0;

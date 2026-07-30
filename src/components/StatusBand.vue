@@ -12,8 +12,8 @@ const props = defineProps<{
   toUp?: (v: number) => number
 }>()
 
-const STATE_ON = '#34d399'
-const STATE_OFF = '#f87171'
+const STATE_ON = 'var(--color-success)'
+const STATE_OFF = 'var(--color-danger)'
 const W = 100
 const H = 10
 

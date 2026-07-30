@@ -810,7 +810,7 @@ onMounted(loadAll)
 <style scoped>
 /* Hallmark · designed-as-app · design-system: design.md · page: Monitor form */
 .config-canvas {
-  width: min(100%, 1040px);
+  width: 100%;
 }
 .config-head h2 {
   font-family: var(--font-display);

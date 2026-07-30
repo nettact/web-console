@@ -81,6 +81,8 @@ export default {
     consoleSubtitle: 'Network Monitoring Console',
     liveCollect: 'Live · 5s',
     logout: 'Log out',
+    openNavigation: 'Open navigation',
+    closeNavigation: 'Close navigation',
     themeLight: 'Switch to light mode',
     themeDark: 'Switch to dark mode',
   },

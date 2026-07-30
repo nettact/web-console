@@ -116,7 +116,7 @@ async function dismissBanner(): Promise<void> {
     <button
       v-if="navOpen"
       class="nav-backdrop"
-      aria-label="Close navigation"
+      :aria-label="t('app.closeNavigation')"
       @click="navOpen = false"
     ></button>
     <aside id="primary-navigation" class="sidebar" :class="{ 'is-open': navOpen }">
@@ -220,7 +220,7 @@ async function dismissBanner(): Promise<void> {
         <button
           class="menu-toggle"
           type="button"
-          aria-label="Open navigation"
+          :aria-label="t('app.openNavigation')"
           aria-controls="primary-navigation"
           :aria-expanded="navOpen"
           @click="navOpen = true"
@@ -483,30 +483,6 @@ async function dismissBanner(): Promise<void> {
 }
 
 /* ---------------- responsive ---------------- */
-@media (max-width: 960px) {
-  .app-shell {
-    grid-template-columns: 68px 1fr;
-  }
-  .logo-text,
-  .nav-label,
-  .sidebar-foot span:last-child {
-    display: none;
-  }
-  .logo {
-    justify-content: center;
-    padding: 6px 0 20px;
-  }
-  .nav-link {
-    justify-content: center;
-    padding: 11px 0;
-  }
-  .nav-link.is-active::before {
-    left: -14px;
-  }
-  .sidebar-foot {
-    justify-content: center;
-  }
-}
 @media (max-width: 560px) {
   .uname {
     display: none;
@@ -606,7 +582,7 @@ async function dismissBanner(): Promise<void> {
 }
 
 .topbar {
-  top: var(--space-xs);
+  top: 0;
   z-index: var(--z-sticky);
   height: 3.5rem;
   margin: var(--space-xs) var(--page-edge) 0;
@@ -712,6 +688,26 @@ async function dismissBanner(): Promise<void> {
     padding-inline: var(--space-2xs);
   }
 
+  .logo-text,
+  .nav-label,
+  .sidebar-foot span:last-child {
+    display: none;
+  }
+
+  .logo,
+  .nav-link,
+  .sidebar-foot {
+    justify-content: center;
+  }
+
+  .logo {
+    padding: var(--space-2xs) 0 var(--space-md);
+  }
+
+  .nav-link {
+    padding: var(--space-xs) 0;
+  }
+
   .nav-link.is-active::before {
     display: none;
   }
@@ -760,6 +756,10 @@ async function dismissBanner(): Promise<void> {
     justify-content: flex-start;
   }
 
+  .logo {
+    padding: var(--space-2xs) var(--space-2xs) var(--space-md);
+  }
+
   .nav-link {
     padding-inline: var(--space-xs);
   }
@@ -776,7 +776,7 @@ async function dismissBanner(): Promise<void> {
   }
 
   .topbar {
-    top: var(--space-2xs);
+    top: 0;
     gap: var(--space-2xs);
     margin: var(--space-2xs) var(--space-2xs) 0;
   }

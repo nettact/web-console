@@ -665,9 +665,7 @@ label {
   --code-bg: color-mix(in oklch, var(--color-paper) 76%, transparent);
   --scrollbar-thumb: var(--color-rule-2);
   --scrollbar-thumb-hover: color-mix(in oklch, var(--color-muted) 54%, transparent);
-  --app-bg-image:
-    linear-gradient(118deg, transparent 0 48%, color-mix(in oklch, var(--color-accent) 18%, transparent) 48% 52%, transparent 52%),
-    linear-gradient(156deg, color-mix(in oklch, var(--color-paper-3) 74%, var(--color-paper)) 0 34%, var(--color-paper) 34% 67%, color-mix(in oklch, var(--color-paper-2) 82%, var(--color-paper-3)) 67%);
+  --app-bg-image: linear-gradient(156deg, color-mix(in oklch, var(--color-paper-3) 74%, var(--color-paper)) 0 34%, var(--color-paper) 34% 67%, color-mix(in oklch, var(--color-paper-2) 82%, var(--color-paper-3)) 67%);
 
   --text: var(--color-ink);
   --text-dim: var(--color-ink-2);
@@ -676,8 +674,8 @@ label {
   --primary-strong: var(--color-accent-strong);
   --primary-soft: color-mix(in oklch, var(--color-accent) 16%, transparent);
   --primary-glow: color-mix(in oklch, var(--color-accent) 24%, transparent);
-  --accent: var(--color-info);
-  --accent-soft: color-mix(in oklch, var(--color-info) 14%, transparent);
+  --accent: var(--color-chart-secondary);
+  --accent-soft: color-mix(in oklch, var(--color-chart-secondary) 14%, transparent);
   --success: var(--color-success);
   --success-soft: color-mix(in oklch, var(--color-success) 14%, transparent);
   --danger: var(--color-danger);
@@ -701,7 +699,7 @@ body {
 }
 
 body {
-  min-width: 20rem;
+  min-width: 0;
   background-color: var(--color-paper);
   background-image: var(--app-bg-image);
   background-size: cover;
@@ -727,15 +725,6 @@ body::before {
     transparent 82%
   );
   opacity: 0.48;
-}
-
-body::after {
-  content: "";
-  position: fixed;
-  inset: 0;
-  z-index: 0;
-  pointer-events: none;
-  background: linear-gradient(104deg, transparent 0 49%, color-mix(in oklch, var(--color-accent) 12%, transparent) 49% 52%, transparent 52%);
 }
 
 #app {
@@ -1036,7 +1025,7 @@ textarea {
   .card,
   .panel,
   .stat,
-  .btn,
+  .btn:not(.btn-primary):not(.btn-danger),
   input:not([type="checkbox"]):not([type="radio"]),
   select,
   textarea {

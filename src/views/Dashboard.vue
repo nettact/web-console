@@ -36,6 +36,7 @@ import {
   type DashboardLayoutPresetID,
 } from '../lib/dashboardLayout'
 import { fmtBps, fmtBytes } from '../lib/format'
+import { chartColor } from '../lib/chartColor'
 import { buildDashboardPath } from '../lib/dashboardPath'
 import { agentLabel } from '../lib/agentLabel'
 import { natCodeLabel, natTone } from '../lib/metricMeta'
@@ -780,14 +781,10 @@ function aggregateWorst(samples: Sample[]): Sample[] {
 const qualityRtt = computed(() => aggregateWorst(qualityRttHistory.value))
 const qualityLoss = computed(() => aggregateWorst(qualityLossHistory.value))
 const qualityJitter = computed(() => aggregateWorst(qualityJitterHistory.value))
-function chartColor(token: string): string {
-  if (typeof window === 'undefined') return ''
-  return getComputedStyle(document.documentElement).getPropertyValue(token).trim()
-}
 const qualityChartMetrics = computed(() => [
-  { key: 'rtt', label: t('dashboard.qualityRtt'), kind: 'probe.icmp.rtt_ms', unit: 'ms', color: chartColor('--color-info'), samples: qualityRtt.value },
-  { key: 'jitter', label: t('dashboard.qualityJitter'), kind: 'probe.icmp.jitter_ms', unit: 'ms', color: chartColor('--color-accent'), samples: qualityJitter.value },
-  { key: 'loss', label: t('dashboard.qualityLoss'), kind: 'probe.icmp.loss_pct', unit: 'pct', color: chartColor('--color-warning'), samples: qualityLoss.value },
+  { key: 'rtt', label: t('dashboard.qualityRtt'), kind: 'probe.icmp.rtt_ms', unit: 'ms', color: chartColor('--color-info', '#38bdf8'), samples: qualityRtt.value },
+  { key: 'jitter', label: t('dashboard.qualityJitter'), kind: 'probe.icmp.jitter_ms', unit: 'ms', color: chartColor('--color-chart-secondary', '#f472b6'), samples: qualityJitter.value },
+  { key: 'loss', label: t('dashboard.qualityLoss'), kind: 'probe.icmp.loss_pct', unit: 'pct', color: chartColor('--color-warning', '#fbbf24'), samples: qualityLoss.value },
 ].filter((metric) => metric.samples.length))
 
 const qualityRttP95 = computed(() => qualitySummary.value?.kinds['probe.icmp.rtt_ms']?.p95 ?? null)
@@ -795,8 +792,8 @@ const qualityJitterP95 = computed(() => qualitySummary.value?.kinds['probe.icmp.
 const qualityLossAvg = computed(() => qualitySummary.value?.kinds['probe.icmp.loss_pct']?.avg ?? null)
 
 const trafficChartMetrics = computed(() => [
-  { key: 'rx', label: t('dashboard.download'), kind: 'host.net.rx_bps', unit: 'bps', color: chartColor('--color-info'), samples: trafficRxHistory.value },
-  { key: 'tx', label: t('dashboard.upload'), kind: 'host.net.tx_bps', unit: 'bps', color: chartColor('--color-accent'), samples: trafficTxHistory.value },
+  { key: 'rx', label: t('dashboard.download'), kind: 'host.net.rx_bps', unit: 'bps', color: chartColor('--color-info', '#38bdf8'), samples: trafficRxHistory.value },
+  { key: 'tx', label: t('dashboard.upload'), kind: 'host.net.tx_bps', unit: 'bps', color: chartColor('--color-chart-secondary', '#f472b6'), samples: trafficTxHistory.value },
 ].filter((metric) => metric.samples.length))
 const trafficPeak = computed(() => {
   const values = [...trafficRxHistory.value, ...trafficTxHistory.value].map((sample) => sample.value)
@@ -1543,6 +1540,7 @@ onBeforeUnmount(() => {
 
 .agent-hero {
   --health-color: var(--color-neutral);
+  --health-border-color: var(--glass-border);
   position: relative;
   display: grid;
   grid-template-columns: minmax(260px, 1.5fr) minmax(170px, .8fr) auto;
@@ -1552,7 +1550,7 @@ onBeforeUnmount(() => {
   margin-bottom: 18px;
   padding: 28px 30px;
   overflow: hidden;
-  border: 1px solid color-mix(in srgb, var(--health-color) 34%, var(--color-rule));
+  border: 1px solid var(--health-border-color);
   border-radius: var(--radius-panel);
   background: var(--glass-specular), var(--color-glass-strong);
   box-shadow: inset 0 1px var(--glass-highlight), var(--shadow-card);
@@ -1560,8 +1558,14 @@ onBeforeUnmount(() => {
   -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
 }
 .agent-hero.health-good { --health-color: var(--color-success); }
-.agent-hero.health-warn { --health-color: var(--color-warning); }
-.agent-hero.health-bad { --health-color: var(--color-danger); }
+.agent-hero.health-warn {
+  --health-color: var(--color-warning);
+  --health-border-color: color-mix(in srgb, var(--color-warning) 34%, var(--color-rule));
+}
+.agent-hero.health-bad {
+  --health-color: var(--color-danger);
+  --health-border-color: color-mix(in srgb, var(--color-danger) 34%, var(--color-rule));
+}
 .agent-identity { display: flex; align-items: center; gap: 16px; min-width: 0; z-index: 1; }
 .agent-mark { display: grid; place-items: center; width: 58px; height: 58px; flex: none; color: var(--color-accent); border: 1px solid color-mix(in srgb, var(--color-accent) 30%, transparent); border-radius: 17px; background: color-mix(in srgb, var(--color-accent) 14%, transparent); }
 .agent-mark svg { width: 28px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }

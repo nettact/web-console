@@ -8,12 +8,13 @@ import { theme } from '../theme'
 import { type Seg, boolSegments, toPoints, uptimeSegments } from '../lib/timeline'
 import { fmtByUnit, isByteUnit } from '../lib/format'
 import { lineDataWithGaps } from '../lib/chartSeries'
+import { chartColor, oklchToRgb } from '../lib/chartColor'
 
 const { t, locale } = useI18n()
 
 // ECharts renders to canvas and can't read CSS custom properties, so the chart
-// chrome (axes, grid, tooltip) carries its own per-theme palette. Brand/state
-// hues (lines, timeline fills) are identical in both themes.
+// chrome (axes, grid, tooltip) carries its own per-theme palette. Series and
+// state colours are resolved from the active design tokens by their callers.
 const chartTheme = computed(() =>
   theme.value === 'light'
     ? {
@@ -58,9 +59,11 @@ const el = ref<HTMLDivElement>()
 let chart: echarts.ECharts | null = null
 let resizeObserver: ResizeObserver | null = null
 
-const STATE_ON = '#34d399' // 正常 / 在线 / 启用
-const STATE_OFF = '#f87171' // 故障 / 中断 / 禁用
-const MARK = '#fbbf24'
+const stateColors = computed(() => ({
+  on: chartColor('--color-success', '#34d399'),
+  off: chartColor('--color-danger', '#f87171'),
+  mark: chartColor('--color-warning', '#fbbf24'),
+}))
 
 const UNIT_LABEL: Record<string, string> = { ms: 'ms', pct: '%', count: '' }
 const unitName = (u: string) => {
@@ -135,6 +138,7 @@ function renderLines(ms: ChartMetric[]) {
   const series = ms.map((m) => {
     const isBool = m.unit === 'bool'
     const ai = Math.max(0, axisUnits.indexOf(m.unit || ''))
+    const color = oklchToRgb(m.color) ?? m.color
     return {
       name: m.label,
       type: 'line' as const,
@@ -144,15 +148,15 @@ function renderLines(ms: ChartMetric[]) {
       yAxisIndex: ai,
       data: lineDataWithGaps(m.samples),
       connectNulls: false,
-      lineStyle: { width: 2, color: m.color },
-      itemStyle: { color: m.color },
+      lineStyle: { width: 2, color },
+      itemStyle: { color },
       // Fill only when a single line owns the chart; overlaid areas muddy each other.
       areaStyle: multi
         ? undefined
         : {
             color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
-              { offset: 0, color: m.color + '55' },
-              { offset: 1, color: m.color + '00' },
+              { offset: 0, color: echarts.color.modifyAlpha(color, 0.33) ?? color },
+              { offset: 1, color: echarts.color.modifyAlpha(color, 0) ?? 'transparent' },
             ]),
           },
     }
@@ -227,6 +231,7 @@ function renderLines(ms: ChartMetric[]) {
 function renderTimeline(segs: Seg[], onLabel: string, offLabel: string, restarts: number[] = []) {
   if (!chart) return
   const ct = chartTheme.value
+  const state = stateColors.value
   chart.setOption(
     {
       title: baseTitle(),
@@ -239,7 +244,7 @@ function renderTimeline(segs: Seg[], onLabel: string, offLabel: string, restarts
         formatter: (p: { value: [number, number, number] }) => {
           const [start, end, ok] = p.value
           const label = ok ? onLabel : offLabel
-          const dot = ok ? STATE_ON : STATE_OFF
+          const dot = ok ? state.on : state.off
           return (
             `<span style="display:inline-block;width:8px;height:8px;border-radius:2px;background:${dot};margin-right:6px"></span>` +
             `<b>${label}</b><br/>${fmtTime(start)} → ${fmtTime(end)}<br/><span style="color:${ct.label}">${t('chart.duration', { dur: fmtDur(end - start) })}</span>`
@@ -274,15 +279,15 @@ function renderTimeline(segs: Seg[], onLabel: string, offLabel: string, restarts
             return {
               type: 'rect',
               shape: { x: start[0], y: start[1] - bandH / 2, width: w, height: bandH, r: 2 },
-              style: { fill: api.value(2) ? STATE_ON : STATE_OFF },
+              style: { fill: api.value(2) ? state.on : state.off },
             }
           },
           markLine: restarts.length
             ? {
                 symbol: 'none',
                 silent: false,
-                lineStyle: { color: MARK, type: 'dashed', width: 1 },
-                label: { formatter: t('chart.restart'), color: MARK, fontSize: 10, position: 'insideEndTop' },
+                lineStyle: { color: state.mark, type: 'dashed', width: 1 },
+                label: { formatter: t('chart.restart'), color: state.mark, fontSize: 10, position: 'insideEndTop' },
                 data: restarts.map((t) => ({ xAxis: t })),
               }
             : undefined,

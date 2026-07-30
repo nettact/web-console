@@ -276,25 +276,6 @@ onBeforeUnmount(() => {
 
     <p v-if="error" class="err page-error">{{ error }}</p>
 
-    <section v-show="tab === 'status'" class="summary-grid" :aria-label="t('agentStatus.summaryAll')">
-      <button
-        v-for="c in summaryCards"
-        :key="c.key"
-        class="summary-card"
-        :class="[`tone-${c.tone}`, { active: statusFilter === c.key }]"
-        @click="toggleCard(c.key)"
-      >
-        <span class="radar" aria-hidden="true"><i></i><b></b></span>
-        <span class="summary-copy">
-          <small>{{ c.label }}</small>
-          <strong>{{ c.n }}</strong>
-        </span>
-        <svg class="spark" viewBox="0 0 120 28" preserveAspectRatio="none" aria-hidden="true">
-          <path d="M0 23 10 19 18 22 27 13 36 18 45 11 55 17 65 8 75 15 84 6 94 12 104 5 120 9" />
-        </svg>
-      </button>
-    </section>
-
     <div class="console-surface">
       <nav class="tabs">
         <button :class="{ active: tab === 'status' }" @click="tab = 'status'">{{ t('agentStatus.tabStatus') }}</button>
@@ -304,6 +285,26 @@ onBeforeUnmount(() => {
 
       <!-- ============ STATUS LIST ============ -->
       <section v-show="tab === 'status'" class="status-pane">
+        <div class="summary-grid" role="group" :aria-label="t('agentStatus.summaryAll')">
+          <button
+            v-for="c in summaryCards"
+            :key="c.key"
+            class="summary-card"
+            :class="[`tone-${c.tone}`, { active: statusFilter === c.key }]"
+            :aria-pressed="statusFilter === c.key"
+            @click="toggleCard(c.key)"
+          >
+            <span class="radar" aria-hidden="true"><i></i><b></b></span>
+            <span class="summary-copy">
+              <small>{{ c.label }}</small>
+              <strong>{{ c.n }}</strong>
+            </span>
+            <svg class="spark" viewBox="0 0 120 28" preserveAspectRatio="none" aria-hidden="true">
+              <path d="M0 23 10 19 18 22 27 13 36 18 45 11 55 17 65 8 75 15 84 6 94 12 104 5 120 9" />
+            </svg>
+          </button>
+        </div>
+
         <p v-if="agentStatus.stale" class="hint stale-note">{{ t('agentStatus.staleSnapshot') }}</p>
         <div class="filter-bar">
           <label class="search-control">
@@ -474,7 +475,7 @@ onBeforeUnmount(() => {
 
 <style scoped>
 /* Hallmark · genre: custom application · macrostructure: Index-First · design-system: design.md · designed-as-app
- * pre-emit critique: P5 H5 E4 S5 R5 V4
+ * pre-emit critique: P5 H5 E5 S5 R5 V4 · contrast: pass (40–41)
  */
 .agents-hero {
   display: flex;
@@ -555,8 +556,12 @@ onBeforeUnmount(() => {
 .summary-grid {
   display: grid;
   grid-template-columns: repeat(4, minmax(170px, 1fr));
-  gap: var(--space-xs);
+  gap: var(--rule-hair);
   margin-bottom: var(--space-md);
+  overflow: hidden;
+  border: var(--rule-hair) solid var(--color-rule);
+  border-radius: var(--radius-input);
+  background: var(--color-rule);
 }
 .summary-card {
   --tone: var(--color-accent);
@@ -564,24 +569,40 @@ onBeforeUnmount(() => {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);
   align-items: center;
-  min-height: 104px;
+  min-height: 84px;
   padding: var(--space-sm);
   overflow: hidden;
   color: var(--color-ink);
   text-align: left;
-  border: var(--rule-hair) solid var(--color-rule);
-  border-radius: var(--radius-card);
-  background: var(--color-paper-2);
-  box-shadow: var(--shadow-card);
+  border: 0;
+  border-radius: 0;
+  background: var(--color-glass-strong);
   cursor: pointer;
-  transition: border-color var(--dur-micro) var(--ease-out), transform var(--dur-micro) var(--ease-out);
+  transition: background-color var(--dur-micro) var(--ease-out);
 }
-.summary-card:hover,
+.summary-card::after {
+  position: absolute;
+  right: var(--space-sm);
+  bottom: 0;
+  left: var(--space-sm);
+  height: var(--rule-fine);
+  border-radius: var(--radius-pill) var(--radius-pill) 0 0;
+  background: var(--tone);
+  content: "";
+  opacity: 0;
+  transform: scaleX(.6);
+  transition: opacity var(--dur-micro) var(--ease-out), transform var(--dur-micro) var(--ease-out);
+}
+.summary-card:hover {
+  background: var(--color-glass-hover);
+}
 .summary-card.active {
-  border-color: var(--tone);
+  background: var(--color-paper-3);
 }
-.summary-card:hover { transform: translateY(-1px); }
-.summary-card:active { transform: translateY(1px); }
+.summary-card.active::after {
+  opacity: 1;
+  transform: scaleX(1);
+}
 .summary-card:focus-visible { outline: var(--rule-fine) solid var(--color-focus); outline-offset: var(--space-3xs); }
 .summary-card.tone-good { --tone: var(--color-success); }
 .summary-card.tone-warn { --tone: var(--color-warning); }
@@ -869,7 +890,7 @@ onBeforeUnmount(() => {
   .agents-hero { display: grid; }
   .hero-actions { justify-content: space-between; }
   .summary-grid { grid-template-columns: 1fr; }
-  .summary-card { min-height: 96px; }
+  .summary-card { min-height: 76px; }
   .filter-bar { align-items: stretch; }
   .search-control,
   .filter-bar select { width: 100%; }

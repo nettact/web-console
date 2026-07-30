@@ -213,8 +213,9 @@ function step(index: number): string {
 </template>
 
 <style scoped>
-/* Hallmark · pre-emit critique: P5 H5 E4 S5 R5 V4
- * component: operational path · design-system: design.md
+/* Hallmark · component: operational path · genre: modern-minimal · theme: design.md
+ * data states: healthy · warning · fault · unavailable
+ * pre-emit critique: P5 H5 E5 S5 R5 V5 · contrast: pass (40–41)
  */
 .path-card-body {
   position: relative;
@@ -225,17 +226,19 @@ function step(index: number): string {
 .path-card-title h3 { margin-top: 5px; font-size: 19px; letter-spacing: -.02em; }
 .path-card-actions { display: flex; align-items: center; gap: 14px; }
 .path-summary {
+  --summary-color: var(--color-ink-2);
+  --summary-status-color: var(--color-muted);
   display: inline-flex;
   align-items: center;
   gap: 7px;
   min-height: 27px;
   padding: 0 10px;
-  color: var(--color-muted);
+  color: var(--summary-color);
   font-size: 10px;
   font-weight: 750;
-  border: 1px solid currentColor;
+  border: 1px solid var(--color-rule-2);
   border-radius: 999px;
-  background: color-mix(in srgb, currentColor 7%, var(--color-paper-2));
+  background: transparent;
 }
 .path-summary i, .path-node-meta em i {
   width: 6px;
@@ -245,10 +248,21 @@ function step(index: number): string {
   background: currentColor;
   box-shadow: 0 0 0 3px color-mix(in srgb, currentColor 13%, transparent);
 }
-.path-summary.tone-good { color: var(--color-success); }
-.path-summary.tone-warn { color: var(--color-warning); }
-.path-summary.tone-bad { color: var(--color-danger); }
-.path-summary.tone-muted { color: var(--color-ink-2); }
+.path-summary i { color: var(--summary-status-color); }
+.path-summary.tone-good { --summary-status-color: var(--color-success); }
+.path-summary.tone-warn {
+  --summary-color: var(--color-warning);
+  --summary-status-color: var(--color-warning);
+  border-color: color-mix(in srgb, var(--color-warning) 38%, var(--color-rule));
+  background: color-mix(in srgb, var(--color-warning) 7%, var(--color-glass-subtle));
+}
+.path-summary.tone-bad {
+  --summary-color: var(--color-danger);
+  --summary-status-color: var(--color-danger);
+  border-color: color-mix(in srgb, var(--color-danger) 38%, var(--color-rule));
+  background: color-mix(in srgb, var(--color-danger) 7%, var(--color-glass-subtle));
+}
+.path-summary.tone-muted { --summary-status-color: var(--color-muted); }
 .path-view-link {
   display: inline-flex;
   align-items: center;
@@ -279,17 +293,31 @@ function step(index: number): string {
 }
 .path-node {
   --node-color: var(--color-ink-2);
+  --status-color: var(--node-color);
   min-width: 0;
   min-height: 104px;
   padding: 11px;
-  border: 1px solid color-mix(in srgb, var(--node-color) 22%, var(--color-rule));
+  border: 1px solid var(--color-rule);
   border-radius: 15px;
-  background: color-mix(in srgb, var(--node-color) 5%, var(--color-glass-subtle));
+  background: transparent;
 }
-.path-node.tone-good { --node-color: var(--color-success); }
-.path-node.tone-warn { --node-color: var(--color-warning); }
-.path-node.tone-bad { --node-color: var(--color-danger); }
-.path-node.tone-muted { --node-color: var(--color-ink-2); }
+.path-node.tone-good {
+  --status-color: var(--color-success);
+}
+.path-node.tone-warn {
+  --node-color: var(--color-warning);
+  border-color: color-mix(in srgb, var(--color-warning) 34%, var(--color-rule));
+  background: color-mix(in srgb, var(--color-warning) 5%, transparent);
+}
+.path-node.tone-bad {
+  --node-color: var(--color-danger);
+  border-color: color-mix(in srgb, var(--color-danger) 34%, var(--color-rule));
+  background: color-mix(in srgb, var(--color-danger) 5%, transparent);
+}
+.path-node.tone-muted {
+  --node-color: var(--color-ink-2);
+  background: var(--color-glass-subtle);
+}
 .path-node.root {
   border-color: color-mix(in srgb, var(--node-color) 62%, var(--color-rule));
   outline: 2px solid color-mix(in srgb, var(--node-color) 14%, transparent);
@@ -314,10 +342,20 @@ function step(index: number): string {
   height: 38px;
   place-items: center;
   flex: none;
-  color: var(--node-color);
-  border: 1px solid color-mix(in srgb, var(--node-color) 27%, transparent);
+  color: var(--color-ink);
+  border: 1px solid var(--color-rule);
   border-radius: 11px;
-  background: color-mix(in srgb, var(--node-color) 10%, var(--color-paper-2));
+  background: transparent;
+}
+.path-node.tone-warn .path-icon,
+.path-node.tone-bad .path-icon {
+  color: var(--node-color);
+  border-color: color-mix(in srgb, var(--node-color) 25%, var(--color-rule));
+  background: color-mix(in srgb, var(--node-color) 8%, transparent);
+}
+.path-node.tone-muted .path-icon {
+  color: var(--color-ink-2);
+  background: var(--color-glass-subtle);
 }
 .path-icon svg { width: 21px; height: 21px; fill: none; stroke: currentColor; stroke-linecap: round; stroke-linejoin: round; stroke-width: 1.55; }
 .path-step { color: var(--color-ink-2); font-family: var(--font-outlier); font-size: 9px; font-weight: 700; letter-spacing: .1em; }
@@ -351,13 +389,13 @@ function step(index: number): string {
   align-items: center;
   gap: 5px;
   align-self: end;
-  color: var(--node-color);
+  color: var(--color-ink-2);
   font-size: 9px;
   font-style: normal;
   font-weight: 750;
   white-space: nowrap;
 }
-.path-node-meta em i { width: 5px; height: 5px; box-shadow: none; }
+.path-node-meta em i { width: 5px; height: 5px; color: var(--status-color); box-shadow: none; }
 .path-node-fact {
   display: flex;
   grid-column: 2 / 4;
@@ -379,7 +417,7 @@ function step(index: number): string {
 .path-node-fact.is-fault small { color: var(--node-color); font-weight: 750; }
 .path-node-fact.is-target:not(.is-fault) small { color: var(--color-ink); }
 .path-connector {
-  --connector-color: var(--color-success);
+  --connector-color: var(--color-ink-2);
   position: relative;
   display: flex;
   align-items: center;
@@ -400,26 +438,42 @@ function step(index: number): string {
 .path-connector.broken i { height: 2px; background: repeating-linear-gradient(90deg, currentColor 0 5px, transparent 5px 9px); }
 .path-connector.affected { --connector-color: var(--color-ink-2); }
 .path-diagnosis {
-  --diagnosis-color: var(--color-success);
+  --diagnosis-color: var(--color-ink-2);
+  --diagnosis-status-color: var(--color-success);
   display: flex;
   align-items: center;
   gap: 11px;
   margin-top: 14px;
   padding: 11px 13px;
   color: var(--diagnosis-color);
-  border: 1px solid color-mix(in srgb, var(--diagnosis-color) 28%, var(--color-rule));
+  border: 1px solid var(--color-rule);
   border-radius: 12px;
-  background: color-mix(in srgb, var(--diagnosis-color) 7%, var(--color-glass-subtle));
+  background: transparent;
 }
-.path-diagnosis.tone-warn { --diagnosis-color: var(--color-warning); }
-.path-diagnosis.tone-bad { --diagnosis-color: var(--color-danger); }
-.path-diagnosis.tone-muted { --diagnosis-color: var(--color-ink-2); }
+.path-diagnosis.tone-good {
+  border-width: 1px 0 0;
+  border-radius: 0;
+}
+.path-diagnosis.tone-warn {
+  --diagnosis-color: var(--color-warning);
+  --diagnosis-status-color: var(--color-warning);
+  border-color: color-mix(in srgb, var(--color-warning) 34%, var(--color-rule));
+  background: color-mix(in srgb, var(--color-warning) 5%, transparent);
+}
+.path-diagnosis.tone-bad {
+  --diagnosis-color: var(--color-danger);
+  --diagnosis-status-color: var(--color-danger);
+  border-color: color-mix(in srgb, var(--color-danger) 34%, var(--color-rule));
+  background: color-mix(in srgb, var(--color-danger) 5%, transparent);
+}
+.path-diagnosis.tone-muted { --diagnosis-status-color: var(--color-muted); }
 .path-diagnosis-icon {
   display: grid;
   width: 29px;
   height: 29px;
   place-items: center;
   flex: none;
+  color: var(--diagnosis-status-color);
   border-radius: 9px;
   background: color-mix(in srgb, currentColor 13%, transparent);
 }

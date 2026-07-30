@@ -12,6 +12,7 @@ import {
 } from '../api'
 import { toDateLocale } from '../i18n'
 import { agentLabel } from '../lib/agentLabel'
+import { chartColor } from '../lib/chartColor'
 import { agentStatus, agentIndex, refreshAgentStatus } from '../agentStatus'
 import { targetStatus } from '../targetStatus'
 import {
@@ -51,14 +52,14 @@ const loading = ref(true)
 // while the chart title (translated in the template) switched.
 type ChartMetric = { key: string; label: string; kind: string; unit: string; color: string; samples: Sample[] }
 const cpuMetrics = computed<ChartMetric[]>(() => [
-  { key: 'cpu', label: t('agentStatus.chartCpu'), kind: 'host.cpu.pct', unit: 'pct', color: '#38bdf8', samples: cpu.value },
+  { key: 'cpu', label: t('agentStatus.chartCpu'), kind: 'host.cpu.pct', unit: 'pct', color: chartColor('--color-info', '#38bdf8'), samples: cpu.value },
 ])
 const memMetrics = computed<ChartMetric[]>(() => [
-  { key: 'mem', label: t('agentStatus.chartMem'), kind: 'host.mem.pct', unit: 'pct', color: '#34d399', samples: mem.value },
+  { key: 'mem', label: t('agentStatus.chartMem'), kind: 'host.mem.pct', unit: 'pct', color: chartColor('--color-success', '#34d399'), samples: mem.value },
 ])
 const netMetrics = computed<ChartMetric[]>(() => [
-  { key: 'rx', label: t('dashboard.download'), kind: 'host.net.rx_bps', unit: 'bps', color: '#38bdf8', samples: rx.value },
-  { key: 'tx', label: t('dashboard.upload'), kind: 'host.net.tx_bps', unit: 'bps', color: '#a78bfa', samples: tx.value },
+  { key: 'rx', label: t('dashboard.download'), kind: 'host.net.rx_bps', unit: 'bps', color: chartColor('--color-info', '#38bdf8'), samples: rx.value },
+  { key: 'tx', label: t('dashboard.upload'), kind: 'host.net.tx_bps', unit: 'bps', color: chartColor('--color-chart-secondary', '#f472b6'), samples: tx.value },
 ])
 
 // Live per-agent rollup from the shared store (status/resources/groups/alert).

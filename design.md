@@ -38,6 +38,8 @@ Vibe: **calm translucent, precise, spatial, native**.
 - Light paper: `oklch(97.5% 0.008 252)`
 - Dark accent: `oklch(72% 0.15 250)`
 - Light accent: `oklch(60% 0.18 250)`
+- Secondary chart series: `oklch(72% 0.16 335)` dark /
+  `oklch(58% 0.18 335)` light.
 - Axes: dark + light / geometric-sans / cool.
 - Accent stays below 5% of the viewport. It marks active navigation, focus,
   links and primary actions.
@@ -138,6 +140,7 @@ CSS consumes `var(--space-*)`; raw spacing is limited to browser fixes.
   --color-ink: oklch(96% 0.008 252);
   --color-ink-2: oklch(78% 0.014 252);
   --color-accent: oklch(72% 0.15 250);
+  --color-chart-secondary: oklch(72% 0.16 335);
   --color-focus: oklch(78% 0.18 250);
   --font-display: "Manrope Variable", sans-serif;
   --font-body: "Inter Variable", sans-serif;
@@ -150,11 +153,6 @@ CSS consumes `var(--space-*)`; raw spacing is limited to browser fixes.
   --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
 }
 ```
-
-### DTCG `tokens.json`
-
-`tokens.json` at the project root mirrors the executable tokens in DTCG
-format.
 
 ### shadcn/ui CSS variables
 

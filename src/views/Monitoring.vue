@@ -459,6 +459,15 @@ onMounted(load)
   gap: var(--space-2xs);
 }
 
+.action-cell .link-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 44px;
+  padding: 0 var(--space-3xs);
+  line-height: 1;
+}
+
 .count {
   min-width: 28px;
   padding: var(--space-3xs) var(--space-2xs);

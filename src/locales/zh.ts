@@ -91,6 +91,8 @@ export default {
     consoleSubtitle: '网络监控控制台',
     liveCollect: '实时采集 · 5s',
     logout: '退出',
+    openNavigation: '打开导航',
+    closeNavigation: '关闭导航',
     themeLight: '切换到亮色模式',
     themeDark: '切换到暗色模式',
   },
