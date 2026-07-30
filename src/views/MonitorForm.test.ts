@@ -366,6 +366,15 @@ describe('MonitorForm detection sensitivity', () => {
     }
   })
 
+  it('keeps the packet-loss explanation beneath its threshold input', async () => {
+    const page = await render()
+    const lossField = page.get('.det-grid label.field')
+
+    expect(lossField.find('input[type="number"]').exists()).toBe(true)
+    expect(lossField.get('small.hint').text()).toContain('A round counts as failed')
+    expect(page.find('.det-grid > .hint').exists()).toBe(false)
+  })
+
   it('writes the chosen profile once the created target has an id', async () => {
     apiMock.setTargets.mockResolvedValue({ ok: true, warnings: [] })
     const page = await render()

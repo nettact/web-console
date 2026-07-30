@@ -745,8 +745,8 @@ onMounted(loadAll)
               <label class="field">
                 <span>{{ tr('detection.lossPct') }}</span>
                 <input type="number" min="1" max="100" v-model.number="detection.icmp_loss_pct" />
+                <small class="hint tiny">{{ tr('detection.lossHint') }}</small>
               </label>
-              <p class="hint tiny wide">{{ tr('detection.lossHint') }}</p>
             </div>
           </div>
         </details>
@@ -925,7 +925,7 @@ onMounted(loadAll)
   font-size: 13px;
   color: var(--text-dim);
 }
-.field.wide {
+.form-grid > .wide {
   grid-column: 1 / -1;
 }
 .field.check {
@@ -1052,7 +1052,7 @@ onMounted(loadAll)
     grid-template-columns: minmax(0, 1fr);
     gap: var(--space-sm);
   }
-  .field.wide {
+  .form-grid > .wide {
     grid-column: auto;
   }
   .panel-head,
