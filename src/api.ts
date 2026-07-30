@@ -1249,6 +1249,10 @@ export interface AgentInterface {
 export interface AgentInterfaces {
   wifi: WiFiCollection
   interfaces: AgentInterface[]
+  default_route?: {
+    gateway: string
+    interface: string
+  }
 }
 
 export class AuthError extends Error {}

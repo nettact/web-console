@@ -4,7 +4,8 @@ import { createI18n } from 'vue-i18n'
 
 import en from '../locales/en'
 import Dashboard from './Dashboard.vue'
-import type { Agent, AgentInterfaces, Sample, StatusEvent } from '../api'
+import type { Agent, AgentInterfaces, Sample, StatusEvent, TargetStatusRow } from '../api'
+import { targetStatus } from '../targetStatus'
 import { dashboardLayoutPayload, dashboardLayoutPreset } from '../lib/dashboardLayout'
 
 const apiMock = vi.hoisted(() => ({
@@ -88,6 +89,7 @@ async function render(
       stubs: {
         MetricChart: { template: '<div class="metric-chart-stub" />' },
         RouterLink: { template: '<a><slot /></a>' },
+        Teleport: true,
       },
     },
   })
@@ -97,11 +99,13 @@ async function render(
 }
 
 beforeEach(() => {
+  targetStatus.targets = []
   vi.useFakeTimers()
   vi.clearAllMocks()
 })
 
 afterEach(() => {
+  targetStatus.targets = []
   wrapper?.unmount()
   wrapper = undefined
   vi.useRealTimers()
@@ -179,6 +183,55 @@ describe('Dashboard network adapter list', () => {
     expect(card.text()).not.toContain('Wi-Fi status not supported')
   })
 
+  it('uses the wired default-route interface even while Wi-Fi is connected', async () => {
+    vi.setSystemTime(new Date('2026-07-13T01:00:30Z'))
+    const wiredDefault: AgentInterfaces = {
+      wifi: { state: 'ok', sampled_at: '2026-07-13T01:00:00Z', stale: false },
+      default_route: { gateway: '192.168.1.1', interface: 'Ethernet' },
+      interfaces: [
+        {
+          name: 'Ethernet', addrs: ['192.168.1.3/24'], gateway: '192.168.1.1',
+          dns: [], up: true, is_wireless: false, updated_at: '2026-07-13T01:00:00Z',
+        },
+        {
+          ...connected.interfaces[0],
+          gateway: '10.0.0.1',
+          wifi: { ...connected.interfaces[0].wifi!, ssid: 'Connected but not default' },
+        },
+      ],
+    }
+
+    await render(wiredDefault)
+
+    const node = wrapper!.findAll('.path-node')[1]
+    expect(wrapper!.get('.path-card-head').text()).toContain('NETWORK PATH')
+    expect(node.text()).toContain('Ethernet')
+    expect(node.text()).toContain('Normal')
+    expect(node.text()).not.toContain('192.168.1.1')
+    expect(node.text()).not.toContain('Connected but not default')
+    expect(wrapper!.get('.path-diagnosis').text()).not.toContain('default egress interface')
+  })
+
+  it('shows Wi-Fi details when the wireless adapter owns the default route', async () => {
+    vi.setSystemTime(new Date('2026-07-13T01:00:30Z'))
+    const wirelessDefault: AgentInterfaces = {
+      ...connected,
+      default_route: { gateway: '192.168.1.1', interface: 'en0' },
+      interfaces: [{
+        ...connected.interfaces[0],
+        gateway: '192.168.1.1',
+        wifi: { ...connected.interfaces[0].wifi!, ssid: 'Office Wi-Fi' },
+      }],
+    }
+
+    await render(wirelessDefault)
+
+    const node = wrapper!.findAll('.path-node')[1]
+    expect(node.text()).toContain('Wi-Fi')
+    expect(node.text()).toContain('Normal')
+    expect(node.text()).toContain('en0 · Office Wi-Fi · -65 dBm')
+  })
+
   it('renders one timeline with online events left and offline events right', async () => {
     const history: StatusEvent[] = Array.from({ length: 20 }, (_, index) => ({
       status: index % 2 ? 'online' : 'offline',
@@ -196,11 +249,11 @@ describe('Dashboard network adapter list', () => {
   })
   it('applies the instance layout returned by the server on initial load', async () => {
     const serverLayout = {
-      version: 1,
+      version: 2,
       cards: [
-        { id: 'availability', visible: true, size: 'medium' },
-        { id: 'overall', visible: true, size: 'wide' },
-        { id: 'latency', visible: false, size: 'compact' },
+        { id: 'availability', type: 'availability', visible: true, size: 'medium' },
+        { id: 'overall', type: 'overall', visible: true, size: 'wide' },
+        { id: 'latency', type: 'latency', visible: false, size: 'compact' },
       ],
     }
     await render(connected, baseAgent, [], [], serverLayout)
@@ -215,11 +268,13 @@ describe('Dashboard network adapter list', () => {
     await render(connected, baseAgent, [], [], null)
 
     const expectedVisible = [
-      'overall', 'availability', 'nat-summary', 'wifi-summary', 'lan-summary', 'active-alerts',
-      'monitor-health', 'network-quality', 'traffic-trend', 'lan-devices',
+      'overall', 'path-status', 'active-alerts', 'monitor-health', 'network-quality', 'traffic-trend', 'lan-devices',
     ]
     for (const [index, id] of expectedVisible.entries()) {
       expect(wrapper!.get('[data-layout-card="' + id + '"]').attributes('style')).toContain('order: ' + index)
+    }
+    for (const id of ['availability', 'nat-summary', 'wifi-summary', 'lan-summary']) {
+      expect(wrapper!.find('[data-layout-card="' + id + '"]').exists()).toBe(false)
     }
     expect(wrapper!.find('[data-layout-card="data-freshness"]').exists()).toBe(false)
     expect(wrapper!.find('[data-layout-card="interfaces"]').exists()).toBe(false)
@@ -305,7 +360,7 @@ describe('Dashboard network adapter list', () => {
     expect(stored.cards.find((card: { id: string }) => card.id === 'interfaces').visible).toBe(false)
     expect(stored.cards.find((card: { id: string }) => card.id === 'latency').size).toBe('medium')
     expect(stored.cards.slice(0, 3).map((card: { id: string }) => card.id)).toEqual([
-      'overall', 'latency', 'availability',
+      'overall', 'path-status', 'latency',
     ])
   })
 
@@ -406,5 +461,62 @@ describe('Dashboard network adapter list', () => {
     expect(wrapper!.get('[data-layout-card="incident-summary"]').text()).toContain('DNS')
     expect(wrapper!.get('[data-layout-card="incident-summary"]').text()).toContain('3')
     expect(wrapper!.findAll('.metric-chart-stub')).toHaveLength(2)
+  })
+
+  it('adds and persists multiple cards for different targets of the same monitoring type', async () => {
+    const monitor = (id: string, name: string): TargetStatusRow => ({
+      target_id: id,
+      group_id: 'group',
+      name,
+      kind: 'icmp',
+      target: id === 'icmp-1' ? '1.1.1.1' : '8.8.8.8',
+      enabled: true,
+      display_state: 'healthy',
+      applicable_agents: 1,
+      affected_agents: 0,
+      signal_ids: [],
+      incident_ids: [],
+      agents: [{
+        agent_id: baseAgent.id,
+        agent_name: baseAgent.display_name,
+        agent_online: true,
+        execution_state: 'collecting',
+        probe_state: 'healthy',
+        fault_state: 'normal',
+        reason_code: 'ok',
+        missing_permissions: [],
+        matched_selector: '',
+        block_reason: '',
+        availability_24h: 1,
+      }],
+    })
+    targetStatus.targets = [monitor('icmp-1', 'Cloudflare DNS'), monitor('icmp-2', 'Google DNS')]
+    await render(connected, baseAgent, [
+      { ts: '2026-07-13T01:00:00Z', kind: 'probe.icmp.rtt_ms', target: '1.1.1.1', layer: 'internet', value: 36, unit: 'ms', monitor_id: 'icmp-1' },
+      { ts: '2026-07-13T01:00:00Z', kind: 'probe.icmp.rtt_ms', target: '8.8.8.8', layer: 'internet', value: 42, unit: 'ms', monitor_id: 'icmp-2' },
+    ], [], null)
+
+    expect(wrapper!.find('.target-card-add-button').exists()).toBe(false)
+    await wrapper!.get('.layout-add-button').trigger('click')
+    const monitorWidget = wrapper!.get('[data-widget-type="monitor-target"]')
+    expect(monitorWidget.text()).toContain('Monitoring target')
+    await wrapper!.get('.target-card-add-button').trigger('click')
+    expect(wrapper!.findAll('.target-card-drawer select')[1].findAll('option')).toHaveLength(2)
+    await wrapper!.get('.target-card-drawer footer .btn-primary').trigger('click')
+
+    await wrapper!.get('.target-card-add-button').trigger('click')
+    await wrapper!.findAll('.target-card-drawer select')[1].setValue('icmp-2')
+    await wrapper!.get('.target-card-drawer footer .btn-primary').trigger('click')
+
+    const cards = wrapper!.findAll('.monitor-target-card')
+    expect(cards).toHaveLength(2)
+    expect(cards[0].text()).toContain('Cloudflare DNS')
+    expect(cards[1].text()).toContain('Google DNS')
+
+    await wrapper!.get('.direct-layout-actions .btn-primary').trigger('click')
+    await flushPromises()
+    const stored = apiMock.updateDashboardLayout.mock.calls[0][0]
+    expect(stored.version).toBe(2)
+    expect(stored.cards.filter((card: { type: string }) => card.type === 'monitor-target').map((card: { target_id: string }) => card.target_id)).toEqual(['icmp-1', 'icmp-2'])
   })
 })

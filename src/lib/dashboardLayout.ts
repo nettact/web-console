@@ -12,8 +12,10 @@ export interface DashboardCardDefinition {
 
 export interface DashboardCardLayout {
   id: string
+  type: string
   visible: boolean
   size: DashboardCardSize
+  target_id?: string
 }
 
 export interface DashboardLayoutPayload {
@@ -21,12 +23,26 @@ export interface DashboardLayoutPayload {
   cards: DashboardCardLayout[]
 }
 
-export const DASHBOARD_LAYOUT_VERSION = 1
+export const DASHBOARD_LAYOUT_VERSION = 2
+
+// Mirrors server-core's maxDashboardLayoutCards; the PUT is rejected above it.
+export const MAX_DASHBOARD_CARDS = 64
+
+// Target cards are instanced: many cards share this type, each with its own id
+// and target_id, so they live outside DASHBOARD_CARD_DEFINITIONS.
+export const MONITOR_TARGET_CARD_TYPE = 'monitor-target'
+export const MONITOR_TARGET_CARD_DEFINITION: DashboardCardDefinition = {
+  id: MONITOR_TARGET_CARD_TYPE,
+  titleKey: 'dashboard.cardMonitorTarget',
+  sizes: ['compact', 'medium'],
+  defaultSize: 'medium',
+}
 
 // The catalog follows the professional diagnostic flow. Presets own visibility
 // and order; definitions only describe each widget's sizing constraints.
 export const DASHBOARD_CARD_DEFINITIONS: readonly DashboardCardDefinition[] = [
   { id: 'overall', titleKey: 'dashboard.cardOverall', sizes: ['wide'], defaultSize: 'wide' },
+  { id: 'path-status', titleKey: 'dashboard.cardPathStatus', sizes: ['wide'], defaultSize: 'wide' },
   { id: 'availability', titleKey: 'dashboard.cardAvailability', sizes: ['compact', 'medium'], defaultSize: 'compact' },
   { id: 'latency', titleKey: 'dashboard.cardLatency', sizes: ['compact', 'medium'], defaultSize: 'compact' },
   { id: 'failures', titleKey: 'dashboard.cardFailures', sizes: ['compact', 'medium'], defaultSize: 'compact' },
@@ -50,22 +66,20 @@ export const DASHBOARD_CARD_DEFINITIONS: readonly DashboardCardDefinition[] = [
 
 const PROFESSIONAL_LAYOUT: readonly DashboardCardLayout[] = DASHBOARD_CARD_DEFINITIONS.map((card) => ({
   id: card.id,
+  type: card.id,
   visible: true,
   size: card.defaultSize,
 }))
 
 const SIMPLE_VISIBLE_LAYOUT: readonly DashboardCardLayout[] = [
-  { id: 'overall', visible: true, size: 'wide' },
-  { id: 'availability', visible: true, size: 'compact' },
-  { id: 'nat-summary', visible: true, size: 'compact' },
-  { id: 'wifi-summary', visible: true, size: 'compact' },
-  { id: 'lan-summary', visible: true, size: 'compact' },
-  { id: 'active-alerts', visible: true, size: 'medium' },
-  { id: 'monitor-health', visible: true, size: 'medium' },
+  { id: 'overall', type: 'overall', visible: true, size: 'wide' },
+  { id: 'path-status', type: 'path-status', visible: true, size: 'wide' },
+  { id: 'active-alerts', type: 'active-alerts', visible: true, size: 'medium' },
+  { id: 'monitor-health', type: 'monitor-health', visible: true, size: 'medium' },
   // Network quality + traffic trend sit side by side as 2×1 half-row charts.
-  { id: 'network-quality', visible: true, size: 'medium' },
-  { id: 'traffic-trend', visible: true, size: 'medium' },
-  { id: 'lan-devices', visible: true, size: 'wide' },
+  { id: 'network-quality', type: 'network-quality', visible: true, size: 'medium' },
+  { id: 'traffic-trend', type: 'traffic-trend', visible: true, size: 'medium' },
+  { id: 'lan-devices', type: 'lan-devices', visible: true, size: 'wide' },
 ]
 
 const simpleVisibleIDs = new Set(SIMPLE_VISIBLE_LAYOUT.map((card) => card.id))
@@ -112,14 +126,19 @@ export function normalizeDashboardLayout(value: unknown): DashboardCardLayout[] 
   const normalized: DashboardCardLayout[] = []
 
   for (const candidate of stored.cards) {
-    if (!candidate || typeof candidate.id !== 'string' || seen.has(candidate.id)) continue
-    const definition = definitions.get(candidate.id)
+    if (!candidate || typeof candidate.id !== 'string' || typeof candidate.type !== 'string' || seen.has(candidate.id)) continue
+    const isTargetCard = candidate.type === MONITOR_TARGET_CARD_TYPE
+    const definition = isTargetCard ? MONITOR_TARGET_CARD_DEFINITION : definitions.get(candidate.type)
     if (!definition) continue
-    const fallback = defaultCards.get(definition.id)!
+    if (!isTargetCard && candidate.id !== candidate.type) continue
+    if (isTargetCard && (typeof candidate.target_id !== 'string' || !candidate.target_id)) continue
+    const fallback = defaultCards.get(definition.id)
     normalized.push({
-      id: definition.id,
-      visible: typeof candidate.visible === 'boolean' ? candidate.visible : fallback.visible,
-      size: definition.sizes.includes(candidate.size) ? candidate.size : fallback.size,
+      id: candidate.id,
+      type: candidate.type,
+      visible: typeof candidate.visible === 'boolean' ? candidate.visible : fallback?.visible ?? true,
+      size: definition.sizes.includes(candidate.size) ? candidate.size : fallback?.size ?? definition.defaultSize,
+      ...(isTargetCard ? { target_id: candidate.target_id } : {}),
     })
     seen.add(candidate.id)
   }

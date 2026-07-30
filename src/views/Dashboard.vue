@@ -14,12 +14,18 @@ import {
   type Quota,
   type Sample,
   type StatusEvent,
+  type TargetStatusRow,
 } from '../api'
 import DashboardCardControls from '../components/DashboardCardControls.vue'
+import DashboardPathCard from '../components/DashboardPathCard.vue'
+import DashboardTargetCard from '../components/DashboardTargetCard.vue'
 import MetricChart from '../components/MetricChart.vue'
 import { toDateLocale } from '../i18n'
 import {
   DASHBOARD_CARD_DEFINITIONS,
+  MAX_DASHBOARD_CARDS,
+  MONITOR_TARGET_CARD_DEFINITION,
+  MONITOR_TARGET_CARD_TYPE,
   cloneDashboardLayout,
   dashboardLayoutPreset,
   defaultDashboardLayout,
@@ -30,6 +36,7 @@ import {
   type DashboardLayoutPresetID,
 } from '../lib/dashboardLayout'
 import { fmtBps, fmtBytes } from '../lib/format'
+import { buildDashboardPath } from '../lib/dashboardPath'
 import { agentLabel } from '../lib/agentLabel'
 import { natCodeLabel, natTone } from '../lib/metricMeta'
 import { PROBE_TONE } from '../lib/targetStatus'
@@ -76,6 +83,9 @@ const editingLayout = ref(false)
 const layoutError = ref('')
 const draggingCardID = ref('')
 const layoutPresetIDs: readonly DashboardLayoutPresetID[] = ['simple', 'professional']
+const targetCardDrawerOpen = ref(false)
+const newTargetKind = ref('')
+const newTargetID = ref('')
 const activeLayout = computed(() => editingLayout.value ? draftLayout.value : savedLayout.value)
 const activeLayoutPreset = computed(() => identifyDashboardLayoutPreset(draftLayout.value))
 const layoutDirty = computed(() => JSON.stringify(draftLayout.value) !== JSON.stringify(savedLayout.value))
@@ -84,9 +94,22 @@ const hiddenCardDefinitions = computed(() =>
   DASHBOARD_CARD_DEFINITIONS.filter((definition) => !draftLayout.value.find((card) => card.id === definition.id)?.visible),
 )
 const visibleCardCount = computed(() => draftLayout.value.filter((card) => card.visible).length)
+const monitorTargetKindOrder = ['gateway', 'icmp', 'dns', 'http', 'tcp', 'nat'] as const
+const availableMonitorKinds = computed(() => monitorTargetKindOrder.filter((kind) =>
+  targetStatus.targets.some((target) => target.enabled && target.kind === kind),
+))
+const newTargetOptions = computed(() => targetStatus.targets.filter((target) =>
+  target.enabled && target.kind === newTargetKind.value,
+))
+const pendingTargetCard = computed(() => newTargetOptions.value.find((target) => target.target_id === newTargetID.value) ?? null)
+const visibleTargetCards = computed(() => activeLayout.value.filter((card) => card.visible && card.type === MONITOR_TARGET_CARD_TYPE))
+const layoutAtCardLimit = computed(() => draftLayout.value.length >= MAX_DASHBOARD_CARDS)
 
-const cardDefinition = (id: string) => DASHBOARD_CARD_DEFINITIONS.find((card) => card.id === id)!
 const cardLayout = (id: string) => activeLayout.value.find((card) => card.id === id)
+const cardDefinition = (id: string) => {
+  const type = cardLayout(id)?.type ?? id
+  return type === MONITOR_TARGET_CARD_TYPE ? MONITOR_TARGET_CARD_DEFINITION : DASHBOARD_CARD_DEFINITIONS.find((card) => card.id === type)!
+}
 const cardVisible = (id: string) => cardLayout(id)?.visible ?? false
 // compact = 3 cols, medium/tall = 6 cols (half row), wide = 12 cols. `tall` also
 // claims two grid rows so its chart card renders at double height; narrow-screen
@@ -105,6 +128,42 @@ function beginLayoutEdit() {
   if (!editingLayout.value) draftLayout.value = cloneDashboardLayout(savedLayout.value)
   layoutError.value = ''
   editingLayout.value = true
+}
+
+function openTargetCardDrawer() {
+  beginLayoutEdit()
+  newTargetKind.value = availableMonitorKinds.value[0] ?? ''
+  newTargetID.value = newTargetOptions.value[0]?.target_id ?? ''
+  targetCardDrawerOpen.value = true
+}
+
+function changeTargetCardKind() {
+  newTargetID.value = newTargetOptions.value[0]?.target_id ?? ''
+}
+
+function addTargetCard() {
+  const target = targetStatus.targets.find((candidate) => candidate.target_id === newTargetID.value && candidate.kind === newTargetKind.value)
+  if (!target || layoutAtCardLimit.value) return
+  const suffix = typeof crypto !== 'undefined' && 'randomUUID' in crypto
+    ? crypto.randomUUID()
+    : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`
+  draftLayout.value.push({
+    id: `monitor-target-${suffix}`,
+    type: MONITOR_TARGET_CARD_TYPE,
+    visible: true,
+    size: 'medium',
+    target_id: target.target_id,
+  })
+  targetCardDrawerOpen.value = false
+}
+
+function targetForCard(card: DashboardCardLayout): TargetStatusRow | null {
+  return targetStatus.targets.find((target) => target.target_id === card.target_id) ?? null
+}
+const targetCardViews = computed(() => visibleTargetCards.value.map((card) => ({ card, target: targetForCard(card) })))
+
+function samplesForTarget(targetID: string): Sample[] {
+  return snapshot.value.filter((sample) => sample.monitor_id === targetID)
 }
 
 async function loadServerLayout() {
@@ -172,8 +231,13 @@ function updateCardSize(id: string, size: DashboardCardLayout['size']) {
 }
 
 function removeWidget(id: string) {
-  const card = draftLayout.value.find((candidate) => candidate.id === id)
-  if (card) card.visible = false
+  const index = draftLayout.value.findIndex((candidate) => candidate.id === id)
+  if (index < 0) return
+  if (draftLayout.value[index].type === MONITOR_TARGET_CARD_TYPE) {
+    draftLayout.value.splice(index, 1)
+  } else {
+    draftLayout.value[index].visible = false
+  }
 }
 
 function addWidget(id: string) {
@@ -758,6 +822,91 @@ function fmtAge(seconds: number | null): string {
 }
 
 const primaryWifi = computed(() => wifiRows.value.find((adapter) => adapter.connected) ?? wifiRows.value[0] ?? null)
+// The Agent resolves the OS default gateway with the same logic used by the
+// gateway monitor. Match that gateway back to its interface instead of choosing
+// the first name-sorted adapter that happens to expose any gateway: several
+// connected adapters may each have one, while only one owns default egress.
+const defaultRouteInterface = computed(() => {
+  const adapters = ifaceData.value?.interfaces ?? []
+  const route = ifaceData.value?.default_route
+  if (!route) return null
+
+  const gatewayMatches = route.gateway
+    ? adapters.filter((adapter) => adapter.gateway === route.gateway)
+    : []
+  return gatewayMatches.find((adapter) => adapter.name === route.interface)
+    ?? gatewayMatches.find((adapter) => adapter.up)
+    ?? gatewayMatches[0]
+    ?? adapters.find((adapter) => adapter.name === route.interface)
+    ?? null
+})
+const pathInterfaceKind = computed<'wifi' | 'wired' | 'unknown'>(() => {
+  const adapter = defaultRouteInterface.value
+  if (!adapter) return 'unknown'
+  return adapter.is_wireless ? 'wifi' : 'wired'
+})
+const pathNetworkInterface = computed(() => {
+  const adapter = defaultRouteInterface.value
+  if (!adapter) return { tone: 'unknown' as const, state: 'no_data' as const }
+  if (!adapter.up) return { tone: 'bad' as const, state: 'failed' as const }
+  if (!adapter.is_wireless) return { tone: 'good' as const, state: 'healthy' as const }
+
+  const wifi = wifiRows.value.find((row) => row.name === adapter.name)
+  // The interface and its default gateway are still authoritative when the
+  // optional Wi-Fi detail permission is absent.
+  if (!wifi) return { tone: 'good' as const, state: 'healthy' as const }
+  if (wifi.state === 'connected') {
+    return wifi.grade?.tone === 'bad'
+      ? { tone: 'warn' as const, state: 'degraded' as const }
+      : { tone: 'good' as const, state: 'healthy' as const }
+  }
+  if (wifi.state === 'disconnected') return { tone: 'bad' as const, state: 'failed' as const }
+  if (wifi.state === 'stale') return { tone: 'warn' as const, state: 'stale' as const }
+  return { tone: 'warn' as const, state: 'blocked' as const }
+})
+const pathLatencyMsByTarget = computed<Record<string, number>>(() => {
+  const metricByKind: Readonly<Record<string, string>> = {
+    gateway: 'probe.icmp.rtt_ms',
+    icmp: 'probe.icmp.rtt_ms',
+    dns: 'probe.dns.resolve_ms',
+    http: 'probe.http.latency_ms',
+  }
+  const expectedMetric = new Map(
+    targetStatus.targets
+      .filter((target) => metricByKind[target.kind])
+      .map((target) => [target.target_id, metricByKind[target.kind]]),
+  )
+  const latest = new Map<string, Sample>()
+  for (const sample of snapshot.value) {
+    if (!sample.monitor_id || expectedMetric.get(sample.monitor_id) !== sample.kind) continue
+    if (!Number.isFinite(sample.value) || sample.value < 0) continue
+    const current = latest.get(sample.monitor_id)
+    if (!current || new Date(sample.ts).getTime() > new Date(current.ts).getTime()) latest.set(sample.monitor_id, sample)
+  }
+  return Object.fromEntries([...latest].map(([targetID, sample]) => [targetID, sample.value]))
+})
+const dashboardPath = computed(() => buildDashboardPath({
+  agentId: selected.value,
+  agentOnline: currentAgent.value?.status === 'online',
+  freshnessTone: freshnessTone.value,
+  networkInterface: pathNetworkInterface.value,
+  targets: targetStatus.targets,
+  latencyMsByTarget: pathLatencyMsByTarget.value,
+}))
+const pathInterfaceDetail = computed(() => {
+  const adapter = defaultRouteInterface.value
+  if (!adapter) return t('dashboard.pathInterfaceUnknown')
+  if (!adapter.is_wireless) return adapter.name
+
+  const wifi = wifiRows.value.find((row) => row.name === adapter.name)
+  if (!wifi) return adapter.name
+  if (!wifi.connected) return `${adapter.name} · ${wifiStateLabel(wifi)}`
+  return [
+    adapter.name,
+    wifi.ssid || t('dashboard.wifiConnected'),
+    wifi.signalDbm == null ? '' : `${wifi.signalDbm} dBm`,
+  ].filter(Boolean).join(' · ')
+})
 const incidentLayerLabel = computed(() => {
   const layer = incidentSummary.value?.top_layer
   if (!layer) return '—'
@@ -869,7 +1018,7 @@ onBeforeUnmount(() => {
           <p>{{ t('dashboard.layoutCatalogHint') }}</p>
         </div>
       </div>
-      <div v-if="hiddenCardDefinitions.length" class="widget-catalog-grid">
+      <div class="widget-catalog-grid">
         <article v-for="definition in hiddenCardDefinitions" :key="definition.id" class="widget-option">
           <div class="widget-preview">
             <span class="widget-preview-icon"><i></i><i></i><i></i><i></i></span>
@@ -879,8 +1028,24 @@ onBeforeUnmount(() => {
             {{ t('dashboard.layoutAdd') }}
           </button>
         </article>
+        <article class="widget-option monitor-target-widget-option" data-widget-type="monitor-target">
+          <div class="widget-preview">
+            <span class="widget-preview-icon monitor"><i></i><i></i><i></i><i></i></span>
+            <div>
+              <strong>{{ t('dashboard.cardMonitorTarget') }}</strong>
+              <small>{{ t('dashboard.monitorWidgetHint') }}</small>
+            </div>
+          </div>
+          <button
+            class="btn btn-primary target-card-add-button"
+            type="button"
+            :disabled="layoutAtCardLimit || !availableMonitorKinds.length"
+            @click="openTargetCardDrawer"
+          >
+            {{ t('dashboard.monitorWidgetAction') }}
+          </button>
+        </article>
       </div>
-      <p v-else class="catalog-empty">{{ t('dashboard.layoutAllWidgetsAdded') }}</p>
     </section>
 
     <p v-if="error" class="err dashboard-error">{{ error }}</p>
@@ -926,6 +1091,21 @@ onBeforeUnmount(() => {
           <div><strong>{{ onlineCount }}</strong><span>/ {{ agents.length }} {{ t('dashboard.onlineAgents') }}</span></div>
           <div v-if="quota"><strong>{{ quota.used }}</strong><span>/ {{ quota.max === 0 ? '∞' : quota.max }} {{ t('dashboard.agentQuota') }}</span></div>
         </div>
+      </section>
+      <section v-if="cardVisible('path-status')" class="surface path-status-card dashboard-card-shell" :style="cardGridStyle('path-status')" data-layout-card="path-status" :data-layout-editing="editingLayout || undefined" :data-dragging="draggingCardID === 'path-status' || undefined" :draggable="editingLayout" @dragstart="startCardDrag('path-status', $event)" @dragend="draggingCardID = ''" @dragover.prevent @drop="dropLayoutCard('path-status')">
+        <DashboardCardControls v-if="editingLayout" :title="t(cardDefinition('path-status').titleKey)" :size="cardLayout('path-status')!.size" :sizes="cardDefinition('path-status').sizes" :first="visibleCardIndex('path-status') === 0" :last="visibleCardIndex('path-status') === visibleCardCount - 1" @resize="updateCardSize('path-status', $event)" @move="moveVisibleCard('path-status', $event)" @remove="removeWidget('path-status')" @pointer-drag="startPointerCardDrag('path-status', $event)" />
+        <DashboardPathCard
+          :stages="dashboardPath.stages"
+          :root="dashboardPath.root"
+          :agent-name="currentAgent ? agentLabel(currentAgent) : '—'"
+          :interface-kind="pathInterfaceKind"
+          :interface-detail="pathInterfaceDetail"
+          :nat-detail="primaryNAT ? {
+            type: primaryNAT.type,
+            mapping: primaryNAT.mapping,
+            filtering: primaryNAT.filtering,
+          } : null"
+        />
       </section>
       <article v-if="cardVisible('availability')" class="insight-card dashboard-card-shell" :class="availabilityPct == null ? 'is-unknown' : availabilityPct >= 99 ? 'is-good' : availabilityPct >= 95 ? 'is-warn' : 'is-bad'" :style="cardGridStyle('availability')" data-layout-card="availability" :data-layout-editing="editingLayout || undefined" :data-dragging="draggingCardID === 'availability' || undefined" :draggable="editingLayout" @dragstart="startCardDrag('availability', $event)" @dragend="draggingCardID = ''" @dragover.prevent @drop="dropLayoutCard('availability')">
         <DashboardCardControls v-if="editingLayout" :title="t(cardDefinition('availability').titleKey)" :size="cardLayout('availability')!.size" :sizes="cardDefinition('availability').sizes" :first="visibleCardIndex('availability') === 0" :last="visibleCardIndex('availability') === visibleCardCount - 1" @resize="updateCardSize('availability', $event)" @move="moveVisibleCard('availability', $event)" @remove="removeWidget('availability')" @pointer-drag="startPointerCardDrag('availability', $event)" />
@@ -1298,6 +1478,12 @@ onBeforeUnmount(() => {
             </div>
           </div>
         </section>
+
+        <section v-for="item in targetCardViews" :key="item.card.id" class="surface monitor-target-card dashboard-card-shell" :style="cardGridStyle(item.card.id)" :data-layout-card="item.card.id" :data-layout-editing="editingLayout || undefined" :data-dragging="draggingCardID === item.card.id || undefined" :draggable="editingLayout" @dragstart="startCardDrag(item.card.id, $event)" @dragend="draggingCardID = ''" @dragover.prevent @drop="dropLayoutCard(item.card.id)">
+          <DashboardCardControls v-if="editingLayout" :title="item.target?.name ?? t('dashboard.targetDeleted')" :size="item.card.size" :sizes="cardDefinition(item.card.id).sizes" :first="visibleCardIndex(item.card.id) === 0" :last="visibleCardIndex(item.card.id) === visibleCardCount - 1" @resize="updateCardSize(item.card.id, $event)" @move="moveVisibleCard(item.card.id, $event)" @remove="removeWidget(item.card.id)" @pointer-drag="startPointerCardDrag(item.card.id, $event)" />
+          <DashboardTargetCard v-if="item.target" :target="item.target" :agent-id="selected" :samples="samplesForTarget(item.target.target_id)" />
+          <div v-else class="missing-target-card"><strong>{{ t('dashboard.targetDeleted') }}</strong><p>{{ t('dashboard.targetDeletedHint') }}</p></div>
+        </section>
       </div>
         <section v-if="allCardsHidden" class="card empty-layout-state">
           <h3>{{ t('dashboard.layoutAllHidden') }}</h3>
@@ -1305,6 +1491,20 @@ onBeforeUnmount(() => {
           <button v-if="!editingLayout" class="btn btn-primary" type="button" @click="beginLayoutEdit">{{ t('dashboard.layoutAddWidget') }}</button>
         </section>
     </template>
+    <Teleport to="body">
+      <div v-if="targetCardDrawerOpen" class="target-card-drawer-backdrop" @click.self="targetCardDrawerOpen = false">
+        <aside class="target-card-drawer" role="dialog" aria-modal="true" :aria-label="t('dashboard.addMonitorCard')">
+          <header><div><span class="section-kicker">MONITOR</span><h3>{{ t('dashboard.addMonitorCard') }}</h3></div><button type="button" :aria-label="t('common.close')" @click="targetCardDrawerOpen = false">×</button></header>
+          <div class="target-card-form">
+            <label><span>{{ t('dashboard.monitorCardType') }}</span><select v-model="newTargetKind" @change="changeTargetCardKind"><option v-for="kind in availableMonitorKinds" :key="kind" :value="kind">{{ te(`dashboard.monitorType_${kind}`) ? t(`dashboard.monitorType_${kind}`) : kind.toUpperCase() }}</option></select></label>
+            <label><span>{{ t('dashboard.monitorCardTarget') }}</span><select v-model="newTargetID"><option v-for="target in newTargetOptions" :key="target.target_id" :value="target.target_id">{{ target.name }} · {{ target.target }}</option></select></label>
+            <p :class="{ 'is-limit': layoutAtCardLimit }">{{ layoutAtCardLimit ? t('dashboard.monitorCardLimitHint') : t('dashboard.monitorCardFilterHint') }}</p>
+          </div>
+          <div class="target-card-preview"><span>{{ t('dashboard.monitorCardPreview') }}</span><DashboardTargetCard v-if="pendingTargetCard" :target="pendingTargetCard" :agent-id="selected" :samples="samplesForTarget(pendingTargetCard.target_id)" /><div v-else class="missing-target-card">{{ t('dashboard.monitorCardNoTargets') }}</div></div>
+          <footer><button class="btn" type="button" @click="targetCardDrawerOpen = false">{{ t('dashboard.layoutCancel') }}</button><button class="btn btn-primary" type="button" :disabled="!pendingTargetCard || layoutAtCardLimit" @click="addTargetCard">{{ t('dashboard.addToOverview') }}</button></footer>
+        </aside>
+      </div>
+    </Teleport>
   </main>
 </template>
 
@@ -1840,6 +2040,7 @@ onBeforeUnmount(() => {
 .widget-preview small { margin-top: 3px; color: var(--text-muted); font-size: 9px; }
 .widget-preview-icon { display: grid; grid-template-columns: repeat(2, 12px); gap: 3px; padding: 8px; flex: none; border-radius: 9px; background: var(--primary-soft); }
 .widget-preview-icon i { width: 12px; height: 9px; border-radius: 2px; background: color-mix(in srgb, var(--primary) 62%, transparent); }
+.widget-preview-icon.monitor i { border-radius: 50%; }
 .widget-option > .btn { flex: none; }
 .catalog-empty { padding: 48px 20px; color: var(--text-muted); text-align: center; }
 .dashboard-card-shell[data-layout-editing] {
@@ -1920,5 +2121,27 @@ onBeforeUnmount(() => {
   .trend-stat-row { grid-template-columns: 1fr; }
   .trend-summary-card { min-height: 440px; }
   .traffic-live-row { display: grid; }
+}
+.monitor-target-card { position: relative; min-height: 190px; overflow: hidden; }
+.missing-target-card { display: grid; align-content: center; min-height: 190px; padding: 22px; color: var(--text-muted); }
+.missing-target-card strong { color: var(--warning); }
+.missing-target-card p { margin: 6px 0 0; font-size: 11px; }
+.target-card-drawer-backdrop { position: fixed; inset: 0; z-index: 1100; display: flex; justify-content: flex-end; background: rgba(2, 6, 23, .62); backdrop-filter: blur(3px); }
+.target-card-drawer { display: flex; flex-direction: column; width: min(420px, 94vw); height: 100%; padding: 24px; overflow-y: auto; border-left: 1px solid var(--border-strong); background: color-mix(in srgb, var(--surface-solid) 97%, #07182e); box-shadow: -24px 0 60px rgba(2, 6, 23, .45); }
+.target-card-drawer > header { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.target-card-drawer > header h3 { margin-top: 4px; font-size: 20px; }
+.target-card-drawer > header button { width: 34px; height: 34px; color: var(--text-muted); border: 1px solid var(--border); border-radius: 9px; background: var(--surface); font-size: 22px; cursor: pointer; }
+.target-card-form { display: grid; gap: 16px; margin-top: 28px; }
+.target-card-form label { display: grid; gap: 7px; }
+.target-card-form label > span, .target-card-preview > span { color: var(--text-muted); font-size: 10px; font-weight: 750; letter-spacing: .08em; text-transform: uppercase; }
+.target-card-form select { width: 100%; min-height: 42px; background: var(--surface); }
+.target-card-form > p { margin: -7px 0 0; color: var(--text-muted); font-size: 10px; }
+.target-card-form > p.is-limit { color: var(--warning); }
+.target-card-preview { display: grid; gap: 9px; margin-top: 26px; }
+.target-card-preview :deep(.target-card-body) { border: 1px solid var(--border); border-radius: 14px; background: var(--surface); }
+.target-card-drawer > footer { display: flex; justify-content: flex-end; gap: 10px; margin-top: auto; padding-top: 28px; }
+.target-card-drawer > footer .btn { min-width: 110px; }
+@media (max-width: 1120px) {
+  .head-actions { flex-wrap: wrap; justify-content: flex-end; }
 }
 </style>
