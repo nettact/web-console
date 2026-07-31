@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, nextTick, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type { TargetAgentStatusRow } from '../../api'
 import type { TargetStatusGroupView } from '../../lib/targetStatusPage'
@@ -27,7 +27,7 @@ const emit = defineEmits<{
 }>()
 
 const { t, locale } = useI18n()
-const drawer = ref<HTMLElement | null>(null)
+const targetWorkspace = ref<HTMLElement | null>(null)
 
 const visibleTargetCount = computed(() =>
   props.groups.reduce((sum, group) => sum + group.targets.length, 0),
@@ -76,10 +76,12 @@ function availability(value?: number | null): string {
   return formatAvailability(value ?? undefined) ?? t('targetStatus.availabilityUnknown')
 }
 
-function openTarget(targetID: string): void {
+async function openTarget(targetID: string): Promise<void> {
   emit('update:selectedTargetId', targetID)
   emit('update:selectedAgentId', '')
   emit('update:tab', 'overview')
+  await nextTick()
+  targetWorkspace.value?.scrollIntoView?.({ block: 'start', behavior: 'smooth' })
 }
 
 function closeTarget(): void {
@@ -150,7 +152,7 @@ watch(
             type="button"
             class="target-board-row"
             :class="{ selected: selectedTargetId === target.target_id }"
-            :aria-label="t('targetStatus.openTargetDrawerAria', { target: target.name || target.target })"
+            :aria-label="t('targetStatus.openTargetDetailsAria', { target: target.name || target.target })"
             @click="openTarget(target.target_id)"
           >
             <span class="board-target-identity">
@@ -180,32 +182,23 @@ watch(
       <span>{{ t('targetStatus.noFilterResultsHint') }}</span>
     </div>
 
-    <template v-if="selectedTarget">
-      <button
-        type="button"
-        class="drawer-backdrop"
-        tabindex="-1"
-        :aria-label="t('targetStatus.closeTargetDrawer')"
-        @click="closeTarget"
-      ></button>
-      <aside
-        ref="drawer"
-        class="target-drawer"
-        role="dialog"
-        aria-modal="true"
-        :aria-label="t('targetStatus.targetDrawerAria')"
-      >
-        <header class="drawer-head">
-          <div class="drawer-identity">
+    <section
+      v-if="selectedTarget"
+      ref="targetWorkspace"
+      class="target-detail-workspace"
+      :aria-label="t('targetStatus.targetWorkspaceAria')"
+    >
+        <header class="workspace-head">
+          <div class="workspace-identity">
             <span class="kind-chip">{{ selectedTarget.kind.toUpperCase() }}</span>
             <div>
               <h3>{{ selectedTarget.name || selectedTarget.target }}</h3>
               <p>{{ selectedGroup?.name }} · {{ selectedTarget.target }}</p>
             </div>
           </div>
-          <button type="button" class="drawer-close" @click="closeTarget">
-            <span aria-hidden="true">×</span>
-            <span class="sr-only">{{ t('targetStatus.closeTargetDrawer') }}</span>
+          <button type="button" class="workspace-back" @click="closeTarget">
+            <span aria-hidden="true">←</span>
+            <span>{{ t('targetStatus.backToTargetBoard') }}</span>
           </button>
         </header>
 
@@ -228,7 +221,7 @@ watch(
           </button>
         </nav>
 
-        <div class="drawer-body">
+        <div class="workspace-body">
           <section v-if="tab === 'overview'" class="target-overview" role="tabpanel">
             <div class="target-summary-grid">
               <div>
@@ -257,7 +250,7 @@ watch(
             </dl>
 
             <section class="priority-agents">
-              <div class="drawer-section-head">
+              <div class="workspace-section-head">
                 <div>
                   <h4>{{ t('targetStatus.priorityAgents') }}</h4>
                   <p>{{ t('targetStatus.priorityAgentsHint') }}</p>
@@ -290,7 +283,7 @@ watch(
           </section>
 
           <section v-else-if="tab === 'agents'" class="target-agent-matrix" role="tabpanel">
-            <div class="drawer-section-head">
+            <div class="workspace-section-head">
               <div>
                 <h4>{{ t('targetStatus.agentMatrixTitle') }}</h4>
                 <p>{{ t('targetStatus.agentMatrixHint') }}</p>
@@ -340,13 +333,12 @@ watch(
             />
           </section>
         </div>
-      </aside>
-    </template>
+    </section>
   </section>
 </template>
 
 <style scoped>
-/* Hallmark · genre: custom application · macrostructure: Index-First + Contextual Drawer
+/* Hallmark · genre: custom application · macrostructure: Global Status Board + Inline Workbench
  * design-system: design.md · designed-as-app
  * post-emit critique: P5 H5 E4 S5 R5 V5
  * contrast: pass (40–41) · honest: pass (46) · chrome: pass (47) · tokens: pass (48)
@@ -354,18 +346,6 @@ watch(
  */
 .target-board {
   min-width: 0;
-}
-
-.sr-only {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  padding: 0;
-  margin: -1px;
-  overflow: hidden;
-  clip: rect(0, 0, 0, 0);
-  white-space: nowrap;
-  border: 0;
 }
 
 .board-result {
@@ -404,14 +384,14 @@ watch(
 }
 
 .board-group-head > div:first-child,
-.drawer-section-head > div,
-.drawer-identity > div {
+.workspace-section-head > div,
+.workspace-identity > div {
   min-width: 0;
 }
 
 .board-group-head h3,
-.drawer-section-head h4,
-.drawer-head h3 {
+.workspace-section-head h4,
+.workspace-head h3 {
   margin: 0;
   overflow-wrap: anywhere;
   font-family: var(--font-display);
@@ -423,8 +403,8 @@ watch(
 }
 
 .board-group-head > div:first-child span,
-.drawer-head p,
-.drawer-section-head p {
+.workspace-head p,
+.workspace-section-head p {
   color: var(--color-muted);
   font-size: var(--text-xs);
 }
@@ -486,7 +466,7 @@ watch(
 }
 
 .board-target-identity,
-.drawer-identity {
+.workspace-identity {
   display: flex;
   align-items: center;
   gap: var(--space-xs);
@@ -546,7 +526,7 @@ watch(
 }
 
 .target-board-row:focus-visible,
-.drawer-close:focus-visible,
+.workspace-back:focus-visible,
 .target-tabs button:focus-visible,
 .text-action:focus-visible,
 .priority-agent-list button:focus-visible,
@@ -558,7 +538,7 @@ watch(
 }
 
 .target-board-row:active,
-.drawer-close:active,
+.workspace-back:active,
 .target-tabs button:active,
 .text-action:active,
 .priority-agent-list button:active,
@@ -589,33 +569,22 @@ watch(
   font-size: var(--text-sm);
 }
 
-.drawer-backdrop {
-  position: fixed;
-  z-index: calc(var(--z-modal) - 1);
-  inset: 0;
-  border: 0;
-  background: var(--color-backdrop);
-  cursor: default;
-}
-
-.target-drawer {
-  position: fixed;
-  z-index: var(--z-modal);
-  top: 0;
-  right: 0;
-  bottom: 0;
+.target-detail-workspace {
   display: grid;
-  grid-template-rows: auto auto minmax(0, 1fr);
-  width: min(760px, calc(100vw - 280px));
-  min-width: 560px;
-  border-left: var(--rule-hair) solid var(--glass-border);
+  grid-template-rows: auto auto auto;
+  width: 100%;
+  min-width: 0;
+  margin-top: var(--space-md);
+  overflow: hidden;
+  border: var(--rule-hair) solid var(--color-rule);
+  border-radius: var(--radius-panel);
   background: var(--color-glass-strong);
-  box-shadow: var(--shadow-float);
+  box-shadow: var(--shadow-card);
   backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
   -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
 }
 
-.drawer-head {
+.workspace-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -624,27 +593,31 @@ watch(
   border-bottom: var(--rule-hair) solid var(--color-rule);
 }
 
-.drawer-head h3 {
+.workspace-head h3 {
   font-size: var(--text-lg);
 }
 
-.drawer-head p,
-.drawer-section-head p {
+.workspace-head p,
+.workspace-section-head p {
   margin: var(--space-3xs) 0 0;
 }
 
-.drawer-close {
-  display: grid;
-  place-items: center;
+.workspace-back {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2xs);
   flex: 0 0 auto;
-  width: 44px;
-  height: 44px;
+  width: auto;
+  min-height: 44px;
+  padding-inline: var(--space-xs);
   border: 0;
   border-radius: var(--radius-input);
   color: var(--color-ink-2);
   background: transparent;
-  font-size: var(--text-xl);
+  font-size: var(--text-sm);
   cursor: pointer;
+  white-space: nowrap;
 }
 
 .target-tabs {
@@ -676,7 +649,7 @@ watch(
 }
 
 .target-board-row:disabled,
-.drawer-close:disabled,
+.workspace-back:disabled,
 .text-action:disabled,
 .priority-agent-list button:disabled,
 .history-action:disabled {
@@ -685,9 +658,9 @@ watch(
   opacity: 0.55;
 }
 
-.drawer-body {
+.workspace-body {
   min-height: 0;
-  overflow-y: auto;
+  overflow: visible;
   padding: var(--space-sm);
   background: var(--color-paper-2);
 }
@@ -755,14 +728,14 @@ watch(
   font-family: var(--font-outlier);
 }
 
-.drawer-section-head {
+.workspace-section-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: var(--space-xs);
 }
 
-.drawer-section-head h4 {
+.workspace-section-head h4 {
   font-size: var(--text-md);
 }
 
@@ -878,7 +851,7 @@ watch(
 
 @media (hover: hover) and (pointer: fine) {
   .target-board-row:hover,
-  .drawer-close:hover,
+  .workspace-back:hover,
   .target-tabs button:not(.active):not(:disabled):hover,
   .priority-agent-list > button:hover,
   .history-action:hover,
@@ -921,16 +894,6 @@ watch(
   .target-board-row > span:nth-child(4) { grid-column: 2; }
   .board-open { grid-column: 2; grid-row: 1; }
 
-  .target-drawer {
-    width: 100vw;
-    min-width: 0;
-    border-left: 0;
-  }
-
-  .drawer-backdrop {
-    display: none;
-  }
-
   .target-summary-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
@@ -947,7 +910,7 @@ watch(
     grid-template-columns: minmax(0, 1fr);
   }
 
-  .drawer-section-head {
+  .workspace-section-head {
     align-items: flex-start;
   }
 
@@ -974,15 +937,15 @@ watch(
     align-items: flex-start;
   }
 
-  .drawer-head {
+  .workspace-head {
     padding: var(--space-xs);
   }
 
-  .drawer-body {
+  .workspace-body {
     padding: var(--space-xs);
   }
 
-  .drawer-identity .kind-chip {
+  .workspace-identity .kind-chip {
     display: none;
   }
 
@@ -1010,7 +973,7 @@ watch(
 
 @media (prefers-reduced-motion: reduce) {
   .target-board-row,
-  .drawer-close,
+  .workspace-back,
   .target-tabs button,
   .priority-agent-list button,
   .history-action,

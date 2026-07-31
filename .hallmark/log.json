@@ -1,12 +1,12 @@
 [
   {
     "date": "2026-07-31",
-    "macrostructure": "Workbench + Global Status Board + Contextual Drawer",
+    "macrostructure": "Workbench + Global Status Board + Inline Detail Workspace",
     "theme": "custom",
     "theme_axes": "dark + light / geometric-sans / cool",
     "vibe": "calm translucent, precise, spatial, native",
     "enrichment": "none",
-    "brief": "Operations status with Agent workbench and global target board plus contextual history drawer",
+    "brief": "Operations status with an Agent workbench, a persistent global target board, and full-width inline target details",
     "scope": "target-status",
     "genre": "custom application system",
     "design_system": "design.md"

@@ -135,24 +135,24 @@ describe('group-centric target-status page', () => {
     expect(wrapper.text()).toContain('Public DNS')
     expect(wrapper.text()).toContain('Taipei NUC')
     expect(wrapper.text()).toContain('Empty Group')
-    // The global board and selected-target drawer show the same authoritative ratio.
+    // The global board and selected-target workspace show the same authoritative ratio.
     expect(wrapper.get('.board-availability').text()).toBe('92%')
     expect(wrapper.get('.target-summary-grid').text()).toContain(i18n.global.t('targetStatus.availability24h'))
     expect(wrapper.get('.target-summary-grid').text()).toContain('92%')
     expect(router.currentRoute.value.query).toEqual({ view: 'targets', target: 'target-1', agent: 'agent-1' })
     expect(wrapper.findAll('.target-board-group')).toHaveLength(2)
-    expect(wrapper.find('.target-drawer').exists()).toBe(true)
+    expect(wrapper.find('.target-detail-workspace').exists()).toBe(true)
     expect(wrapper.find('a[href="/monitoring/target-1/edit"]').exists()).toBe(false)
     expect(wrapper.find('a[href="/monitoring/new?group=group-1"]').exists()).toBe(false)
-    await wrapper.get('.drawer-close').trigger('click')
+    await wrapper.get('.workspace-back').trigger('click')
     await flushPromises()
     expect(router.currentRoute.value.query.target).toBeUndefined()
-    expect(wrapper.find('.target-drawer').exists()).toBe(false)
+    expect(wrapper.find('.target-detail-workspace').exists()).toBe(false)
     expect(wrapper.find('.target-board-row').exists()).toBe(true)
     expect(wrapper.get('.view-switch button.active').text()).toBe(i18n.global.t('targetStatus.viewTargets'))
   })
 
-  it('keeps the global status board visible while target history opens in a drawer', async () => {
+  it('keeps the global status board visible while target history opens in an inline workspace', async () => {
     const router = createRouter({
       history: createMemoryHistory(),
       routes: [
@@ -170,11 +170,14 @@ describe('group-centric target-status page', () => {
 
     expect(wrapper.findAll('.target-board-group')).toHaveLength(2)
     expect(wrapper.find('.summary-grid').exists()).toBe(true)
-    expect(wrapper.find('.target-drawer').exists()).toBe(false)
+    expect(wrapper.find('.target-detail-workspace').exists()).toBe(false)
 
     await wrapper.get('.target-board-row').trigger('click')
     await flushPromises()
-    expect(wrapper.find('.target-drawer').exists()).toBe(true)
+    expect(wrapper.find('.target-detail-workspace').exists()).toBe(true)
+    expect(wrapper.find('[role="dialog"]').exists()).toBe(false)
+    expect(wrapper.find('.drawer-backdrop').exists()).toBe(false)
+    expect(wrapper.get('.workspace-back').text()).toContain(i18n.global.t('targetStatus.backToTargetBoard'))
     expect(wrapper.find('.target-board-row').exists()).toBe(true)
     expect(wrapper.find('.summary-grid').exists()).toBe(true)
 
