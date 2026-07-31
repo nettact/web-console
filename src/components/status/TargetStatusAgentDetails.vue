@@ -103,7 +103,13 @@ function severityLabel(severity: string): string {
 
 function historyLocation(agentID: string) {
   return {
-    path: `/target-status/${encodeURIComponent(props.target.target_id)}/agents/${encodeURIComponent(agentID)}/history`,
+    path: '/target-status',
+    query: {
+      view: 'targets',
+      agent: agentID,
+      target: props.target.target_id,
+      ttab: 'history',
+    },
   }
 }
 

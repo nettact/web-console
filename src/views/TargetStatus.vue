@@ -2,19 +2,35 @@
 import { computed, nextTick, onActivated, onDeactivated, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
-import { api, type AgentGroup, type MonitorGroup, type TargetStatusRow } from '../api'
-import TargetStatusGroup from '../components/status/TargetStatusGroup.vue'
+import { api, type AgentGroup, type MonitorGroup } from '../api'
+import AgentStatusWorkspace from '../components/status/AgentStatusWorkspace.vue'
+import TargetStatusBoard from '../components/status/TargetStatusBoard.vue'
+import { agentStatus } from '../agentStatus'
 import { targetStatus } from '../targetStatus'
 import {
   DISPLAY_STATE_ORDER,
   buildStatusGroups,
-  countStatuses,
+  countStatuses as countTargetStatuses,
   isStatusFilter,
   type StatusBucket,
   type StatusFilter,
 } from '../lib/targetStatusPage'
+import {
+  filterAndSortAgents,
+  isAgentFilter,
+  type AgentFilter,
+} from '../lib/agentStatusPage'
+import {
+  isAgentHistoryMode,
+  isAgentWorkspaceTab,
+  isTargetWorkspaceTab,
+  isTargetStatusView,
+  type AgentHistoryMode,
+  type AgentWorkspaceTab,
+  type TargetStatusView,
+  type TargetWorkspaceTab,
+} from '../lib/targetStatusAgentView'
 import { toDateLocale } from '../i18n'
-import { loadTargetStatusExpansion, saveTargetStatusExpansion } from '../lib/targetStatusExpansion'
 
 // A stable name so <KeepAlive :include> in App.vue caches this view: switching
 // away and back must not remount/refetch (which would flash the loading card
@@ -32,35 +48,44 @@ const agentGroups = ref<AgentGroup[]>([])
 const metaError = ref('')
 const ready = ref(false)
 
+const view = ref<TargetStatusView>('agents')
 const search = ref('')
 const groupFilter = ref('')
 const statusFilter = ref<StatusFilter>('all')
-const storedExpansion = loadTargetStatusExpansion()
-const selectedTargetId = ref(storedExpansion?.expandedTargetId ?? '')
+const agentSearch = ref('')
+const agentGroupFilter = ref('all')
+const agentStatusFilter = ref<AgentFilter>('all')
+const agentTab = ref<AgentWorkspaceTab>('overview')
+const agentHistoryMode = ref<AgentHistoryMode>('connectivity')
+const targetTab = ref<TargetWorkspaceTab>('overview')
+const selectedTargetId = ref('')
 const selectedAgentId = ref('')
-const expandedGroups = ref<Set<string>>(new Set(storedExpansion?.expandedGroupIds ?? []))
-let initialExpansionApplied = storedExpansion !== null
 let initialRouteQueryApplied = false
-// A URL target should reveal its group once when the user first enters that
-// deep link. It must not be re-applied by every target-status batch refresh.
-let pendingRouteTargetReveal = ''
 let applyingRoute = false
 
 const queryText = (value: unknown): string => typeof value === 'string' ? value : ''
 
 function applyRouteQuery(): void {
   applyingRoute = true
+  const rawView = queryText(route.query.view)
+  const routeHasTarget = Object.prototype.hasOwnProperty.call(route.query, 'target')
+  view.value = isTargetStatusView(rawView) ? rawView : routeHasTarget ? 'targets' : 'agents'
   search.value = queryText(route.query.q)
   groupFilter.value = queryText(route.query.group)
   const rawStatus = queryText(route.query.status)
   statusFilter.value = isStatusFilter(rawStatus) ? rawStatus : 'all'
+  agentSearch.value = queryText(route.query.aq)
+  agentGroupFilter.value = queryText(route.query.agroup) || 'all'
+  const rawAgentStatus = queryText(route.query.astatus)
+  agentStatusFilter.value = isAgentFilter(rawAgentStatus) ? rawAgentStatus : 'all'
+  const rawAgentTab = queryText(route.query.tab)
+  agentTab.value = isAgentWorkspaceTab(rawAgentTab) ? rawAgentTab : 'overview'
+  const rawHistoryMode = queryText(route.query.history)
+  agentHistoryMode.value = isAgentHistoryMode(rawHistoryMode) ? rawHistoryMode : 'connectivity'
+  const rawTargetTab = queryText(route.query.ttab)
+  targetTab.value = isTargetWorkspaceTab(rawTargetTab) ? rawTargetTab : 'overview'
   const targetFromRoute = queryText(route.query.target)
-  const routeHasTarget = Object.prototype.hasOwnProperty.call(route.query, 'target')
-  const firstRouteApplication = !initialRouteQueryApplied
   if (initialRouteQueryApplied || routeHasTarget) {
-    if (targetFromRoute && ((firstRouteApplication && routeHasTarget) || targetFromRoute !== selectedTargetId.value)) {
-      pendingRouteTargetReveal = targetFromRoute
-    }
     selectedTargetId.value = targetFromRoute
   }
   selectedAgentId.value = queryText(route.query.agent)
@@ -74,11 +99,16 @@ const filters = computed(() => ({
   search: search.value,
   groupId: groupFilter.value,
   status: statusFilter.value,
-  agentId: selectedAgentId.value,
+  agentId: '',
 }))
 
 const statusGroups = computed(() => buildStatusGroups(groups.value, targetStatus.targets, agentGroups.value, filters.value))
-const summary = computed(() => countStatuses(targetStatus.targets))
+const summary = computed(() => countTargetStatuses(targetStatus.targets))
+const visibleAgents = computed(() => filterAndSortAgents(agentStatus.agents, {
+  search: agentSearch.value,
+  groupId: agentGroupFilter.value,
+  status: agentStatusFilter.value,
+}))
 const donutStyle = computed(() => {
   if (!summary.value.total) return { background: 'var(--surface-2)' }
   const abnormalEnd = summary.value.abnormal / summary.value.total * 100
@@ -89,7 +119,7 @@ const donutStyle = computed(() => {
   }
 })
 const selectedTarget = computed(() => targetStatus.targets.find((row) => row.target_id === selectedTargetId.value))
-const selectedAgent = computed(() => {
+const selectedTargetAgent = computed(() => {
   if (!selectedAgentId.value) return undefined
   const inTarget = selectedTarget.value?.agents.find((agent) => agent.agent_id === selectedAgentId.value)
   if (inTarget) return inTarget
@@ -99,8 +129,8 @@ const selectedAgent = computed(() => {
   }
   return undefined
 })
-const hasActiveFilter = computed(() => !!search.value.trim() || !!groupFilter.value || statusFilter.value !== 'all' || !!selectedAgentId.value)
-const visibleTargetCount = computed(() => statusGroups.value.reduce((sum, group) => sum + group.targets.length, 0))
+const selectedAgentRow = computed(() => agentStatus.agents.find((agent) => agent.id === selectedAgentId.value))
+const hasActiveFilter = computed(() => !!search.value.trim() || !!groupFilter.value || statusFilter.value !== 'all')
 
 const bucketCards: Array<{ bucket: StatusBucket; tone: string }> = [
   { bucket: 'abnormal', tone: 'bad' },
@@ -120,35 +150,22 @@ function fmtSnapshot(value: string): string {
 // a banner appearing/disappearing around the resume would shift the whole page and
 // throw away the scroll position this view works to preserve.
 const snapshotTone = computed(() => {
-  if (targetStatus.error && !targetStatus.loaded) return 'error'
-  if (targetStatus.stale) return 'stale'
-  if (targetStatus.loaded && targetStatus.syncing) return 'syncing'
+  const state = view.value === 'agents' ? agentStatus : targetStatus
+  if (state.error && !state.loaded) return 'error'
+  if (state.stale) return 'stale'
+  if (state.loaded && state.syncing) return 'syncing'
   return 'live'
 })
 const snapshotText = computed(() => {
-  if (!targetStatus.loaded) return targetStatus.error ? t('targetStatus.errorBanner') : t('targetStatus.loading')
-  const time = fmtSnapshot(targetStatus.generatedAt)
-  return targetStatus.syncing ? t('targetStatus.resyncing', { time }) : t('targetStatus.updatedAt', { time })
+  const state = view.value === 'agents' ? agentStatus : targetStatus
+  if (!state.loaded) return state.error ? t('targetStatus.errorBanner') : t('targetStatus.loading')
+  const time = fmtSnapshot(state.generatedAt)
+  return state.syncing ? t('targetStatus.resyncing', { time }) : t('targetStatus.updatedAt', { time })
 })
 
-function toggleGroup(id: string): void {
-  const next = new Set(expandedGroups.value)
-  if (next.has(id)) next.delete(id)
-  else next.add(id)
-  expandedGroups.value = next
-}
-
-async function toggleTarget(row: TargetStatusRow): Promise<void> {
-  if (selectedTargetId.value === row.target_id) {
-    selectedTargetId.value = ''
-    return
-  }
-  selectedTargetId.value = row.target_id
-  const next = new Set(expandedGroups.value)
-  next.add(row.group_id)
-  expandedGroups.value = next
-  await nextTick()
-  document.getElementById(`target-status-${row.target_id}`)?.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
+function setView(next: TargetStatusView): void {
+  view.value = next
+  if (next === 'agents') applyDefaultAgentSelection()
 }
 
 function setBucket(bucket: StatusBucket): void {
@@ -163,50 +180,50 @@ function clearFilters(): void {
   selectedTargetId.value = ''
 }
 
-function clearFocus(): void {
-  selectedAgentId.value = ''
-  selectedTargetId.value = ''
-}
-
 function validateDeepLink(): void {
   if (!ready.value || !targetStatus.loaded) return
   const validGroupIDs = new Set([...groups.value.map((group) => group.id), ...targetStatus.targets.map((row) => row.group_id)])
   if (groupFilter.value && !validGroupIDs.has(groupFilter.value)) groupFilter.value = ''
 
   if (selectedTargetId.value && !selectedTarget.value) {
-    if (pendingRouteTargetReveal === selectedTargetId.value) pendingRouteTargetReveal = ''
     selectedTargetId.value = ''
   }
-  if (selectedAgentId.value && !selectedAgent.value) selectedAgentId.value = ''
+  if (
+    selectedAgentId.value
+    && agentStatus.loaded
+    && !selectedAgentRow.value
+    && !selectedTargetAgent.value
+  ) {
+    selectedAgentId.value = ''
+  }
 
-  const next = new Set([...expandedGroups.value].filter((id) => validGroupIDs.has(id)))
-  if (pendingRouteTargetReveal && selectedTarget.value?.target_id === pendingRouteTargetReveal) {
-    next.add(selectedTarget.value.group_id)
-    pendingRouteTargetReveal = ''
-  }
-  if (next.size !== expandedGroups.value.size || [...next].some((id) => !expandedGroups.value.has(id))) {
-    expandedGroups.value = next
-  }
 }
 
-function applyDefaultExpansion(): void {
-  if (!ready.value || !targetStatus.loaded || initialExpansionApplied || !statusGroups.value.length) return
-  const next = new Set<string>()
-  for (const group of statusGroups.value) if (group.counts.abnormal > 0) next.add(group.id)
-  if (!next.size) next.add(statusGroups.value[0].id)
-  if (selectedTarget.value) next.add(selectedTarget.value.group_id)
-  if (groupFilter.value) next.add(groupFilter.value)
-  expandedGroups.value = next
-  initialExpansionApplied = true
+function applyDefaultAgentSelection(): void {
+  if (view.value !== 'agents' || !agentStatus.loaded) return
+  if (visibleAgents.value.some((agent) => agent.id === selectedAgentId.value)) return
+  selectedAgentId.value = visibleAgents.value[0]?.id || ''
 }
 
 function querySnapshot(): Record<string, string> {
-  const query: Record<string, string> = {}
-  if (search.value.trim()) query.q = search.value.trim()
-  if (groupFilter.value) query.group = groupFilter.value
-  if (statusFilter.value !== 'all') query.status = statusFilter.value
-  if (selectedTargetId.value) query.target = selectedTargetId.value
+  const query: Record<string, string> = { view: view.value }
   if (selectedAgentId.value) query.agent = selectedAgentId.value
+  if (view.value === 'agents') {
+    if (agentSearch.value.trim()) query.aq = agentSearch.value.trim()
+    if (agentGroupFilter.value !== 'all') query.agroup = agentGroupFilter.value
+    if (agentStatusFilter.value !== 'all') query.astatus = agentStatusFilter.value
+    if (agentTab.value !== 'overview') query.tab = agentTab.value
+    if (agentTab.value === 'history' && agentHistoryMode.value !== 'connectivity') query.history = agentHistoryMode.value
+    if (agentTab.value === 'history' && agentHistoryMode.value === 'target' && selectedTargetId.value) {
+      query.target = selectedTargetId.value
+    }
+  } else {
+    if (search.value.trim()) query.q = search.value.trim()
+    if (groupFilter.value) query.group = groupFilter.value
+    if (statusFilter.value !== 'all') query.status = statusFilter.value
+    if (selectedTargetId.value) query.target = selectedTargetId.value
+    if (selectedTargetId.value && targetTab.value !== 'overview') query.ttab = targetTab.value
+  }
   return query
 }
 
@@ -225,14 +242,20 @@ watch(() => route.query, () => {
   validateDeepLink()
 }, { deep: true })
 
-watch([expandedGroups, selectedTargetId], () => {
-  saveTargetStatusExpansion({
-    expandedGroupIds: [...expandedGroups.value],
-    expandedTargetId: selectedTargetId.value,
-  })
-})
-
-watch([search, groupFilter, statusFilter, selectedTargetId, selectedAgentId], () => {
+watch([
+  view,
+  search,
+  groupFilter,
+  statusFilter,
+  agentSearch,
+  agentGroupFilter,
+  agentStatusFilter,
+  agentTab,
+  agentHistoryMode,
+  targetTab,
+  selectedTargetId,
+  selectedAgentId,
+], () => {
   if (!ready.value || applyingRoute) return
   const query = querySnapshot()
   if (!sameQuery(route.query, query)) router.replace({ query })
@@ -240,7 +263,6 @@ watch([search, groupFilter, statusFilter, selectedTargetId, selectedAgentId], ()
 
 watch([statusGroups, selectedTarget], () => {
   validateDeepLink()
-  applyDefaultExpansion()
 }, { deep: true })
 
 watch([search, groupFilter, statusFilter], () => {
@@ -251,6 +273,8 @@ watch([search, groupFilter, statusFilter], () => {
     selectedAgentId.value = ''
   }
 })
+
+watch([visibleAgents, view], applyDefaultAgentSelection, { deep: true })
 
 async function loadMetadata(): Promise<void> {
   metaError.value = ''
@@ -264,7 +288,9 @@ async function loadMetadata(): Promise<void> {
   } finally {
     ready.value = true
     validateDeepLink()
-    applyDefaultExpansion()
+    applyDefaultAgentSelection()
+    const query = querySnapshot()
+    if (!sameQuery(route.query, query)) router.replace({ query })
   }
 }
 
@@ -290,26 +316,92 @@ onActivated(() => {
         <h2>{{ t('targetStatus.title') }}</h2>
         <p class="sub">{{ t('targetStatus.sub') }}</p>
       </div>
-      <div class="snapshot" :class="snapshotTone">
-        <span class="snapshot-dot" :class="snapshotTone"></span>
-        <span>{{ snapshotText }}</span>
+      <div class="status-head-actions">
+        <div class="view-switch" role="tablist" :aria-label="t('targetStatus.viewSwitchAria')">
+          <button
+            type="button"
+            role="tab"
+            :class="{ active: view === 'agents' }"
+            :aria-selected="view === 'agents'"
+            @click="setView('agents')"
+          >
+            {{ t('targetStatus.viewAgents') }}
+          </button>
+          <button
+            type="button"
+            role="tab"
+            :class="{ active: view === 'targets' }"
+            :aria-selected="view === 'targets'"
+            @click="setView('targets')"
+          >
+            {{ t('targetStatus.viewTargets') }}
+          </button>
+        </div>
+        <div class="snapshot" :class="snapshotTone">
+          <span class="snapshot-dot" :class="snapshotTone"></span>
+          <span>{{ snapshotText }}</span>
+        </div>
       </div>
     </div>
 
     <p v-if="metaError" class="err" role="alert">{{ t('targetStatus.groupLoadError') }} {{ metaError }}</p>
-    <p v-if="targetStatus.error && !targetStatus.loaded" class="err" role="alert">{{ t('targetStatus.errorBanner') }}</p>
-    <p v-else-if="targetStatus.stale" class="status-banner stale" role="status">
+    <p
+      v-if="view === 'agents' && ((!agentStatus.loaded && agentStatus.error) || (!targetStatus.loaded && targetStatus.error))"
+      class="err"
+      role="alert"
+    >
+      {{ t('targetStatus.errorBanner') }}
+    </p>
+    <p
+      v-else-if="view === 'targets' && targetStatus.error && !targetStatus.loaded"
+      class="err"
+      role="alert"
+    >
+      {{ t('targetStatus.errorBanner') }}
+    </p>
+    <p
+      v-else-if="view === 'agents' && (agentStatus.stale || targetStatus.stale)"
+      class="status-banner stale"
+      role="status"
+    >
+      {{ t('targetStatus.staleBanner', { time: fmtSnapshot(agentStatus.generatedAt) }) }}
+    </p>
+    <p v-else-if="view === 'targets' && targetStatus.stale" class="status-banner stale" role="status">
       {{ t('targetStatus.staleBanner', { time: fmtSnapshot(targetStatus.generatedAt) }) }}
     </p>
 
-    <div v-if="selectedTarget || selectedAgent" class="focus-banner">
-      <span>{{ t('targetStatus.focusedOn') }}</span>
-      <strong v-if="selectedTarget">{{ selectedTarget.name || selectedTarget.target }}</strong>
-      <span v-if="selectedTarget && selectedAgent">/</span>
-      <strong v-if="selectedAgent">{{ selectedAgent.agent_name || selectedAgent.agent_id }}</strong>
-      <button type="button" @click="clearFocus">{{ t('targetStatus.clearFocus') }}</button>
-    </div>
+    <template v-if="view === 'agents'">
+      <div
+        v-if="!ready || (!agentStatus.loaded && !agentStatus.error) || (!targetStatus.loaded && !targetStatus.error)"
+        class="card loading-card"
+      >
+        {{ t('targetStatus.loading') }}
+      </div>
 
+      <AgentStatusWorkspace
+        v-else-if="ready && agentStatus.loaded && targetStatus.loaded && !metaError"
+        :agents="visibleAgents"
+        :targets="targetStatus.targets"
+        :groups="groups"
+        :agent-groups="agentGroups"
+        :selected-agent-id="selectedAgentId"
+        :selected-target-id="selectedTargetId"
+        :search="agentSearch"
+        :group-filter="agentGroupFilter"
+        :status-filter="agentStatusFilter"
+        :tab="agentTab"
+        :history-mode="agentHistoryMode"
+        @update:selected-agent-id="selectedAgentId = $event"
+        @update:selected-target-id="selectedTargetId = $event"
+        @update:search="agentSearch = $event"
+        @update:group-filter="agentGroupFilter = $event"
+        @update:status-filter="agentStatusFilter = $event"
+        @update:tab="agentTab = $event"
+        @update:history-mode="agentHistoryMode = $event"
+      />
+    </template>
+
+    <template v-else>
     <section v-if="targetStatus.loaded" class="summary-grid" :aria-label="t('targetStatus.summaryAria')">
       <div class="summary-card overview-card">
         <div class="donut" :style="donutStyle" aria-hidden="true"><span>{{ summary.total }}</span></div>
@@ -367,36 +459,23 @@ onActivated(() => {
       {{ t('targetStatus.loading') }}
     </div>
 
-    <template v-else-if="targetStatus.loaded && !metaError">
-      <p v-if="hasActiveFilter" class="filter-result">
-        {{ t('targetStatus.filterResult', { targets: visibleTargetCount, groups: statusGroups.length }) }}
-      </p>
-
-      <TargetStatusGroup
-        v-for="view in statusGroups"
-        :id="`target-status-group-${view.id}`"
-        :key="view.id"
-        :view="view"
-        :expanded="expandedGroups.has(view.id)"
-        :selected-target-id="selectedTargetId"
-        :selected-agent-id="selectedAgentId"
-        @toggle-group="toggleGroup(view.id)"
-        @toggle-target="toggleTarget"
-      />
-
-      <div v-if="!statusGroups.length" class="card empty-state">
-        <h3>{{ hasActiveFilter ? t('targetStatus.noFilterResults') : t('targetStatus.noGroups') }}</h3>
-        <p>{{ hasActiveFilter ? t('targetStatus.noFilterResultsHint') : t('targetStatus.noGroupsHint') }}</p>
-        <button v-if="hasActiveFilter" type="button" class="btn" @click="clearFilters">{{ t('targetStatus.resetFilters') }}</button>
-        <router-link v-else class="btn btn-primary" to="/monitoring/groups/new">{{ t('targetStatus.createGroup') }}</router-link>
-      </div>
+    <TargetStatusBoard
+      v-else-if="targetStatus.loaded && !metaError"
+      :groups="statusGroups"
+      :selected-target-id="selectedTargetId"
+      :selected-agent-id="selectedAgentId"
+      :tab="targetTab"
+      @update:selected-target-id="selectedTargetId = $event"
+      @update:selected-agent-id="selectedAgentId = $event"
+      @update:tab="targetTab = $event"
+    />
     </template>
   </main>
 </template>
 
 <style scoped>
 /* Hallmark · genre: custom application · macrostructure: Workbench · design-system: design.md · designed-as-app
- * pre-emit critique: P5 H5 E4 S4 R5 V4
+ * post-emit critique: P5 H5 E4 S5 R5 V5
  */
 .status-head {
   align-items: flex-start;
@@ -415,6 +494,65 @@ onActivated(() => {
 
 .status-head .sub {
   margin-top: var(--space-2xs);
+}
+
+.status-head-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-xs);
+  min-width: 0;
+}
+
+.view-switch {
+  display: inline-grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  padding: var(--space-3xs);
+  border: var(--rule-hair) solid var(--color-rule);
+  border-radius: var(--radius-input);
+  background: var(--color-paper-2);
+}
+
+.view-switch button {
+  min-width: 92px;
+  min-height: 44px;
+  padding-inline: var(--space-xs);
+  border: 0;
+  border-radius: calc(var(--radius-input) - var(--space-3xs));
+  color: var(--color-ink-2);
+  background: transparent;
+  font-size: var(--text-sm);
+  cursor: pointer;
+  transition: color var(--dur-micro) var(--ease-out), background var(--dur-micro) var(--ease-out);
+}
+
+.view-switch button.active {
+  color: var(--color-ink);
+  background: var(--color-glass-strong);
+  box-shadow: var(--shadow-card);
+}
+
+.view-switch button:focus-visible {
+  position: relative;
+  outline: var(--rule-fine) solid var(--color-focus);
+  outline-offset: calc(var(--rule-fine) * -1);
+}
+
+.view-switch button:active {
+  transform: translateY(var(--rule-fine));
+}
+
+.view-switch button:disabled {
+  color: var(--color-muted);
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .view-switch button:not(.active):not(:disabled):hover {
+    color: var(--color-ink);
+    background: var(--color-glass-hover);
+  }
 }
 
 .snapshot {
@@ -749,8 +887,21 @@ onActivated(() => {
     gap: var(--space-xs);
   }
 
+  .status-head-actions {
+    width: 100%;
+    flex-wrap: wrap;
+    justify-content: flex-start;
+  }
+
+  .view-switch {
+    flex: 1 1 240px;
+  }
+
+  .view-switch button {
+    min-width: 0;
+  }
+
   .snapshot {
-    flex-basis: 100%;
     width: fit-content;
   }
 

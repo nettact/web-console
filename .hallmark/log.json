@@ -1,5 +1,17 @@
 [
   {
+    "date": "2026-07-31",
+    "macrostructure": "Workbench + Global Status Board + Contextual Drawer",
+    "theme": "custom",
+    "theme_axes": "dark + light / geometric-sans / cool",
+    "vibe": "calm translucent, precise, spatial, native",
+    "enrichment": "none",
+    "brief": "Operations status with Agent workbench and global target board plus contextual history drawer",
+    "scope": "target-status",
+    "genre": "custom application system",
+    "design_system": "design.md"
+  },
+  {
     "date": "2026-07-30",
     "macrostructure": "Workbench + Index-First + Narrative Workflow",
     "theme": "custom",

@@ -38,12 +38,11 @@ beforeEach(() => {
 })
 
 describe('Agent-level target history drill-down', () => {
-  it('opens the secondary history page when the Agent card is clicked', async () => {
+  it('opens the Agent history workspace when the Agent card is clicked', async () => {
     const router = createRouter({
       history: createMemoryHistory(),
       routes: [
         { path: '/target-status', component: { template: '<div />' } },
-        { path: '/target-status/:targetId/agents/:agentId/history', component: { template: '<div />' } },
         { path: '/incidents', component: { template: '<div />' } },
       ],
     })
@@ -57,7 +56,13 @@ describe('Agent-level target history drill-down', () => {
     await wrapper.get('.agent-card').trigger('click')
     await flushPromises()
 
-    expect(router.currentRoute.value.path).toBe('/target-status/target-1/agents/agent-1/history')
+    expect(router.currentRoute.value.path).toBe('/target-status')
+    expect(router.currentRoute.value.query).toEqual({
+      view: 'targets',
+      agent: 'agent-1',
+      target: 'target-1',
+      ttab: 'history',
+    })
     expect(wrapper.find('[role="tab"]').exists()).toBe(false)
     expect(wrapper.text()).toContain(i18n.global.t('targetStatus.statusLabel'))
     expect(wrapper.text()).toContain(i18n.global.t('targetStatus.context.collecting'))

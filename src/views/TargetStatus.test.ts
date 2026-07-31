@@ -2,13 +2,22 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, mount } from '@vue/test-utils'
 import { createMemoryHistory, createRouter } from 'vue-router'
 
-const apiMock = vi.hoisted(() => ({ monitorGroups: vi.fn(), agentGroups: vi.fn(), targetStatuses: vi.fn(), metrics: vi.fn(), metricsSummary: vi.fn() }))
+const apiMock = vi.hoisted(() => ({
+  monitorGroups: vi.fn(),
+  agentGroups: vi.fn(),
+  targetStatuses: vi.fn(),
+  metrics: vi.fn(),
+  metricsSummary: vi.fn(),
+  agentStatusHistory: vi.fn(),
+  agent: vi.fn(),
+  listSeries: vi.fn(),
+}))
 vi.mock('../api', () => ({ api: apiMock }))
 
 import TargetStatus from './TargetStatus.vue'
+import { agentStatus } from '../agentStatus'
 import { targetStatus } from '../targetStatus'
 import { i18n } from '../i18n'
-import { TARGET_STATUS_EXPANSION_KEY } from '../lib/targetStatusExpansion'
 
 const statusRow = {
   target_id: 'target-1',
@@ -64,6 +73,38 @@ beforeEach(() => {
   apiMock.agentGroups.mockResolvedValue([])
   apiMock.metrics.mockReset().mockResolvedValue([])
   apiMock.metricsSummary.mockReset().mockResolvedValue({ window_seconds: 7200, kinds: {} })
+  apiMock.agentStatusHistory.mockReset().mockResolvedValue([])
+  apiMock.agent.mockReset().mockResolvedValue({
+    id: 'agent-1',
+    display_name: 'Taipei NUC',
+    hostname: 'taipei-nuc',
+    platform: 'windows',
+  })
+  apiMock.listSeries.mockReset().mockResolvedValue([])
+  agentStatus.generatedAt = '2026-07-18T05:00:01Z'
+  agentStatus.agents = [{
+    id: 'agent-1',
+    display_name: 'Taipei NUC',
+    hostname: 'taipei-nuc',
+    platform: 'windows',
+    agent_version: '0.1.0',
+    status: 'abnormal',
+    presence: 'online',
+    status_since: '2026-07-18T04:55:00Z',
+    last_seen_at: '2026-07-18T05:00:00Z',
+    first_connected_at: '2026-07-01T00:00:00Z',
+    last_disconnect_kind: '',
+    connectivity_alerts_muted: false,
+    groups: [],
+    firing_faults: 1,
+    active_issues: 0,
+    connectivity_alert: null,
+    resources: { cpu: null, memory: null, disk: null, net: null, load: null, uptime: null },
+    created_at: '2026-07-01T00:00:00Z',
+  }]
+  agentStatus.loaded = true
+  agentStatus.stale = false
+  agentStatus.error = ''
   targetStatus.generatedAt = '2026-07-18T05:00:01Z'
   targetStatus.targets = [statusRow]
   targetStatus.loaded = true
@@ -73,11 +114,6 @@ beforeEach(() => {
 
 describe('group-centric target-status page', () => {
   it('restores stable target/Agent deep links and renders the group hierarchy', async () => {
-    // An explicit URL target must override a previously saved all-collapsed view.
-    localStorage.setItem(TARGET_STATUS_EXPANSION_KEY, JSON.stringify({
-      expandedGroupIds: [],
-      expandedTargetId: '',
-    }))
     const router = createRouter({
       history: createMemoryHistory(),
       routes: [
@@ -99,32 +135,24 @@ describe('group-centric target-status page', () => {
     expect(wrapper.text()).toContain('Public DNS')
     expect(wrapper.text()).toContain('Taipei NUC')
     expect(wrapper.text()).toContain('Empty Group')
-    // 24h availability is a server ratio rendered as a percentage, never re-derived.
-    expect(wrapper.get('.availability-cell').text()).toBe('92%')
-    expect(wrapper.get('.availability-fact').text()).toContain(i18n.global.t('targetStatus.availability24h'))
-    expect(wrapper.get('.availability-fact').text()).toContain('92%')
-    expect(router.currentRoute.value.query).toEqual({ target: 'target-1', agent: 'agent-1' })
-    expect(wrapper.findAll('.group-head[role="button"]')[0].attributes('aria-expanded')).toBe('true')
-    const targetSummary = wrapper.get('.target-summary[role="button"]')
+    // The global board and selected-target drawer show the same authoritative ratio.
+    expect(wrapper.get('.board-availability').text()).toBe('92%')
+    expect(wrapper.get('.target-summary-grid').text()).toContain(i18n.global.t('targetStatus.availability24h'))
+    expect(wrapper.get('.target-summary-grid').text()).toContain('92%')
+    expect(router.currentRoute.value.query).toEqual({ view: 'targets', target: 'target-1', agent: 'agent-1' })
+    expect(wrapper.findAll('.target-board-group')).toHaveLength(2)
+    expect(wrapper.find('.target-drawer').exists()).toBe(true)
     expect(wrapper.find('a[href="/monitoring/target-1/edit"]').exists()).toBe(false)
     expect(wrapper.find('a[href="/monitoring/new?group=group-1"]').exists()).toBe(false)
-    expect(wrapper.find('.expand-short').exists()).toBe(false)
-    expect(wrapper.get('.group-expand-cue').text()).toContain(i18n.global.t('targetStatus.collapseGroup'))
-    expect(targetSummary.get('.target-detail-cue').text()).toContain(i18n.global.t('targetStatus.collapseTarget'))
-    await targetSummary.find('.state-cell').trigger('click')
+    await wrapper.get('.drawer-close').trigger('click')
     await flushPromises()
     expect(router.currentRoute.value.query.target).toBeUndefined()
-    expect(wrapper.find('.agent-details').exists()).toBe(false)
-    expect(wrapper.get('.target-detail-cue').text()).toContain(i18n.global.t('targetStatus.expandTarget'))
-    expect(wrapper.text()).not.toContain('Agent 视图')
-    expect(wrapper.text()).not.toContain('目标视图')
+    expect(wrapper.find('.target-drawer').exists()).toBe(false)
+    expect(wrapper.find('.target-board-row').exists()).toBe(true)
+    expect(wrapper.get('.view-switch button.active').text()).toBe(i18n.global.t('targetStatus.viewTargets'))
   })
 
-  it('remembers group and target expansion while the whole group header toggles', async () => {
-    localStorage.setItem(TARGET_STATUS_EXPANSION_KEY, JSON.stringify({
-      expandedGroupIds: ['group-1', 'group-empty'],
-      expandedTargetId: 'target-1',
-    }))
+  it('keeps the global status board visible while target history opens in a drawer', async () => {
     const router = createRouter({
       history: createMemoryHistory(),
       routes: [
@@ -134,43 +162,32 @@ describe('group-centric target-status page', () => {
         { path: '/incidents', component: { template: '<div />' } },
       ],
     })
-    await router.push('/target-status')
+    await router.push('/target-status?view=targets')
     await router.isReady()
 
     const wrapper = mount(TargetStatus, { global: { plugins: [router, i18n] } })
     await flushPromises()
 
-    const heads = wrapper.findAll('.group-head[role="button"]')
-    expect(heads).toHaveLength(2)
-    expect(heads.every((head) => head.attributes('aria-expanded') === 'true')).toBe(true)
-    expect(wrapper.find('.agent-details').exists()).toBe(true)
+    expect(wrapper.findAll('.target-board-group')).toHaveLength(2)
+    expect(wrapper.find('.summary-grid').exists()).toBe(true)
+    expect(wrapper.find('.target-drawer').exists()).toBe(false)
 
-    // Collapsing a group that contains the selected target must survive the
-    // next authoritative status object replacement.
-    await heads[0].get('.group-facts').trigger('click')
-    expect(heads[0].attributes('aria-expanded')).toBe('false')
-    expect(heads[0].get('.group-expand-cue').text()).toContain(i18n.global.t('targetStatus.expandGroup'))
-    targetStatus.targets = [{ ...statusRow, last_observed_at: '2026-07-18T05:00:10Z' }]
+    await wrapper.get('.target-board-row').trigger('click')
     await flushPromises()
-    expect(heads[0].attributes('aria-expanded')).toBe('false')
-    expect(JSON.parse(localStorage.getItem(TARGET_STATUS_EXPANSION_KEY) || '{}').expandedGroupIds).not.toContain('group-1')
+    expect(wrapper.find('.target-drawer').exists()).toBe(true)
+    expect(wrapper.find('.target-board-row').exists()).toBe(true)
+    expect(wrapper.find('.summary-grid').exists()).toBe(true)
 
-    // Any non-action area in the row toggles the group.
-    await heads[1].get('.group-facts').trigger('click')
-    expect(heads[1].attributes('aria-expanded')).toBe('false')
-    let saved = JSON.parse(localStorage.getItem(TARGET_STATUS_EXPANSION_KEY) || '{}')
-    expect(saved.expandedGroupIds).not.toContain('group-empty')
-
-    await heads[1].get('.group-facts').trigger('click')
-    expect(heads[1].attributes('aria-expanded')).toBe('true')
-
-    // The management link is the sole exception and must not collapse its row.
-    await heads[1].get('.group-actions a').trigger('click')
+    await wrapper.get('.priority-agent-list button').trigger('click')
     await flushPromises()
-    expect(router.currentRoute.value.path).toBe('/monitoring/groups/group-empty/edit')
-    saved = JSON.parse(localStorage.getItem(TARGET_STATUS_EXPANSION_KEY) || '{}')
-    expect(saved.expandedGroupIds).toContain('group-empty')
-    expect(saved.expandedTargetId).toBe('target-1')
+    expect(wrapper.get('.target-tabs button.active').text()).toBe(i18n.global.t('targetStatus.targetTabHistory'))
+    expect(router.currentRoute.value.query).toEqual({
+      view: 'targets',
+      target: 'target-1',
+      agent: 'agent-1',
+      ttab: 'history',
+    })
+    expect(apiMock.listSeries).toHaveBeenCalledWith('agent-1')
   })
 
   it('shows a truthful initial error instead of empty group or healthy summaries', async () => {
@@ -195,5 +212,63 @@ describe('group-centric target-status page', () => {
     expect(wrapper.text()).not.toContain('Core Network')
     expect(wrapper.find('.summary-grid').exists()).toBe(false)
   })
-})
 
+  it('opens the Agent workbench by default and reaches history in one action', async () => {
+    const router = createRouter({
+      history: createMemoryHistory(),
+      routes: [
+        { path: '/target-status', component: TargetStatus },
+        { path: '/monitoring/groups/:id/edit', component: { template: '<div />' } },
+        { path: '/monitoring/new', component: { template: '<div />' } },
+      ],
+    })
+    await router.push('/target-status')
+    await router.isReady()
+
+    const wrapper = mount(TargetStatus, { global: { plugins: [router, i18n] } })
+    await flushPromises()
+
+    expect(wrapper.get('.view-switch button.active').text()).toBe(i18n.global.t('targetStatus.viewAgents'))
+    expect(wrapper.text()).toContain('Taipei NUC')
+    expect(router.currentRoute.value.query).toEqual({ view: 'agents', agent: 'agent-1' })
+
+    await wrapper.get('.agent-history-shortcut').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.get('.agent-tabs button.active').text()).toBe(i18n.global.t('targetStatus.agentTabHistory'))
+    expect(router.currentRoute.value.query).toEqual({
+      view: 'agents',
+      agent: 'agent-1',
+      tab: 'history',
+    })
+    expect(apiMock.agentStatusHistory).toHaveBeenCalledWith('agent-1')
+  })
+
+  it('restores a target-probe history workspace from URL state', async () => {
+    const router = createRouter({
+      history: createMemoryHistory(),
+      routes: [
+        { path: '/target-status', component: TargetStatus },
+        { path: '/monitoring/groups/:id/edit', component: { template: '<div />' } },
+        { path: '/monitoring/new', component: { template: '<div />' } },
+      ],
+    })
+    await router.push('/target-status?view=agents&agent=agent-1&tab=history&history=target&target=target-1')
+    await router.isReady()
+
+    const wrapper = mount(TargetStatus, { global: { plugins: [router, i18n] } })
+    await flushPromises()
+
+    expect(wrapper.get('.view-switch button.active').text()).toBe(i18n.global.t('targetStatus.viewAgents'))
+    expect(wrapper.get('.agent-tabs button.active').text()).toBe(i18n.global.t('targetStatus.agentTabHistory'))
+    expect(wrapper.get('.history-mode-switch button.active').text()).toBe(i18n.global.t('targetStatus.targetProbeHistory'))
+    expect((wrapper.get('.target-history-picker select').element as HTMLSelectElement).value).toBe('target-1')
+    expect(router.currentRoute.value.query).toEqual({
+      view: 'agents',
+      agent: 'agent-1',
+      tab: 'history',
+      history: 'target',
+      target: 'target-1',
+    })
+  })
+})
