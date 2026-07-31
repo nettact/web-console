@@ -2,7 +2,7 @@
  * design-system: design.md · designed-as-app · theme: custom
  * vibe: "calm translucent, precise, spatial, native" · axes: dark + light / geometric-sans / cool
  * pre-emit critique: P5 H5 E5 S5 R5 V5
- * contrast: pass (40-41) · nav: N2 · footer: n/a · slop: pass (42-49) · mobile: pass (34, 49-57)
+ * contrast: audited 2026-07-31 · nav: N2 · footer: n/a · slop: pass (42-49) · mobile: pass (34, 49-57)
  */
 @import "../tokens.css";
 
@@ -181,7 +181,7 @@ h3 {
 }
 
 a {
-  color: var(--primary);
+  color: var(--color-accent-text);
   text-decoration: none;
 }
 
@@ -376,24 +376,22 @@ a {
   cursor: not-allowed;
 }
 .btn-primary {
-  color: #04121c;
-  background: linear-gradient(180deg, #59c7fb, var(--primary-strong));
+  color: var(--color-primary-action-text);
+  background: var(--color-primary-action-bg);
   border: none;
   box-shadow: 0 6px 18px -6px var(--primary-glow);
 }
 .btn-primary:hover {
-  filter: brightness(1.07);
-  background: linear-gradient(180deg, #59c7fb, var(--primary-strong));
+  background: var(--color-primary-action-hover-bg);
 }
 .btn-danger {
-  color: #fff;
-  background: linear-gradient(180deg, #fb7c7c, #e5484d);
+  color: var(--color-danger-action-text);
+  background: var(--color-danger-action-bg);
   border: none;
   box-shadow: 0 6px 18px -8px rgba(229, 72, 77, 0.6);
 }
 .btn-danger:hover {
-  filter: brightness(1.06);
-  background: linear-gradient(180deg, #fb7c7c, #e5484d);
+  background: var(--color-danger-action-hover-bg);
 }
 .btn-ghost {
   background: transparent;
@@ -413,18 +411,19 @@ a {
   padding: 2px 4px;
   font: inherit;
   font-weight: 550;
-  color: var(--primary);
+  color: var(--color-accent-text);
   cursor: pointer;
   transition: color 0.15s;
 }
 .link-btn:hover {
-  color: #7dd3fc;
+  color: var(--color-accent-text);
+  text-decoration: underline;
 }
 .link-btn.danger {
-  color: var(--danger);
+  color: var(--color-danger-text);
 }
 .link-btn.danger:hover {
-  color: #fca5a5;
+  color: var(--color-danger-text);
 }
 
 /* ---------- form fields ---------- */
@@ -529,19 +528,19 @@ label {
 .badge.up,
 .badge.resolved,
 .badge.ok {
-  color: var(--success);
+  color: var(--color-success-text);
   background: var(--success-soft);
   border-color: rgba(52, 211, 153, 0.3);
 }
 .badge.down,
 .badge.open,
 .badge.bad {
-  color: var(--danger);
+  color: var(--color-danger-text);
   background: var(--danger-soft);
   border-color: rgba(248, 113, 113, 0.3);
 }
 .badge.warn {
-  color: var(--warning);
+  color: var(--color-warning-text);
   background: var(--warning-soft);
   border-color: rgba(251, 191, 36, 0.3);
 }
@@ -606,7 +605,7 @@ label {
   font-size: 13px;
 }
 .err {
-  color: var(--danger);
+  color: var(--color-danger-text);
   background: var(--danger-soft);
   border: 1px solid rgba(248, 113, 113, 0.25);
   border-radius: var(--radius-sm);
@@ -614,23 +613,23 @@ label {
   font-size: 13px;
 }
 .ok {
-  color: var(--success);
+  color: var(--color-success-text);
   font-size: 13px;
   font-weight: 550;
 }
 .up {
-  color: var(--success);
+  color: var(--color-success-text);
   font-weight: 600;
 }
 .down {
-  color: var(--danger);
+  color: var(--color-danger-text);
   font-weight: 600;
 }
 .text-up {
-  color: var(--success);
+  color: var(--color-success-text);
 }
 .text-down {
-  color: var(--danger);
+  color: var(--color-danger-text);
 }
 .row {
   display: flex;
@@ -900,15 +899,15 @@ textarea {
 
 .btn-primary {
   border-color: transparent;
-  color: var(--color-accent-ink);
-  background: var(--color-accent);
+  color: var(--color-primary-action-text);
+  background: var(--color-primary-action-bg);
   box-shadow: none;
 }
 
 .btn-danger {
   border-color: transparent;
-  color: var(--color-paper);
-  background: var(--color-danger);
+  color: var(--color-danger-action-text);
+  background: var(--color-danger-action-bg);
   box-shadow: none;
 }
 

@@ -829,14 +829,14 @@ onMounted(loadAll)
 }
 .field-err {
   margin-top: 4px;
-  color: var(--color-danger);
+  color: var(--color-danger-text);
   font-size: 11.5px;
 }
 /* A warning the save does not block — visually distinct from .field-err so a
    disabled-but-valid proxy pin does not read as an error. */
 .field-warn {
   margin-top: 4px;
-  color: var(--color-warning);
+  color: var(--color-warning-text);
   font-size: 11.5px;
 }
 .save-warn h4 {
@@ -863,7 +863,7 @@ onMounted(loadAll)
   color: var(--text);
 }
 .warn-state {
-  color: var(--color-danger);
+  color: var(--color-danger-text);
   font-size: 12px;
 }
 .warn-perms {

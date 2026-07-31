@@ -428,9 +428,9 @@ watch(
   text-align: center;
 }
 
-.group-health .is-bad { color: var(--color-danger); background: var(--color-glass-subtle); }
-.group-health .is-warn { color: var(--color-warning); background: var(--color-glass-subtle); }
-.group-health .is-good { color: var(--color-success); background: var(--color-glass-subtle); }
+.group-health .is-bad { color: var(--color-danger-text); background: var(--color-glass-subtle); }
+.group-health .is-warn { color: var(--color-warning-text); background: var(--color-glass-subtle); }
+.group-health .is-good { color: var(--color-success-text); background: var(--color-glass-subtle); }
 
 .target-table-head,
 .target-board-row {
@@ -654,7 +654,7 @@ watch(
 }
 
 .target-tabs button.active {
-  color: var(--color-accent);
+  color: var(--color-accent-text);
   border-bottom-color: var(--color-accent);
 }
 
@@ -759,7 +759,7 @@ watch(
   min-height: 44px;
   padding-inline: var(--space-2xs);
   border: 0;
-  color: var(--color-accent);
+  color: var(--color-accent-text);
   background: transparent;
   cursor: pointer;
   white-space: nowrap;

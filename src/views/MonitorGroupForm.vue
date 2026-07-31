@@ -629,14 +629,14 @@ onMounted(load)
   margin-left: 8px;
   font-style: normal;
   font-size: 11.5px;
-  color: var(--warning);
+  color: var(--color-warning-text);
 }
 .tiny {
   font-size: 11.5px;
   margin: 4px 0 0;
 }
 .tiny.warn {
-  color: var(--warning);
+  color: var(--color-warning-text);
 }
 .head-btn {
   margin-left: auto;

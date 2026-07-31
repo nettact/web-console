@@ -1597,7 +1597,7 @@ select.wide {
   margin-left: 8px;
   font-style: normal;
   font-size: 11.5px;
-  color: var(--warning);
+  color: var(--color-warning-text);
 }
 .record-only {
   color: var(--text-dim);
@@ -1622,7 +1622,7 @@ select.wide {
   padding: 6px 10px;
 }
 .saved {
-  color: var(--success);
+  color: var(--color-success-text);
 }
 .listen-modes {
   display: flex;
@@ -1644,7 +1644,7 @@ input.port-in {
   padding: 1px 9px;
   border-radius: var(--radius-pill);
   font-size: 12px;
-  color: var(--warning, #d97706);
+  color: var(--color-warning-text);
   background: var(--surface-2);
   border: 1px solid var(--border);
 }
@@ -1654,13 +1654,9 @@ input.port-in {
   border-radius: 8px;
   font-size: 13px;
   line-height: 1.5;
-  color: #92400e;
-  background: rgba(251, 191, 36, 0.12);
-  border: 1px solid rgba(251, 191, 36, 0.4);
-}
-:root.dark .warn-box,
-.dark .warn-box {
-  color: #fbbf24;
+  color: var(--color-warning-text);
+  background: color-mix(in srgb, var(--color-warning) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--color-warning) 40%, transparent);
 }
 
 @media (max-width: 768px) {

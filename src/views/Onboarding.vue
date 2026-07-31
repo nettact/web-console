@@ -192,9 +192,9 @@ const copy = computed(() => {
   width: 3rem;
   height: 3rem;
   place-items: center;
-  color: var(--color-accent-ink);
+  color: var(--color-primary-action-text);
   border-radius: var(--radius-input);
-  background: var(--color-accent);
+  background: var(--color-primary-action-bg);
 }
 
 .brand-name {
@@ -223,7 +223,7 @@ const copy = computed(() => {
   letter-spacing: -.045em;
 }
 
-.story-copy h1 span { color: var(--color-accent); }
+.story-copy h1 span { color: var(--color-accent-text); }
 
 .story-copy p {
   max-width: 52ch;
@@ -297,7 +297,7 @@ const copy = computed(() => {
   width: 2.25rem;
   height: 2.25rem;
   place-items: center;
-  color: var(--color-accent);
+  color: var(--color-accent-text);
   border: var(--rule-hair) solid color-mix(in oklch, var(--color-accent) 24%, transparent);
   border-radius: var(--radius-xs);
   background: color-mix(in oklch, var(--color-accent) 8%, transparent);
@@ -363,10 +363,10 @@ const copy = computed(() => {
   width: 4.5rem;
   height: 4.5rem;
   place-items: center;
-  color: var(--color-accent-ink);
+  color: var(--color-primary-action-text);
   border: var(--rule-hair) solid color-mix(in oklch, var(--color-accent) 65%, var(--color-rule));
   border-radius: 50%;
-  background: var(--color-accent);
+  background: var(--color-primary-action-bg);
   box-shadow: 0 0 0 .5rem color-mix(in oklch, var(--color-accent) 9%, transparent);
 }
 
@@ -574,7 +574,7 @@ const copy = computed(() => {
 }
 
 :deep(.welcome-eyebrow) {
-  color: var(--color-accent);
+  color: var(--color-accent-text);
   font-family: var(--font-outlier);
   font-size: var(--text-xs);
 }
@@ -606,7 +606,7 @@ const copy = computed(() => {
 :deep(.welcome-benefit:last-child) { border-bottom: 0; }
 
 :deep(.benefit-icon) {
-  color: var(--color-accent);
+  color: var(--color-accent-text);
   border-color: color-mix(in oklch, var(--color-accent) 24%, transparent);
   background: color-mix(in oklch, var(--color-accent) 8%, transparent);
 }
@@ -644,7 +644,7 @@ const copy = computed(() => {
 }
 
 :deep(.region-card input) { accent-color: var(--color-accent); }
-:deep(.badge-rec) { color: var(--color-accent-ink); background: var(--color-accent); }
+:deep(.badge-rec) { color: var(--color-primary-action-text); background: var(--color-primary-action-bg); }
 
 :deep(.tgt-group h3),
 :deep(.ch-existing h3),
@@ -658,7 +658,7 @@ const copy = computed(() => {
 :deep(.tgt-row:hover) { background: var(--color-glass-subtle); }
 :deep(.tgt-kind),
 :deep(.ch-chip b) {
-  color: var(--color-accent);
+  color: var(--color-accent-text);
   border-color: color-mix(in oklch, var(--color-accent) 18%, transparent);
   background: color-mix(in oklch, var(--color-accent) 7%, transparent);
 }
@@ -678,7 +678,7 @@ const copy = computed(() => {
 
 :deep(.sys-card.picked),
 :deep(.type-tab.active) {
-  color: var(--color-accent);
+  color: var(--color-accent-text);
   border-color: color-mix(in oklch, var(--color-accent) 65%, var(--color-rule));
   background: color-mix(in oklch, var(--color-accent) 10%, var(--color-glass-subtle));
 }

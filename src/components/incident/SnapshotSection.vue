@@ -292,7 +292,7 @@ ul.plain li {
   margin: 8px 0;
 }
 .notice.warn {
-  color: var(--warning);
+  color: var(--color-warning-text);
   background: var(--warning-soft);
   border-color: rgba(251, 191, 36, 0.3);
 }

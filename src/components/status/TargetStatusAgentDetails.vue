@@ -275,7 +275,7 @@ function openHistory(agentID: string): void {
 .agent-card:hover,
 .agent-card:focus-visible { border-color: var(--primary); background: var(--surface-2); outline: none; }
 .agent-card:hover { transform: translateY(-1px); }
-.agent-card.abnormal { border-color: rgba(248, 113, 113, 0.3); }
+.agent-card.abnormal { border-color: color-mix(in oklch, var(--color-danger) 30%, transparent); }
 .agent-card.highlighted { box-shadow: 0 0 0 2px var(--primary-soft); border-color: var(--primary); }
 .agent-head { gap: 10px; flex-wrap: wrap; }
 .agent-identity { gap: 7px; min-width: 210px; }
@@ -286,7 +286,7 @@ function openHistory(agentID: string): void {
 .online-dot.offline { background: var(--text-muted); }
 .state-badges { gap: 6px; flex-wrap: wrap; }
 .history-link-hint,
-.incident-link { color: var(--primary); font-size: 11.5px; text-decoration: none; }
+.incident-link { color: var(--color-accent-text); font-size: 11.5px; text-decoration: none; }
 .history-link-hint { margin-left: auto; }
 .agent-facts { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 9px; margin-top: 11px; }
 .fact-card { min-width: 0; padding: 9px 10px; border: 1px solid var(--border); border-radius: 7px; background: var(--overlay-subtle); }
@@ -297,7 +297,7 @@ function openHistory(agentID: string): void {
 .fact-card small { color: var(--text-muted); font-size: 10.5px; }
 /* The fluctuation count replaces the generic hint and has to be noticed: it is the
    answer to the question the figure above it raises. */
-.fact-card small.flux-note { color: #fcd34d; }
+.fact-card small.flux-note { color: var(--color-warning-text); }
 .missing-permissions { margin-top: 10px; }
 .fault-panel {
   display: grid;
@@ -315,9 +315,9 @@ function openHistory(agentID: string): void {
 .fault-main strong { font-size: 11.5px; }
 .severity { padding: 1px 6px; border-radius: var(--radius-pill); color: var(--text-dim); font-size: 9.5px; background: var(--surface-2); }
 .severity-error,
-.severity-critical { color: var(--danger); }
-.severity-warn { color: var(--warning); }
-.confirm-rounds { color: var(--warning); font-family: var(--mono); font-size: 11.5px; font-variant-numeric: tabular-nums; }
+.severity-critical { color: var(--color-danger-text); }
+.severity-warn { color: var(--color-warning-text); }
+.confirm-rounds { color: var(--color-warning-text); font-family: var(--mono); font-size: 11.5px; font-variant-numeric: tabular-nums; }
 .fault-meta { gap: 12px; flex-wrap: wrap; color: var(--text-dim); font-size: 11px; }
 .empty-agent { padding: 12px 2px; }
 

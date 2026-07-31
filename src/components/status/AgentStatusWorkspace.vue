@@ -590,7 +590,7 @@ watch(
 }
 
 .agent-reason {
-  color: var(--color-warning);
+  color: var(--color-warning-text);
 }
 
 .agent-row-status {
@@ -600,7 +600,7 @@ watch(
 }
 
 .agent-row-status small {
-  color: var(--color-danger);
+  color: var(--color-danger-text);
   font-size: var(--text-xs);
   white-space: nowrap;
 }
@@ -657,7 +657,7 @@ watch(
   min-height: 44px;
   padding: 0 var(--space-xs);
   margin: var(--space-2xs) var(--space-xs) 0;
-  color: var(--color-accent);
+  color: var(--color-accent-text);
   font: inherit;
   font-size: var(--text-sm);
   border: 0;
@@ -747,8 +747,8 @@ watch(
 
 .agent-tabs button.active,
 .history-mode-switch button.active {
-  color: var(--color-accent-ink);
-  background: var(--color-accent);
+  color: var(--color-primary-action-text);
+  background: var(--color-primary-action-bg);
 }
 
 .agent-tabs button:disabled,
@@ -799,15 +799,15 @@ watch(
 }
 
 .agent-summary-grid .tone-bad strong {
-  color: var(--color-danger);
+  color: var(--color-danger-text);
 }
 
 .agent-summary-grid .tone-warn strong {
-  color: var(--color-warning);
+  color: var(--color-warning-text);
 }
 
 .agent-summary-grid .tone-good strong {
-  color: var(--color-success);
+  color: var(--color-success-text);
 }
 
 .agent-overview-facts {
@@ -863,7 +863,7 @@ watch(
 .history-row-action {
   min-height: 44px;
   padding-inline: var(--space-xs);
-  color: var(--color-accent);
+  color: var(--color-accent-text);
   font: inherit;
   font-size: var(--text-sm);
   border: var(--rule-hair) solid var(--color-rule);
@@ -916,7 +916,7 @@ watch(
 }
 
 .priority-action {
-  color: var(--color-accent);
+  color: var(--color-accent-text);
   font-size: var(--text-xs);
   white-space: nowrap;
 }
@@ -972,7 +972,7 @@ watch(
   min-width: 0;
   padding: var(--space-3xs) var(--space-2xs);
   overflow: hidden;
-  color: var(--color-accent);
+  color: var(--color-accent-text);
   font-family: var(--font-outlier);
   font-size: var(--text-xs);
   text-overflow: ellipsis;
@@ -1056,19 +1056,24 @@ watch(
   .agent-select:hover,
   .agent-history-shortcut:hover,
   .mobile-back:hover,
-  .agent-tabs button:hover,
-  .history-mode-switch button:hover,
+  .agent-tabs button:not(.active):hover,
+  .history-mode-switch button:not(.active):hover,
   .text-action:hover,
   .priority-list button:hover,
   .history-row-action:hover {
     background: var(--color-glass-hover);
   }
 
+  .agent-tabs button.active:hover,
+  .history-mode-switch button.active:hover {
+    background: var(--color-primary-action-hover-bg);
+  }
+
   .agent-history-shortcut:hover,
   .mobile-back:hover,
   .text-action:hover,
   .history-row-action:hover {
-    color: var(--color-accent);
+    color: var(--color-accent-text);
   }
 }
 

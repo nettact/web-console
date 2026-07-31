@@ -377,7 +377,10 @@ onBeforeUnmount(stopPoll)
 <template>
   <main class="page data-workbench" aria-labelledby="processes-title">
     <div class="page-head workbench-head">
-      <h2 id="processes-title">{{ t('processes.title') }}</h2>
+      <div class="head-copy">
+        <h2 id="processes-title">{{ t('processes.title') }}</h2>
+        <p class="hint sub">{{ t('processes.sub') }}</p>
+      </div>
       <span class="spacer"></span>
       <div class="picker" v-if="agents.length">
         <label>Agent</label>
@@ -392,7 +395,6 @@ onBeforeUnmount(stopPoll)
       </div>
     </div>
 
-    <p class="hint sub">{{ t('processes.sub') }}</p>
     <p v-if="error" class="err" role="alert">{{ error }}</p>
 
     <!-- Scopes the agent could not collect this round (shown for both the
@@ -608,6 +610,12 @@ onBeforeUnmount(stopPoll)
 .data-workbench {
   font-variant-numeric: tabular-nums;
 }
+.workbench-head {
+  align-items: flex-start;
+}
+.head-copy {
+  min-width: 0;
+}
 .workbench-head h2 {
   font-family: var(--font-display);
   letter-spacing: -0.028em;
@@ -635,9 +643,8 @@ onBeforeUnmount(stopPoll)
   letter-spacing: 0.05em;
   color: var(--text-muted);
 }
-.sub {
-  margin-top: -6px;
-  margin-bottom: 14px;
+.head-copy .sub {
+  margin: var(--space-2xs) 0 0;
 }
 .denial {
   padding: var(--space-sm);
@@ -807,7 +814,7 @@ onBeforeUnmount(stopPoll)
   color: var(--color-ink);
 }
 .seg.active {
-  color: var(--color-accent);
+  color: var(--color-accent-text);
   border-color: var(--color-accent);
   background: var(--color-glass-hover);
 }
@@ -824,7 +831,7 @@ onBeforeUnmount(stopPoll)
 .link-btn {
   border: none;
   background: transparent;
-  color: var(--primary);
+  color: var(--color-accent-text);
   font: inherit;
   padding: 0;
   cursor: pointer;

@@ -116,7 +116,7 @@ const needsFallback = (r: ProbeRound) => r.reason_code <= 0 && !showsValue(r)
   padding: 1px 7px;
   border-radius: 999px;
   font-size: 11px;
-  color: #fca5a5;
+  color: var(--color-danger-text);
   border: 1px solid rgba(248, 113, 113, 0.4);
   background: rgba(248, 113, 113, 0.1);
   white-space: nowrap;

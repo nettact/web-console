@@ -244,7 +244,7 @@ const hasRounds = (f: Fluctuation) => (f.rounds?.length ?? 0) > 0
 }
 /* Warm: something bigger than this target was going on. */
 .tag.is-shared {
-  color: #fcd34d;
+  color: var(--color-warning-text);
   border-color: rgba(251, 191, 36, 0.4);
   background: rgba(251, 191, 36, 0.1);
 }
@@ -254,7 +254,7 @@ const hasRounds = (f: Fluctuation) => (f.rounds?.length ?? 0) > 0
   border-color: var(--border);
 }
 .tag.is-linked {
-  color: #fca5a5;
+  color: var(--color-danger-text);
   border-color: rgba(248, 113, 113, 0.4);
   background: rgba(248, 113, 113, 0.1);
   text-decoration: none;
@@ -265,7 +265,7 @@ const hasRounds = (f: Fluctuation) => (f.rounds?.length ?? 0) > 0
   padding: 1px 7px;
   border-radius: 999px;
   font-size: 11px;
-  color: #fca5a5;
+  color: var(--color-danger-text);
   border: 1px solid rgba(248, 113, 113, 0.4);
   background: rgba(248, 113, 113, 0.1);
   white-space: nowrap;

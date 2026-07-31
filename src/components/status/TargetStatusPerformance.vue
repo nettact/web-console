@@ -149,15 +149,15 @@ onMounted(loadPerformance)
 .performance-card strong { margin-top: 5px; color: var(--text-dim); font-size: 14px; }
 .performance-card small { margin-top: 5px; color: var(--text-muted); font-size: 10.5px; }
 .performance-card.tone-attention {
-  border-color: rgba(251, 191, 36, 0.35);
+  border-color: color-mix(in oklch, var(--color-warning) 35%, transparent);
   background: var(--warning-soft);
 }
-.performance-card.tone-attention strong { color: var(--warning); }
+.performance-card.tone-attention strong { color: var(--color-warning-text); }
 .performance-card.tone-severe {
-  border-color: rgba(248, 113, 113, 0.35);
+  border-color: color-mix(in oklch, var(--color-danger) 35%, transparent);
   background: var(--danger-soft);
 }
-.performance-card.tone-severe strong { color: var(--danger); }
+.performance-card.tone-severe strong { color: var(--color-danger-text); }
 .nat-type-card strong { font-size: 12.5px; overflow-wrap: anywhere; }
 
 @media (max-width: 760px) {

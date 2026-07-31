@@ -280,7 +280,7 @@ onMounted(() => {
   color: var(--text);
 }
 .tab.active {
-  color: var(--primary);
+  color: var(--color-accent-text);
   border-bottom-color: var(--primary);
 }
 .auto-update {
@@ -390,7 +390,7 @@ onMounted(() => {
 }
 .perm-tag.warn {
   border-color: rgba(251, 191, 36, 0.4);
-  color: #fbbf24;
+  color: var(--color-warning-text);
 }
 .perm-note {
   margin: 0;
@@ -399,13 +399,13 @@ onMounted(() => {
   line-height: 1.55;
 }
 .perm-note.warn {
-  color: #fbbf24;
+  color: var(--color-warning-text);
 }
 .link-btn {
   align-self: flex-start;
   border: none;
   background: transparent;
-  color: var(--primary);
+  color: var(--color-accent-text);
   font: inherit;
   font-size: 12.5px;
   padding: 0;

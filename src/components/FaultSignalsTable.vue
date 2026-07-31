@@ -187,7 +187,7 @@ const stateKey = (s: FaultSignal) => {
   border: 1px solid transparent;
 }
 .sev.is-bad {
-  color: #fca5a5;
+  color: var(--color-danger-text);
   border-color: rgba(248, 113, 113, 0.4);
   background: rgba(248, 113, 113, 0.1);
 }
@@ -201,7 +201,7 @@ const stateKey = (s: FaultSignal) => {
   padding: 1px 7px;
   border-radius: 999px;
   font-size: 11px;
-  color: #fca5a5;
+  color: var(--color-danger-text);
   border: 1px solid rgba(248, 113, 113, 0.4);
   background: rgba(248, 113, 113, 0.1);
   white-space: nowrap;

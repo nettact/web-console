@@ -784,7 +784,7 @@ async function genToken(): Promise<void> {
 }
 .welcome-eyebrow {
   margin: 0 0 11px;
-  color: var(--primary);
+  color: var(--color-accent-text);
   font-size: 12px;
   font-weight: 650;
   letter-spacing: 0.08em;
@@ -812,7 +812,7 @@ async function genToken(): Promise<void> {
   width: 40px;
   height: 40px;
   flex: 0 0 40px;
-  color: var(--primary);
+  color: var(--color-accent-text);
   border: 1px solid rgba(56, 189, 248, 0.28);
   border-radius: 10px;
   background: rgba(56, 189, 248, 0.06);

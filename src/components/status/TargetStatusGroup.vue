@@ -263,7 +263,7 @@ function availabilityLabel(row: TargetStatusRow): string {
   background: var(--surface);
   box-shadow: var(--shadow-soft);
 }
-.group-panel.has-abnormal { border-color: rgba(248, 113, 113, 0.28); }
+.group-panel.has-abnormal { border-color: color-mix(in oklch, var(--color-danger) 28%, transparent); }
 .group-panel.orphaned { border-color: var(--danger); }
 .group-head {
   display: flex;
@@ -295,9 +295,9 @@ function availabilityLabel(row: TargetStatusRow): string {
   display: grid;
   place-items: center;
   flex: 0 0 auto;
-  border: 1px solid rgba(56, 189, 248, 0.28);
+  border: 1px solid color-mix(in oklch, var(--color-accent) 28%, transparent);
   border-radius: 9px;
-  color: var(--primary);
+  color: var(--color-accent-text);
   background: var(--primary-soft);
 }
 .group-title,
@@ -326,7 +326,7 @@ function availabilityLabel(row: TargetStatusRow): string {
   font-weight: 500;
 }
 .default-tag { color: var(--text-dim); background: var(--surface-2); }
-.orphan-tag { color: var(--danger); background: var(--danger-soft); }
+.orphan-tag { color: var(--color-danger-text); background: var(--danger-soft); }
 .group-facts {
   display: flex;
   gap: 24px;
@@ -360,9 +360,9 @@ function availabilityLabel(row: TargetStatusRow): string {
   font-size: 10.5px;
   white-space: nowrap;
 }
-.count-chip.bad { color: #fca5a5; border-color: rgba(248, 113, 113, 0.3); background: var(--danger-soft); }
-.count-chip.warn { color: #fcd34d; border-color: rgba(251, 191, 36, 0.3); background: var(--warning-soft); }
-.count-chip.good { color: #6ee7b7; border-color: rgba(52, 211, 153, 0.3); background: rgba(52, 211, 153, 0.1); }
+.count-chip.bad { color: var(--color-danger-text); border-color: color-mix(in oklch, var(--color-danger) 30%, transparent); background: var(--danger-soft); }
+.count-chip.warn { color: var(--color-warning-text); border-color: color-mix(in oklch, var(--color-warning) 30%, transparent); background: var(--warning-soft); }
+.count-chip.good { color: var(--color-success-text); border-color: color-mix(in oklch, var(--color-success) 30%, transparent); background: color-mix(in oklch, var(--color-success) 14%, transparent); }
 .count-chip.neutral { color: var(--text-dim); background: var(--surface-2); }
 .group-actions {
   display: flex;
@@ -372,7 +372,7 @@ function availabilityLabel(row: TargetStatusRow): string {
 }
 .group-actions a,
 .target-actions a {
-  color: var(--primary);
+  color: var(--color-accent-text);
   font-size: 10.5px;
   text-decoration: none;
 }
@@ -385,7 +385,7 @@ function availabilityLabel(row: TargetStatusRow): string {
   padding: 4px 8px;
   border: 1px solid var(--border-strong);
   border-radius: 7px;
-  color: var(--primary);
+  color: var(--color-accent-text);
   background: var(--primary-soft);
   font-size: 10.5px;
   font-weight: 650;
@@ -450,7 +450,7 @@ function availabilityLabel(row: TargetStatusRow): string {
   place-items: center;
   flex: 0 0 auto;
   border-radius: 8px;
-  color: var(--primary);
+  color: var(--color-accent-text);
   background: var(--primary-soft);
   font-size: 8.5px;
   font-weight: 700;
@@ -480,7 +480,7 @@ function availabilityLabel(row: TargetStatusRow): string {
   flex-wrap: wrap;
 }
 .impact-cell strong { font-size: 14px; }
-.impact-cell strong.affected { color: var(--danger); }
+.impact-cell strong.affected { color: var(--color-danger-text); }
 .impact-cell span { color: var(--text-dim); font-size: 11px; }
 .impact-cell small { flex-basis: 100%; color: var(--text-muted); font-size: 9.5px; }
 .fault-cell {
@@ -489,10 +489,10 @@ function availabilityLabel(row: TargetStatusRow): string {
   gap: 2px;
   font-size: 10.5px;
 }
-.fault-cell strong { color: var(--warning); font-size: 11px; }
-.fault-cell .confirming { color: var(--warning); font-variant-numeric: tabular-nums; }
+.fault-cell strong { color: var(--color-warning-text); font-size: 11px; }
+.fault-cell .confirming { color: var(--color-warning-text); font-variant-numeric: tabular-nums; }
 .fault-cell .severity-error,
-.fault-cell .severity-critical { color: var(--danger); }
+.fault-cell .severity-critical { color: var(--color-danger-text); }
 .avail-pill {
   padding: 2px 8px;
   border: 1px solid transparent;
@@ -501,13 +501,13 @@ function availabilityLabel(row: TargetStatusRow): string {
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
-.avail-pill.is-good { color: #6ee7b7; border-color: rgba(52, 211, 153, 0.35); background: rgba(52, 211, 153, 0.1); }
-.avail-pill.is-warn { color: #fcd34d; border-color: rgba(251, 191, 36, 0.35); background: var(--warning-soft); }
-.avail-pill.is-bad { color: #fca5a5; border-color: rgba(248, 113, 113, 0.35); background: var(--danger-soft); }
+.avail-pill.is-good { color: var(--color-success-text); border-color: color-mix(in oklch, var(--color-success) 35%, transparent); background: color-mix(in oklch, var(--color-success) 14%, transparent); }
+.avail-pill.is-warn { color: var(--color-warning-text); border-color: color-mix(in oklch, var(--color-warning) 35%, transparent); background: var(--warning-soft); }
+.avail-pill.is-bad { color: var(--color-danger-text); border-color: color-mix(in oklch, var(--color-danger) 35%, transparent); background: var(--danger-soft); }
 .avail-pill.is-unknown { color: var(--text-muted); border-color: var(--border-strong); }
 /* Sits under the pill it explains. Quiet enough not to compete with a real fault,
    present enough that a dipped figure no longer looks unexplained. */
-.flux-note { display: block; margin-top: 3px; font-size: 10.5px; color: #fcd34d; }
+.flux-note { display: block; margin-top: 3px; font-size: 10.5px; color: var(--color-warning-text); }
 .muted,
 .observed-cell { color: var(--text-muted); font-size: 10.5px; }
 .target-actions {
@@ -519,9 +519,9 @@ function availabilityLabel(row: TargetStatusRow): string {
 }
 .target-actions .incident-count {
   padding: 2px 6px;
-  border: 1px solid rgba(248, 113, 113, 0.28);
+  border: 1px solid color-mix(in oklch, var(--color-danger) 28%, transparent);
   border-radius: 5px;
-  color: var(--danger);
+  color: var(--color-danger-text);
   background: var(--danger-soft);
 }
 .empty-group {
@@ -533,7 +533,7 @@ function availabilityLabel(row: TargetStatusRow): string {
 .orphan-warning {
   margin: 0;
   padding: 9px 17px;
-  color: var(--danger);
+  color: var(--color-danger-text);
   background: var(--danger-soft);
   font-size: 11.5px;
 }

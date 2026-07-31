@@ -348,7 +348,7 @@ watch(
 .prd-docs {
   margin-left: auto;
   font-size: 12px;
-  color: var(--primary);
+  color: var(--color-accent-text);
   white-space: nowrap;
 }
 .prd-purpose {
@@ -416,7 +416,7 @@ watch(
   color: var(--text);
 }
 .tab.active {
-  color: var(--primary);
+  color: var(--color-accent-text);
   border-bottom-color: var(--primary);
 }
 .code-wrap {

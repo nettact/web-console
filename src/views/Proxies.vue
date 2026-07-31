@@ -298,18 +298,18 @@ onMounted(async () => {
   font-size: 12px;
 }
 .egress-bad {
-  color: var(--color-danger);
+  color: var(--color-danger-text);
   background: var(--color-glass-subtle);
 }
 .egress-warn {
-  color: var(--color-warning);
+  color: var(--color-warning-text);
   background: var(--color-glass-subtle);
 }
 .actions {
   white-space: nowrap;
 }
 .link-btn.danger {
-  color: var(--color-danger);
+  color: var(--color-danger-text);
 }
 .table-wrap {
   overflow-x: auto;

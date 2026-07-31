@@ -557,7 +557,7 @@ onBeforeUnmount(() => {
   background: #f87171;
 }
 .pill.abnormal {
-  color: var(--danger);
+  color: var(--color-danger-text);
   border-color: rgba(248, 113, 113, 0.4);
   background: var(--danger-soft);
 }
@@ -573,7 +573,7 @@ onBeforeUnmount(() => {
   padding: 1px 7px;
   border-radius: 999px;
   font-size: 10.5px;
-  color: #fca5a5;
+  color: var(--color-danger-text);
   border: 1px solid rgba(248, 113, 113, 0.4);
   background: rgba(248, 113, 113, 0.1);
   white-space: nowrap;
@@ -594,7 +594,7 @@ onBeforeUnmount(() => {
 }
 /* "We could not read this" must not look like the calm "nothing to report". */
 .warn-text {
-  color: var(--warning);
+  color: var(--color-warning-text);
 }
 .mini-table {
   width: 100%;
@@ -684,7 +684,7 @@ onBeforeUnmount(() => {
   flex: 0 0 auto;
   font-size: 12px;
   min-width: 120px;
-  color: var(--primary);
+  color: var(--color-accent-text);
 }
 .timeline .msg {
   flex: 1 1 auto;

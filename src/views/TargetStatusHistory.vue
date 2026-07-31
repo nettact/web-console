@@ -67,7 +67,7 @@ const backLocation = computed(() => ({
   align-items: center;
   min-height: 44px;
   margin-bottom: var(--space-sm);
-  color: var(--color-accent);
+  color: var(--color-accent-text);
   font-size: var(--text-sm);
   text-decoration: none;
   white-space: nowrap;
@@ -91,7 +91,7 @@ const backLocation = computed(() => ({
 
 .eyebrow {
   margin: 0 0 var(--space-2xs);
-  color: var(--color-accent);
+  color: var(--color-accent-text);
   font-family: var(--font-outlier);
   font-size: var(--text-xs);
   font-weight: 600;

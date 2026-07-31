@@ -187,10 +187,10 @@ const ageLabel = computed(() => {
 .network-line { display: grid; grid-template-columns: 54px minmax(0, 1fr); align-items: center; gap: 5px; }
 .network-line .direction { font-size: 10px; font-weight: 650; white-space: nowrap; }
 .network-line strong { overflow: hidden; color: var(--text); font-family: var(--mono); font-size: 10.5px; text-overflow: ellipsis; white-space: nowrap; }
-.network-line.download .direction { color: #22d3ee; }
-.network-line.upload .direction { color: var(--primary); }
+.network-line.download .direction { color: var(--color-info-text); }
+.network-line.upload .direction { color: var(--color-accent-text); }
 .telemetry.stale { opacity: .62; }
-.stale-tag { flex: none; padding: 0 4px; color: var(--warning); font-size: 8.5px; font-weight: 600; border: 1px solid color-mix(in srgb, var(--warning) 35%, transparent); border-radius: 999px; background: var(--warning-soft); }
+.stale-tag { flex: none; padding: 0 4px; color: var(--color-warning-text); font-size: 8.5px; font-weight: 600; border: 1px solid color-mix(in srgb, var(--warning) 35%, transparent); border-radius: 999px; background: var(--warning-soft); }
 .network > .stale-tag { position: absolute; top: -4px; right: 0; }
 .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
 </style>

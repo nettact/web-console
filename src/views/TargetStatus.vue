@@ -574,7 +574,7 @@ onActivated(() => {
 }
 
 .snapshot.stale {
-  color: var(--color-warning);
+  color: var(--color-warning-text);
   border-color: var(--color-warning);
 }
 
@@ -618,7 +618,7 @@ onActivated(() => {
 }
 
 .status-banner.stale {
-  color: var(--color-warning);
+  color: var(--color-warning-text);
   border: var(--rule-hair) solid var(--color-warning);
   background: var(--color-paper-2);
 }
@@ -639,7 +639,7 @@ onActivated(() => {
   margin-left: auto;
   padding: 0 var(--space-2xs);
   border: 0;
-  color: var(--color-accent);
+  color: var(--color-accent-text);
   background: none;
   cursor: pointer;
   white-space: nowrap;
@@ -729,15 +729,15 @@ onActivated(() => {
 }
 
 .bucket-card.bad strong {
-  color: var(--color-danger);
+  color: var(--color-danger-text);
 }
 
 .bucket-card.warn strong {
-  color: var(--color-warning);
+  color: var(--color-warning-text);
 }
 
 .bucket-card.good strong {
-  color: var(--color-success);
+  color: var(--color-success-text);
 }
 
 .bucket-card.neutral strong {

@@ -120,7 +120,7 @@ onBeforeUnmount(() => {
   cursor: pointer;
 }
 .combo-toggle:hover {
-  color: var(--primary);
+  color: var(--color-accent-text);
 }
 </style>
 
@@ -153,6 +153,6 @@ onBeforeUnmount(() => {
 }
 .combo-list li.active {
   background: var(--primary-soft);
-  color: var(--primary);
+  color: var(--color-accent-text);
 }
 </style>

@@ -73,7 +73,7 @@ onBeforeUnmount(close)
 }
 .info-ic:hover,
 .info-ic:focus {
-  color: var(--primary);
+  color: var(--color-accent-text);
   border-color: var(--primary);
   outline: none;
 }

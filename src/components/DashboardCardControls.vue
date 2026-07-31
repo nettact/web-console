@@ -72,7 +72,7 @@ const emit = defineEmits<{
 .control-title { min-width: 0; margin-right: auto; overflow: hidden; font-size: 10px; font-weight: 750; text-overflow: ellipsis; white-space: nowrap; }
 .ratio-buttons, .card-order-buttons { display: flex; gap: 3px; }
 button { display: grid; width: 44px; height: 44px; place-items: center; padding: 0; color: var(--color-muted); border: 1px solid var(--color-rule); border-radius: var(--radius-xs); background: var(--color-glass-subtle); cursor: pointer; }
-button:hover, button.active { color: var(--color-accent); border-color: var(--color-accent); background: color-mix(in srgb, var(--color-accent) 14%, transparent); }
+button:hover, button.active { color: var(--color-accent-text); border-color: var(--color-accent); background: color-mix(in srgb, var(--color-accent) 14%, transparent); }
 button:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 2px; }
 button:disabled { opacity: .3; cursor: default; }
 .ratio-icon { display: block; height: 8px; border: 1.5px solid currentColor; border-radius: 2px; }
@@ -80,9 +80,9 @@ button:disabled { opacity: .3; cursor: default; }
 .ratio-icon.is-medium { width: 14px; }
 .ratio-icon.is-wide { width: 20px; }
 .ratio-icon.is-tall { width: 13px; height: 15px; }
-.remove-card-button { color: var(--color-danger); font-size: 17px; }
+.remove-card-button { color: var(--color-danger-text); font-size: 17px; }
 .remove-card-button:hover,
-.remove-card-button:focus-visible { color: var(--color-accent-ink); border-color: var(--color-danger); background: var(--color-danger); }
+.remove-card-button:focus-visible { color: var(--color-danger-action-text); border-color: var(--color-danger-action-bg); background: var(--color-danger-action-bg); }
 @media (max-width: 560px) {
   .control-title { display: none; }
   .dashboard-card-controls { left: auto; }

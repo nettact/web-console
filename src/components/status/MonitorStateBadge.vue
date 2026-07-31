@@ -43,19 +43,19 @@ const label = computed(() => te(labelKey.value) ? t(labelKey.value) : props.stat
   white-space: nowrap;
 }
 .pill.is-good {
-  color: #6ee7b7;
-  border-color: rgba(52, 211, 153, 0.4);
-  background: rgba(52, 211, 153, 0.1);
+  color: var(--color-success-text);
+  border-color: color-mix(in oklch, var(--color-success) 40%, transparent);
+  background: color-mix(in oklch, var(--color-success) 14%, transparent);
 }
 .pill.is-bad {
-  color: #fca5a5;
-  border-color: rgba(248, 113, 113, 0.4);
-  background: rgba(248, 113, 113, 0.1);
+  color: var(--color-danger-text);
+  border-color: color-mix(in oklch, var(--color-danger) 40%, transparent);
+  background: color-mix(in oklch, var(--color-danger) 14%, transparent);
 }
 .pill.is-warn {
-  color: #fcd34d;
-  border-color: rgba(251, 191, 36, 0.4);
-  background: rgba(251, 191, 36, 0.1);
+  color: var(--color-warning-text);
+  border-color: color-mix(in oklch, var(--color-warning) 40%, transparent);
+  background: color-mix(in oklch, var(--color-warning) 14%, transparent);
 }
 .pill.is-unknown {
   color: var(--text-dim);

@@ -111,9 +111,6 @@ function factTitle(stage: DashboardPathStage): string {
   return fact(stage)
 }
 
-function step(index: number): string {
-  return String(index + 1).padStart(2, '0')
-}
 </script>
 
 <template>
@@ -179,7 +176,6 @@ function step(index: number): string {
               <small :title="detail(stage)">{{ detail(stage) }}</small>
             </div>
             <div class="path-node-meta">
-              <span class="path-step">{{ step(index) }}</span>
               <em><i></i>{{ stateLabel(stage) }}</em>
             </div>
             <div
@@ -235,7 +231,7 @@ function step(index: number): string {
   min-height: 27px;
   padding: 0 10px;
   color: var(--summary-color);
-  font-size: 10px;
+  font-size: 12px;
   font-weight: 750;
   border: 1px solid var(--color-rule-2);
   border-radius: 999px;
@@ -252,13 +248,13 @@ function step(index: number): string {
 .path-summary i { color: var(--summary-status-color); }
 .path-summary.tone-good { --summary-status-color: var(--color-success); }
 .path-summary.tone-warn {
-  --summary-color: var(--color-warning);
+  --summary-color: var(--color-warning-text);
   --summary-status-color: var(--color-warning);
   border-color: color-mix(in srgb, var(--color-warning) 38%, var(--color-rule));
   background: color-mix(in srgb, var(--color-warning) 7%, var(--color-glass-subtle));
 }
 .path-summary.tone-bad {
-  --summary-color: var(--color-danger);
+  --summary-color: var(--color-danger-text);
   --summary-status-color: var(--color-danger);
   border-color: color-mix(in srgb, var(--color-danger) 38%, var(--color-rule));
   background: color-mix(in srgb, var(--color-danger) 7%, var(--color-glass-subtle));
@@ -269,8 +265,8 @@ function step(index: number): string {
   align-items: center;
   gap: 5px;
   min-height: 44px;
-  color: var(--color-accent);
-  font-size: 10px;
+  color: var(--color-accent-text);
+  font-size: 12px;
   font-weight: 700;
   text-decoration: none;
   white-space: nowrap;
@@ -282,22 +278,23 @@ function step(index: number): string {
 .path-flow {
   display: grid;
   grid-template-columns:
-    minmax(132px, 204px) minmax(14px, 1fr)
-    minmax(132px, 204px) minmax(14px, 1fr)
-    minmax(132px, 204px) minmax(14px, 1fr)
-    minmax(132px, 204px) minmax(14px, 1fr)
-    minmax(132px, 204px) minmax(14px, 1fr)
-    minmax(132px, 204px) minmax(14px, 1fr)
-    minmax(132px, 204px);
+    minmax(164px, 204px) minmax(14px, 1fr)
+    minmax(164px, 204px) minmax(14px, 1fr)
+    minmax(164px, 204px) minmax(14px, 1fr)
+    minmax(164px, 204px) minmax(14px, 1fr)
+    minmax(164px, 204px) minmax(14px, 1fr)
+    minmax(164px, 204px) minmax(14px, 1fr)
+    minmax(164px, 204px);
   align-items: stretch;
   margin-top: 20px;
 }
 .path-node {
   --node-color: var(--color-ink-2);
+  --node-text-color: var(--color-ink-2);
   --status-color: var(--node-color);
   min-width: 0;
-  min-height: 104px;
-  padding: 11px;
+  min-height: 124px;
+  padding: 12px;
   border: 1px solid var(--color-rule);
   border-radius: 15px;
   background: transparent;
@@ -307,16 +304,19 @@ function step(index: number): string {
 }
 .path-node.tone-warn {
   --node-color: var(--color-warning);
+  --node-text-color: var(--color-warning-text);
   border-color: color-mix(in srgb, var(--color-warning) 34%, var(--color-rule));
   background: color-mix(in srgb, var(--color-warning) 5%, transparent);
 }
 .path-node.tone-bad {
   --node-color: var(--color-danger);
+  --node-text-color: var(--color-danger-text);
   border-color: color-mix(in srgb, var(--color-danger) 34%, var(--color-rule));
   background: color-mix(in srgb, var(--color-danger) 5%, transparent);
 }
 .path-node.tone-muted {
   --node-color: var(--color-ink-2);
+  --node-text-color: var(--color-ink-2);
   background: var(--color-glass-subtle);
 }
 .path-node.root {
@@ -350,7 +350,7 @@ function step(index: number): string {
 }
 .path-node.tone-warn .path-icon,
 .path-node.tone-bad .path-icon {
-  color: var(--node-color);
+  color: var(--node-text-color);
   border-color: color-mix(in srgb, var(--node-color) 25%, var(--color-rule));
   background: color-mix(in srgb, var(--node-color) 8%, transparent);
 }
@@ -359,22 +359,21 @@ function step(index: number): string {
   background: var(--color-glass-subtle);
 }
 .path-icon svg { width: 21px; height: 21px; fill: none; stroke: currentColor; stroke-linecap: round; stroke-linejoin: round; stroke-width: 1.55; }
-.path-step { color: var(--color-ink-2); font-family: var(--font-outlier); font-size: 9px; font-weight: 700; letter-spacing: .1em; }
 .path-node-copy { display: grid; gap: 2px; min-width: 0; }
 .path-layer {
-  color: color-mix(in srgb, var(--node-color) 78%, var(--color-muted));
-  font-size: 8px;
+  color: color-mix(in srgb, var(--node-text-color) 78%, var(--color-muted));
+  font-size: 10px;
   font-weight: 800;
   letter-spacing: .08em;
   line-height: 1.2;
   text-transform: uppercase;
 }
-.path-node-copy strong { min-width: 0; overflow: hidden; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+.path-node-copy strong { min-width: 0; overflow: hidden; font-size: 14px; text-overflow: ellipsis; white-space: nowrap; }
 .path-node-copy small {
   min-width: 0;
   overflow: hidden;
   color: var(--color-muted);
-  font-size: 9px;
+  font-size: 12px;
   line-height: 1.35;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -391,7 +390,7 @@ function step(index: number): string {
   gap: 5px;
   align-self: end;
   color: var(--color-ink-2);
-  font-size: 9px;
+  font-size: 11px;
   font-style: normal;
   font-weight: 750;
   white-space: nowrap;
@@ -410,12 +409,12 @@ function step(index: number): string {
   min-width: 0;
   overflow: hidden;
   color: var(--color-muted);
-  font-size: 8px;
-  line-height: 1.25;
+  font-size: 11px;
+  line-height: 1.35;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.path-node-fact.is-fault small { color: var(--node-color); font-weight: 750; }
+.path-node-fact.is-fault small { color: var(--node-text-color); font-weight: 750; }
 .path-node-fact.is-target:not(.is-fault) small { color: var(--color-ink); }
 .path-connector {
   --connector-color: var(--color-ink-2);
@@ -440,13 +439,15 @@ function step(index: number): string {
 .path-connector.affected { --connector-color: var(--color-ink-2); }
 .path-diagnosis {
   --diagnosis-color: var(--color-ink-2);
-  --diagnosis-status-color: var(--color-success);
+  --diagnosis-text-color: var(--color-ink-2);
+  --diagnosis-status-color: var(--color-success-text);
+  --diagnosis-status-solid: var(--color-success);
   display: flex;
   align-items: center;
   gap: 11px;
   margin-top: 14px;
   padding: 11px 13px;
-  color: var(--diagnosis-color);
+  color: var(--diagnosis-text-color);
   border: 1px solid var(--color-rule);
   border-radius: 12px;
   background: transparent;
@@ -457,17 +458,24 @@ function step(index: number): string {
 }
 .path-diagnosis.tone-warn {
   --diagnosis-color: var(--color-warning);
-  --diagnosis-status-color: var(--color-warning);
+  --diagnosis-text-color: var(--color-warning-text);
+  --diagnosis-status-color: var(--color-warning-text);
+  --diagnosis-status-solid: var(--color-warning);
   border-color: color-mix(in srgb, var(--color-warning) 34%, var(--color-rule));
   background: color-mix(in srgb, var(--color-warning) 5%, transparent);
 }
 .path-diagnosis.tone-bad {
   --diagnosis-color: var(--color-danger);
-  --diagnosis-status-color: var(--color-danger);
+  --diagnosis-text-color: var(--color-danger-text);
+  --diagnosis-status-color: var(--color-danger-text);
+  --diagnosis-status-solid: var(--color-danger);
   border-color: color-mix(in srgb, var(--color-danger) 34%, var(--color-rule));
   background: color-mix(in srgb, var(--color-danger) 5%, transparent);
 }
-.path-diagnosis.tone-muted { --diagnosis-status-color: var(--color-muted); }
+.path-diagnosis.tone-muted {
+  --diagnosis-status-color: var(--color-muted);
+  --diagnosis-status-solid: var(--color-muted);
+}
 .path-diagnosis-icon {
   display: grid;
   width: 29px;
@@ -476,33 +484,33 @@ function step(index: number): string {
   flex: none;
   color: var(--diagnosis-status-color);
   border-radius: 9px;
-  background: color-mix(in srgb, currentColor 13%, transparent);
+  background: color-mix(in srgb, var(--diagnosis-status-solid) 13%, transparent);
 }
 .path-diagnosis-icon svg { width: 18px; fill: none; stroke: currentColor; stroke-linecap: round; stroke-linejoin: round; stroke-width: 1.6; }
 .path-diagnosis > div { display: grid; flex: 1; gap: 2px; min-width: 0; }
-.path-diagnosis strong { font-size: 10px; }
-.path-diagnosis p { margin: 0; color: var(--color-muted); font-size: 10px; line-height: 1.4; }
+.path-diagnosis strong { font-size: 13px; }
+.path-diagnosis p { margin: 0; color: var(--color-muted); font-size: 12px; line-height: 1.5; }
 .path-diagnosis-target {
   display: grid;
   min-width: 150px;
   max-width: 280px;
   padding: 7px 10px;
-  color: var(--diagnosis-color);
+  color: var(--diagnosis-text-color);
   border: 1px solid color-mix(in srgb, var(--diagnosis-color) 23%, var(--color-rule));
   border-radius: 9px;
   background: color-mix(in srgb, var(--diagnosis-color) 6%, var(--color-paper-2));
 }
-.path-diagnosis-target small { color: currentColor; font-size: 7px; font-weight: 800; letter-spacing: .08em; }
+.path-diagnosis-target small { color: currentColor; font-size: 10px; font-weight: 800; letter-spacing: .08em; }
 .path-diagnosis-target strong, .path-diagnosis-target em {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.path-diagnosis-target strong { margin-top: 2px; font-size: 10px; }
-.path-diagnosis-target em { color: var(--color-muted); font-size: 8px; font-style: normal; }
+.path-diagnosis-target strong { margin-top: 2px; font-size: 12px; }
+.path-diagnosis-target em { color: var(--color-muted); font-size: 10px; font-style: normal; }
 @container dashboard-path (max-width: 93.75rem) {
-  .path-node { min-height: 122px; }
+  .path-node { min-height: 132px; }
   .path-node-main {
     grid-template-columns: 34px minmax(0, 1fr);
     grid-template-rows: auto auto auto;
@@ -519,7 +527,7 @@ function step(index: number): string {
     display: flex;
     grid-column: 1 / 3;
     align-items: center;
-    justify-content: space-between;
+    justify-content: flex-end;
     padding-top: 6px;
     border-top: 1px solid color-mix(in srgb, var(--node-color) 13%, var(--color-rule));
   }
@@ -529,23 +537,23 @@ function step(index: number): string {
     padding-top: 6px;
   }
 }
-@container dashboard-path (max-width: 82.5rem) {
+@container dashboard-path (max-width: 96rem) {
   .path-flow {
-    grid-template-columns: 176px repeat(6, 22px 176px);
+    grid-template-columns: 188px repeat(6, 24px 188px);
     overflow-x: auto;
     overscroll-behavior-inline: contain;
     padding-bottom: 4px;
     scrollbar-width: thin;
     scroll-snap-type: inline proximity;
   }
-  .path-node { width: 176px; scroll-snap-align: start; }
-  .path-connector { width: 22px; }
+  .path-node { width: 188px; scroll-snap-align: start; }
+  .path-connector { width: 24px; }
 }
 @container dashboard-path (max-width: 32.5rem) {
   .path-card-head { align-items: stretch; flex-direction: column; gap: 12px; }
   .path-card-actions { justify-content: space-between; }
   .path-flow { grid-template-columns: minmax(0, 1fr); overflow-x: visible; padding-bottom: 0; scroll-snap-type: none; }
-  .path-node { width: auto; min-height: 122px; }
+  .path-node { width: auto; min-height: 132px; }
   .path-connector { width: 100%; height: 22px; justify-content: flex-start; padding-left: 31px; }
   .path-connector i { width: 1px; height: 100%; background: color-mix(in srgb, currentColor 45%, var(--color-rule)); }
   .path-connector b { right: auto; bottom: 3px; left: 27px; transform: rotate(135deg); }

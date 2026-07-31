@@ -495,7 +495,7 @@ onBeforeUnmount(() => {
 }
 
 .stat-value.hot {
-  color: var(--color-danger);
+  color: var(--color-danger-text);
 }
 
 .stat-label {
@@ -569,7 +569,7 @@ onBeforeUnmount(() => {
 
 .storm-cta {
   align-self: flex-start;
-  color: var(--color-accent);
+  color: var(--color-accent-text);
   font-size: var(--text-xs);
   font-weight: 650;
 }
@@ -625,9 +625,9 @@ onBeforeUnmount(() => {
 }
 
 .tab.active {
-  color: var(--color-accent-ink);
+  color: var(--color-primary-action-text);
   border-color: var(--color-accent);
-  background: var(--color-accent);
+  background: var(--color-primary-action-bg);
 }
 
 .tab:focus-visible {
@@ -714,7 +714,7 @@ tr.clickable {
   padding: var(--space-2xs) var(--space-xs);
   border: var(--rule-hair) solid var(--color-rule-2);
   border-radius: var(--radius-input);
-  color: var(--color-accent);
+  color: var(--color-accent-text);
   background: var(--color-paper-3);
   font-size: var(--text-xs);
   font-weight: 650;

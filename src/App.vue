@@ -428,7 +428,7 @@ async function dismissUpdate(): Promise<void> {
   background: linear-gradient(90deg, var(--primary-soft), rgba(56, 189, 248, 0.02));
 }
 .nav-link.is-active .nav-ico {
-  color: var(--primary);
+  color: var(--color-accent-text);
   opacity: 1;
 }
 .nav-link.is-active::before {
@@ -554,8 +554,8 @@ async function dismissUpdate(): Promise<void> {
   width: 2.5rem;
   height: 2.5rem;
   border-radius: var(--radius-input);
-  color: var(--color-accent-ink);
-  background: var(--color-accent);
+  color: var(--color-primary-action-text);
+  background: var(--color-primary-action-bg);
   box-shadow: none;
 }
 
@@ -602,7 +602,7 @@ async function dismissUpdate(): Promise<void> {
 }
 
 .nav-link.is-active .nav-ico {
-  color: var(--color-accent);
+  color: var(--color-accent-text);
 }
 
 .sidebar-foot {
@@ -660,8 +660,8 @@ async function dismissUpdate(): Promise<void> {
 .avatar {
   width: 2rem;
   height: 2rem;
-  color: var(--color-accent-ink);
-  background: var(--color-accent);
+  color: var(--color-primary-action-text);
+  background: var(--color-primary-action-bg);
 }
 
 .menu-toggle,

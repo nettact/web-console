@@ -625,8 +625,8 @@ onMounted(async () => {
 }
 
 .segmented button.active {
-  color: var(--color-accent-ink);
-  background: var(--color-accent);
+  color: var(--color-primary-action-text);
+  background: var(--color-primary-action-bg);
   font-weight: 600;
 }
 

@@ -386,7 +386,7 @@ onMounted(load)
 }
 
 .status-banner.stale {
-  color: var(--color-warning);
+  color: var(--color-warning-text);
   border-color: var(--color-warning);
   background: var(--color-paper-2);
 }
@@ -419,7 +419,7 @@ onMounted(load)
 }
 
 .fact-val.on {
-  color: var(--color-success);
+  color: var(--color-success-text);
 }
 
 .fact-val.off {

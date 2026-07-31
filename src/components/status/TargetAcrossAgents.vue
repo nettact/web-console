@@ -677,13 +677,13 @@ onMounted(reload)
   pointer-events: none;
 }
 .t-good {
-  color: #6ee7b7;
+  color: var(--color-success-text);
 }
 .t-bad {
-  color: #fca5a5;
+  color: var(--color-danger-text);
 }
 .t-warn {
-  color: #fcd34d;
+  color: var(--color-warning-text);
 }
 .t-unknown {
   color: var(--text-dim);

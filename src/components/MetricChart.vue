@@ -13,32 +13,27 @@ import { chartColor, oklchToRgb } from '../lib/chartColor'
 
 const { t, locale } = useI18n()
 
-// ECharts renders to canvas and can't read CSS custom properties, so the chart
-// chrome (axes, grid, tooltip) carries its own per-theme palette. Series and
-// state colours are resolved from the active design tokens by their callers.
-const chartTheme = computed(() =>
-  theme.value === 'light'
-    ? {
-        title: '#4a5768',
-        label: '#78859a',
-        split: 'rgba(15, 23, 42, 0.08)',
-        axisLine: 'rgba(15, 23, 42, 0.18)',
-        tooltipBg: 'rgba(255, 255, 255, 0.97)',
-        tooltipBorder: 'rgba(15, 23, 42, 0.12)',
-        tooltipText: '#10192a',
-        pointer: 'rgba(15, 23, 42, 0.25)',
-      }
-    : {
-        title: '#9aa8bd',
-        label: '#5f6c80',
-        split: 'rgba(255, 255, 255, 0.06)',
-        axisLine: 'rgba(255, 255, 255, 0.12)',
-        tooltipBg: 'rgba(15, 20, 30, 0.92)',
-        tooltipBorder: 'rgba(255, 255, 255, 0.12)',
-        tooltipText: '#e8eef8',
-        pointer: 'rgba(255, 255, 255, 0.25)',
-      },
-)
+// ECharts renders to canvas, so resolve the chart chrome tokens to concrete
+// colors before passing them to axes, grids and tooltips. Series and state
+// colors are resolved from the active design tokens by their callers.
+const chartTheme = computed(() => {
+  const isLight = theme.value === 'light'
+  const title = chartColor('--color-chart-title', isLight ? '#39475a' : '#c5cfdd')
+  const label = chartColor('--color-chart-label', isLight ? '#4a5768' : '#b7c3d4')
+  const grid = chartColor('--color-chart-grid', isLight ? 'rgba(15, 23, 42, 0.14)' : 'rgba(255, 255, 255, 0.16)')
+  const axis = chartColor('--color-chart-axis', isLight ? 'rgba(15, 23, 42, 0.22)' : 'rgba(255, 255, 255, 0.24)')
+
+  return {
+    title,
+    label,
+    split: grid,
+    axisLine: axis,
+    tooltipBg: isLight ? 'rgba(255, 255, 255, 0.97)' : 'rgba(15, 20, 30, 0.92)',
+    tooltipBorder: axis,
+    tooltipText: isLight ? '#10192a' : '#e8eef8',
+    pointer: axis,
+  }
+})
 
 // A metric to plot. One monitoring target may carry several (e.g. ICMP RTT +
 // loss), which are overlaid on shared time with per-unit Y axes.
@@ -74,6 +69,7 @@ const stateColors = computed(() => ({
   on: chartColor('--color-success', '#34d399'),
   off: chartColor('--color-danger', '#f87171'),
   mark: chartColor('--color-warning', '#fbbf24'),
+  markText: chartColor('--color-warning-text', '#8a4b00'),
 }))
 
 const UNIT_LABEL: Record<string, string> = { ms: 'ms', pct: '%', count: '', c: '°C' }
@@ -349,7 +345,7 @@ function renderTimeline(
                 symbol: 'none',
                 silent: false,
                 lineStyle: { color: state.mark, type: 'dashed', width: 1 },
-                label: { formatter: t('chart.restart'), color: state.mark, fontSize: 10, position: 'insideEndTop' },
+                label: { formatter: t('chart.restart'), color: state.markText, fontSize: 10, position: 'insideEndTop' },
                 data: restarts.map((t) => ({ xAxis: t })),
               }
             : undefined,

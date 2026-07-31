@@ -82,7 +82,7 @@ const state = useToasts()
 .link {
   display: inline-block;
   margin-top: var(--space-2xs);
-  color: var(--color-accent);
+  color: var(--color-accent-text);
   font-size: var(--text-xs);
 }
 .x {

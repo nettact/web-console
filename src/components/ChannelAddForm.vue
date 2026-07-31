@@ -160,7 +160,7 @@ async function addSystem() {
   color: var(--text);
 }
 .type-tab.active {
-  color: var(--primary);
+  color: var(--color-accent-text);
   background: var(--primary-soft);
   border-color: rgba(56, 189, 248, 0.35);
 }

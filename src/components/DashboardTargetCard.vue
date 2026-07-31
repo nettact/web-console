@@ -137,22 +137,22 @@ const typeLabel = computed(() => {
 .target-card-body.tone-warn { --target-tone: var(--color-warning); }
 .target-card-body.tone-bad { --target-tone: var(--color-danger); }
 .target-card-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
-.target-kind { padding: 4px 8px; color: var(--color-accent); font-size: 10px; font-weight: 800; letter-spacing: .08em; border: 1px solid color-mix(in srgb, var(--color-accent) 48%, transparent); border-radius: 6px; background: color-mix(in srgb, var(--color-accent) 14%, transparent); }
-.target-kind.kind-http { color: var(--color-warning); border-color: color-mix(in srgb, var(--color-warning) 48%, transparent); background: color-mix(in srgb, var(--color-warning) 14%, transparent); }
-.target-kind.kind-tcp { color: var(--color-info); }
-.target-kind.kind-nat { color: var(--color-accent); border-color: color-mix(in srgb, var(--color-accent) 48%, transparent); background: color-mix(in srgb, var(--color-accent) 12%, transparent); }
-.target-state { display: inline-flex; align-items: center; gap: 6px; color: var(--color-muted); font-size: 11px; }
-.target-state i { width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
-.target-state.good { color: var(--color-success); }.target-state.warn { color: var(--color-warning); }.target-state.bad { color: var(--color-danger); }
+.target-kind { padding: 4px 8px; color: var(--color-accent-text); font-size: 10px; font-weight: 800; letter-spacing: .08em; border: 1px solid color-mix(in srgb, var(--color-accent) 48%, transparent); border-radius: 6px; background: color-mix(in srgb, var(--color-accent) 14%, transparent); }
+.target-kind.kind-http { color: var(--color-warning-text); border-color: color-mix(in srgb, var(--color-warning) 48%, transparent); background: color-mix(in srgb, var(--color-warning) 14%, transparent); }
+.target-kind.kind-tcp { color: var(--color-info-text); }
+.target-kind.kind-nat { color: var(--color-accent-text); border-color: color-mix(in srgb, var(--color-accent) 48%, transparent); background: color-mix(in srgb, var(--color-accent) 12%, transparent); }
+.target-state { --target-state-color: var(--color-muted); display: inline-flex; align-items: center; gap: 6px; color: var(--color-muted); font-size: 11px; }
+.target-state i { width: 7px; height: 7px; border-radius: 50%; background: var(--target-state-color); }
+.target-state.good { --target-state-color: var(--color-success); color: var(--color-success-text); }.target-state.warn { --target-state-color: var(--color-warning); color: var(--color-warning-text); }.target-state.bad { --target-state-color: var(--color-danger); color: var(--color-danger-text); }
 .target-title { display: block; width: fit-content; max-width: 100%; margin-top: 15px; overflow: hidden; color: var(--color-ink); font-size: 16px; font-weight: 750; text-decoration: none; text-overflow: ellipsis; white-space: nowrap; }
 .target-title:hover,
-.target-title:focus-visible { color: var(--color-accent); }
+.target-title:focus-visible { color: var(--color-accent-text); }
 .target-title:focus-visible { border-radius: var(--radius-xs); outline: 2px solid var(--color-focus); outline-offset: 3px; }
 .target-address { margin: 4px 0 0; overflow: hidden; color: var(--color-muted); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
 .target-primary { display: block; margin-top: 20px; color: var(--color-ink); font-size: 32px; line-height: 1; letter-spacing: -.04em; }
 .target-primary,
 .target-details b { font-variant-numeric: tabular-nums; }
-.tone-bad .target-primary { color: var(--color-danger); }
+.tone-bad .target-primary { color: var(--color-danger-text); }
 .target-details { display: flex; flex-wrap: wrap; gap: 8px 18px; margin-top: 18px; padding-top: 13px; border-top: 1px solid var(--color-rule); }
 .target-details span { display: grid; gap: 3px; }
 .target-details small { color: var(--color-muted); font-size: 9px; }

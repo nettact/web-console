@@ -94,23 +94,23 @@ button.chip {
   outline-offset: 1px;
 }
 .chip.is-granted {
-  border-color: rgba(56, 189, 248, 0.4);
+  border-color: color-mix(in oklch, var(--color-accent) 40%, transparent);
   background: var(--primary-soft, rgba(56, 189, 248, 0.1));
-  color: var(--primary);
+  color: var(--color-accent-text);
 }
 .chip.is-effective {
-  border-color: rgba(52, 211, 153, 0.4);
-  background: rgba(52, 211, 153, 0.1);
-  color: #6ee7b7;
+  border-color: color-mix(in oklch, var(--color-success) 40%, transparent);
+  background: color-mix(in oklch, var(--color-success) 14%, transparent);
+  color: var(--color-success-text);
 }
 .chip.is-blocked {
-  border-color: rgba(248, 113, 113, 0.4);
+  border-color: color-mix(in oklch, var(--color-danger) 40%, transparent);
   background: var(--danger-soft, rgba(248, 113, 113, 0.1));
-  color: var(--danger, #f87171);
+  color: var(--color-danger-text);
 }
 .chip.is-missing {
-  border-color: rgba(251, 191, 36, 0.4);
-  background: rgba(251, 191, 36, 0.1);
-  color: #fbbf24;
+  border-color: color-mix(in oklch, var(--color-warning) 40%, transparent);
+  background: color-mix(in oklch, var(--color-warning) 14%, transparent);
+  color: var(--color-warning-text);
 }
 </style>

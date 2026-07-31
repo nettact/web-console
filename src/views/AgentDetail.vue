@@ -457,7 +457,7 @@ onMounted(() => {
 .version-outdated {
   display: inline-flex;
   flex: none;
-  color: var(--warning);
+  color: var(--color-warning-text);
 }
 
 .version-outdated svg {
@@ -522,7 +522,7 @@ onMounted(() => {
   align-items: center;
   min-height: 44px;
   margin-top: var(--space-xs);
-  color: var(--color-accent);
+  color: var(--color-accent-text);
   font-size: var(--text-sm);
   white-space: nowrap;
 }
@@ -598,7 +598,7 @@ onMounted(() => {
   min-height: 44px;
   border: none;
   background: transparent;
-  color: var(--color-accent);
+  color: var(--color-accent-text);
   font: inherit;
   padding: 0 var(--space-3xs);
   cursor: pointer;

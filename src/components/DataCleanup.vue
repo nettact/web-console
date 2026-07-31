@@ -533,10 +533,10 @@ function unitStatusLabel(s: string): string {
   font-weight: 600;
 }
 .cascade {
-  color: var(--warn, #b4841f);
+  color: var(--color-warning-text);
 }
 .warn-line {
-  color: var(--danger);
+  color: var(--color-danger-text);
   font-weight: 600;
 }
 .ok-line {

@@ -264,7 +264,7 @@ onBeforeUnmount(() => document.removeEventListener('click', onDocClick, true))
 .resolved-tag {
   margin-left: 6px;
   font-size: 11px;
-  color: var(--color-success);
+  color: var(--color-success-text);
 }
 .item {
   display: flex;
@@ -354,7 +354,7 @@ onBeforeUnmount(() => document.removeEventListener('click', onDocClick, true))
 .rem-btn {
   border: none;
   background: transparent;
-  color: var(--primary);
+  color: var(--color-accent-text);
   font: inherit;
   font-size: 11.5px;
   padding: 0;
@@ -366,7 +366,7 @@ onBeforeUnmount(() => document.removeEventListener('click', onDocClick, true))
 .link-btn {
   border: none;
   background: transparent;
-  color: var(--primary);
+  color: var(--color-accent-text);
   font: inherit;
   font-size: 12px;
   padding: 0;
