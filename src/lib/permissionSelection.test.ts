@@ -146,12 +146,19 @@ describe('platformSupport', () => {
     // Windows needs elevation for TCP path diagnostics only.
     expect(privilegeCanEnable('diagnostic.traceroute.tcp', 'windows')).toBe(true)
     expect(privilegeCanEnable('probe.icmp', 'windows')).toBe(false)
+    // Temperature is the sharpest case of the split: the Windows WMI thermal
+    // zone is worth an "elevated" warning up front, but an agent that reports it
+    // unsupported may simply have no sensor, and privilege cannot conjure one —
+    // so remediation must never prescribe Administrator here.
+    expect(platformSupport('host.temperature.read', 'windows')).toBe('privileged')
+    expect(privilegeCanEnable('host.temperature.read', 'windows')).toBe(false)
     // Privilege has nothing to do with a plain metric read anywhere.
     expect(privilegeCanEnable('host.cpu.read', 'linux')).toBe(false)
   })
 
-  it('only flags TCP path diagnostics as privileged on Windows', () => {
+  it('flags TCP path diagnostics and temperature as privileged on Windows', () => {
     expect(platformSupport('diagnostic.traceroute.tcp', 'windows')).toBe('privileged')
+    expect(platformSupport('host.temperature.read', 'windows')).toBe('privileged')
     // iphlpapi ICMP needs no elevation there.
     expect(platformSupport('probe.icmp', 'windows')).toBe('ok')
     expect(platformSupport('diagnostic.traceroute.icmp', 'windows')).toBe('ok')

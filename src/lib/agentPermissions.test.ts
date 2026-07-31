@@ -82,6 +82,10 @@ describe('categoryFor', () => {
     // ICMP needs no elevation on Windows, so an unsupported report there is not
     // something a privileged re-run would fix.
     expect(categoryFor(perm('probe.icmp', true, false, false), 'windows')).toBe('unsupported')
+    // Nor is temperature: the host may simply have no thermal sensor, so the
+    // dialog must fall through to the platform explanation covering both causes
+    // rather than telling the operator to re-run as Administrator.
+    expect(categoryFor(perm('host.temperature.read', true, false, false), 'windows')).toBe('unsupported')
   })
 
   it('leads with the capability gap when a permission is neither granted nor supported', () => {

@@ -30,14 +30,24 @@ const NEEDS_RAW_SOCKET_OFF_WINDOWS = new Set([
   'diagnostic.traceroute.tcp',
 ])
 
-// Windows capabilities that only an elevated process gets: the raw socket behind
-// TCP path diagnostics, and the WMI ACPI thermal zone the temperature sensors are
-// read through. The installer's scheduled task runs as SYSTEM, so both are
-// usually satisfied in practice.
-const NEEDS_ELEVATION_ON_WINDOWS = new Set([
+// Windows capabilities worth flagging as privileged when picking a policy: the
+// raw socket behind TCP path diagnostics, and the WMI ACPI thermal zone the
+// temperature sensors are read through. The installer's scheduled task runs as
+// SYSTEM, so both are usually satisfied in practice.
+const PRIVILEGED_ON_WINDOWS = new Set([
   'diagnostic.traceroute.tcp',
   'host.temperature.read',
 ])
+
+// The narrower question of what elevation would actually FIX once an agent
+// already reports a capability as unsupported. Only path diagnostics qualifies:
+// an agent reporting temperature unsupported may equally have no thermal sensor
+// at all — most VMs and many consumer boards don't — and no privilege creates
+// hardware. The agent cannot tell the two apart, so promising Administrator as
+// the remedy would be wrong for the majority of those hosts; the remediation
+// dialog falls through to the platform explanation instead, which is the only
+// text that can describe both causes.
+const ELEVATION_FIXES_ON_WINDOWS = new Set(['diagnostic.traceroute.tcp'])
 
 // Implemented only in the Windows and Linux builds today.
 const NOT_ON_MACOS = new Set([
@@ -60,7 +70,7 @@ export function platformSupport(id: string, platform: EnrollPlatform): PlatformS
     // Raw-socket TCP path diagnostics and the WMI ACPI thermal zone are the
     // Windows capabilities that need an elevated process; the installer's
     // scheduled task runs as SYSTEM, so both are usually satisfied.
-    return NEEDS_ELEVATION_ON_WINDOWS.has(id) ? 'privileged' : 'ok'
+    return PRIVILEGED_ON_WINDOWS.has(id) ? 'privileged' : 'ok'
   }
   // Linux and the Linux-based container image behave identically here.
   return NEEDS_RAW_SOCKET_OFF_WINDOWS.has(id) ? 'privileged' : 'ok'
@@ -75,7 +85,7 @@ export function platformSupport(id: string, platform: EnrollPlatform): PlatformS
 // platform cannot do it, which is false.
 export function privilegeCanEnable(id: string, platform: EnrollPlatform): boolean {
   if (platform === 'macos') return false // not implemented; privilege is irrelevant
-  if (platform === 'windows') return NEEDS_ELEVATION_ON_WINDOWS.has(id)
+  if (platform === 'windows') return ELEVATION_FIXES_ON_WINDOWS.has(id)
   return (
     NEEDS_RAW_SOCKET_OFF_WINDOWS.has(id) || id === 'probe.icmp' || id === 'network.gateway.probe'
   )

@@ -2061,7 +2061,7 @@ export default {
     network_neighbor_hostname_read: 'Windows 与 Linux 版 Agent 已实现邻居主机名解析；macOS 版尚未实现。',
     diagnostic_traceroute_icmp: 'Windows 与 Linux 版 Agent 已实现 ICMP 路径诊断。与 ICMP 探测不同，它必须收到中间跳的 Time-Exceeded，因此 Linux 上必须有 CAP_NET_RAW 或以 root 运行（无特权 ping socket 收不到这类报文）。macOS 版尚未实现。',
     diagnostic_traceroute_tcp: 'Windows 与 Linux 版 Agent 已实现 TCP 路径诊断，两者都需要提权（Windows 管理员 / Linux CAP_NET_RAW 或 root）。macOS 版尚未实现。',
-    host_temperature_read: '温度取决于机器本身是否有可读的传感器，Agent 启动时会自检一次，只有真正读到有效读数才会声明支持。Linux 读取 /sys/class/hwmon（容器内需挂载宿主机 /sys）；Windows 通过 WMI ACPI 温度区读取，部分主板与虚拟机不提供该接口，且通常需要管理员权限；macOS 版尚未实现。',
+    host_temperature_read: '温度取决于机器本身有没有可读的传感器，而查明这一点只能真去读一次传感器，因此 Agent 仅在该权限已授予时才于启动时自检：尚未授予时它不会碰传感器，也就只能报告为不支持——先授予并重启 Agent，即可知道这台机器到底有没有传感器。已授予仍报不支持，说明自检没有读到有效读数：多数虚拟机与不少消费级主板确实没有可读传感器。Linux 读取 /sys/class/hwmon（容器内需挂载宿主机 /sys）；Windows 走 WMI ACPI 温度区，该接口在部分主板与虚拟机上并不存在，非管理员账户下也可能被拒绝访问，Agent 无法区分这两种情况，可确认它是否以 SYSTEM 或管理员身份运行来缩小范围。macOS 版尚未实现。',
   },
 
   // 权限受阻解决方案弹窗（AGENT-003）。

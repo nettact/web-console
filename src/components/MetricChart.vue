@@ -65,7 +65,7 @@ const stateColors = computed(() => ({
   mark: chartColor('--color-warning', '#fbbf24'),
 }))
 
-const UNIT_LABEL: Record<string, string> = { ms: 'ms', pct: '%', count: '' }
+const UNIT_LABEL: Record<string, string> = { ms: 'ms', pct: '%', count: '', c: '°C' }
 const unitName = (u: string) => {
   if (u === 'code') return t('chart.unitCode')
   if (u === 'bool') return t('chart.unitBool')
