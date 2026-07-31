@@ -6,6 +6,8 @@ import { api, type AgentGroup, type AgentStatusRow, type EnrollmentToken } from 
 import { toDateLocale } from '../i18n'
 import { agentLabel } from '../lib/agentLabel'
 import { agentStatus, refreshAgentStatus } from '../agentStatus'
+import { serverInfo } from '../serverInfo'
+import { updateAvailable } from '../lib/semver'
 import {
   countStatuses,
   filterAndSortAgents,
@@ -113,6 +115,15 @@ function reasonText(r: AgentStatusRow): string {
     return parts.join(' · ')
   }
   return ''
+}
+
+// Flags an Agent left behind by a newer agent release. Both versions have to
+// parse for this to fire (see lib/semver), so agents reporting '' or an
+// unstamped 'dev' build are never marked — and nothing shows at all until the
+// server has learnt the latest agent version.
+const latestAgentVersion = computed(() => serverInfo.update?.latest_agent_version ?? '')
+function agentOutdated(version: string): boolean {
+  return updateAvailable(latestAgentVersion.value, version)
 }
 
 function openAgent(r: AgentStatusRow) {
@@ -382,7 +393,20 @@ onBeforeUnmount(() => {
               </div>
 
               <AgentResourceCell kind="uptime" :resources="r.resources" :now="now" />
-              <span class="version mono">{{ r.agent_version || '—' }}</span>
+              <span class="version mono">
+                {{ r.agent_version || '—' }}
+                <span
+                  v-if="agentOutdated(r.agent_version)"
+                  class="version-outdated"
+                  :title="t('agentStatus.outdatedAgent', { version: latestAgentVersion })"
+                >
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                    stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <path d="M12 20V6" />
+                    <path d="m6 12 6-6 6 6" />
+                  </svg>
+                </span>
+              </span>
 
               <div class="resource-grid">
                 <AgentResourceCell kind="cpu" :resources="r.resources" :now="now" />
@@ -740,10 +764,14 @@ onBeforeUnmount(() => {
   border-radius: var(--radius-card);
   background: var(--color-paper-2);
 }
-.status-list { min-width: 1370px; }
+/* The version column carries an optional "newer agent available" arrow after the
+   number, so it is 28px wider than the text alone needs — and the list min-width
+   grows by the same 28px, or the extra column width would come out of the
+   resource grid. */
+.status-list { min-width: 1398px; }
 .status-grid {
   display: grid;
-  grid-template-columns: minmax(235px, 1.25fr) 120px 165px 100px 72px minmax(560px, 2.5fr) 68px;
+  grid-template-columns: minmax(235px, 1.25fr) 120px 165px 100px 100px minmax(560px, 2.5fr) 68px;
   align-items: center;
   gap: 14px;
 }
@@ -835,7 +863,21 @@ onBeforeUnmount(() => {
 .reason { overflow: hidden; color: var(--color-warning); font-size: var(--text-xs); text-overflow: ellipsis; white-space: nowrap; }
 .state-offline .reason { color: var(--color-danger); }
 .muted-tag { padding: var(--space-3xs) var(--space-2xs); color: var(--color-muted); font-size: var(--text-xs); border: var(--rule-hair) solid var(--color-rule-2); border-radius: var(--radius-pill); }
-.version { color: var(--color-accent); font-family: var(--font-outlier); font-size: var(--text-xs); }
+.version {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-3xs);
+  color: var(--color-accent);
+  font-family: var(--font-outlier);
+  font-size: var(--text-xs);
+  white-space: nowrap;
+}
+.version-outdated {
+  display: inline-flex;
+  flex: none;
+  color: var(--warning);
+}
+.version-outdated svg { width: 14px; height: 14px; }
 .row-actions { display: flex; justify-content: flex-end; gap: 3px; opacity: .42; transition: opacity .15s ease; }
 .agent-strip:hover .row-actions,
 .row-actions:focus-within { opacity: 1; }

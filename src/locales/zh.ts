@@ -632,9 +632,6 @@ export default {
       startedAt: '开始时间',
       finishedAt: '完成时间',
       duration: '耗时',
-    statusTimelineHint: '悬停或轻触分片查看时间；红色表示异常',
-    sliceRange: '分片时间',
-    issueRange: '异常时段',
       inProgress: '诊断进行中…',
       ttl: '跳',
       attemptN: '第 {n} 次',
@@ -1536,6 +1533,8 @@ export default {
     thStatus: '状态',
     thLastSeen: '最后在线',
     thVersion: '版本',
+    // 版本列的过旧提示（仅当服务端已知最新 Agent 版本，且两端版本号都可解析时出现）。
+    outdatedAgent: '该 Agent 版本较旧，最新版本为 {version}',
     thUptime: '运行时间',
     thLoad: '负载',
     thMemory: '内存',
@@ -2278,6 +2277,27 @@ export default {
     preset_derp_nairobi: 'DERP 内罗毕',
   },
 
+  // 软件更新提示：顶部横幅与设置页「软件更新」面板。仅在服务端成功检查过一次后
+  // 才有数据；关闭更新检查时整块都不出现。
+  update: {
+    bannerText: 'NetTact {version} 已发布，可以升级了',
+    // Store 只报「有更新」、报不出版本号时的替代文案。
+    bannerTextUnnamed: 'NetTact 有新版本可以升级了',
+    bannerDismiss: '关闭提示',
+    download: '前往下载',
+    openStore: '打开 Microsoft Store',
+    settingsTitle: '软件更新',
+    settingsHint: '每天自动检查一次是否有新版本；下载和安装始终由你手动确认，不会自动更新。',
+    currentVersion: '当前版本',
+    latestVersion: '最新版本',
+    upToDate: '已是最新版本',
+    // 产品检查本身没成功、只带回了 Agent 版本时显示，区别于确认过的「已是最新」。
+    notChecked: '暂时无法检查',
+    unknownVersion: '未提供版本号（有可用更新）',
+    disableNotice: '不再提示新版本',
+    disableNoticeHint: '关闭后控制台横幅和桌面端托盘气泡都不再提醒新版本——两者共用这一个开关。重新开启会立刻再次提示当前可用的更新。',
+  },
+
   chart: {
     online: '在线',
     offlineFault: '离线 / 故障',
@@ -2287,6 +2307,9 @@ export default {
     interrupted: '中断',
     restart: '重启',
     duration: '持续 {dur}',
+    statusTimelineHint: '悬停或轻触分片查看时间；红色表示异常',
+    sliceRange: '分片时间',
+    issueRange: '异常时段',
     unitCode: '状态码',
     unitBool: '状态',
     unitSec: '秒',

@@ -624,9 +624,6 @@ export default {
       startedAt: 'Started',
       finishedAt: 'Finished',
       duration: 'Duration',
-    statusTimelineHint: 'Hover or tap a slice for its time; red marks an issue',
-    sliceRange: 'Slice time',
-    issueRange: 'Issue interval',
       inProgress: 'Diagnostic in progress…',
       ttl: 'TTL',
       attemptN: 'Attempt {n}',
@@ -1527,6 +1524,9 @@ export default {
     thStatus: 'Status',
     thLastSeen: 'Last seen',
     thVersion: 'Version',
+    // Outdated marker in the version column (only shown once the server knows the
+    // latest agent version and both versions parse).
+    outdatedAgent: 'This agent is behind — the latest version is {version}',
     thUptime: 'Uptime',
     thLoad: 'Load',
     thMemory: 'Memory',
@@ -2276,6 +2276,29 @@ export default {
     preset_derp_nairobi: 'DERP Nairobi',
   },
 
+  // Update notices: the top banner and the Settings "Software update" panel. Both
+  // have data only after one check has succeeded, and neither appears at all when
+  // update checking is switched off.
+  update: {
+    bannerText: 'NetTact {version} is available',
+    // Used when the Store reports an update without naming its version.
+    bannerTextUnnamed: 'A new version of NetTact is available',
+    bannerDismiss: 'Dismiss',
+    download: 'Download',
+    openStore: 'Open Microsoft Store',
+    settingsTitle: 'Software update',
+    settingsHint: 'Checks once a day for a newer release. Downloading and installing is always yours to confirm — nothing updates itself.',
+    currentVersion: 'Current version',
+    latestVersion: 'Latest version',
+    upToDate: 'Up to date',
+    // Shown when the block carries only an agent version because the product
+    // check itself never completed — distinct from a confirmed "up to date".
+    notChecked: 'Could not be checked',
+    unknownVersion: 'Not reported (an update is available)',
+    disableNotice: 'Do not notify about new versions',
+    disableNoticeHint: 'Silences both the console banner and the desktop app tray balloon — they share this one switch. Turning it back on immediately re-announces any update already found.',
+  },
+
   chart: {
     online: 'Online',
     offlineFault: 'Offline / Fault',
@@ -2285,6 +2308,9 @@ export default {
     interrupted: 'Down',
     restart: 'Restart',
     duration: 'Lasted {dur}',
+    statusTimelineHint: 'Hover or tap a slice for its time; red marks an issue',
+    sliceRange: 'Slice time',
+    issueRange: 'Issue interval',
     unitCode: 'Code',
     unitBool: 'State',
     unitSec: 'sec',

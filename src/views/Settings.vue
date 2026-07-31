@@ -18,6 +18,7 @@ import {
 } from '../api'
 import { auth } from '../auth'
 import { setConsoleBase } from '../consoleBaseUrl'
+import { ensureUpdateNotice, setUpdateNoticeDisabled, updateNotice } from '../updateInfo'
 import { pushToast } from '../toasts'
 import WebhookChannelForm from '../components/WebhookChannelForm.vue'
 import ChannelAddForm from '../components/ChannelAddForm.vue'
@@ -604,6 +605,42 @@ async function saveConsoleUrl() {
     error.value = String((e as Error).message || e)
   }
 }
+// Software update. The panel exists only once the server has reported a
+// successful check; the whole `update` block is absent while update checking is
+// switched off. The notice switch writes a shared setting the desktop tray
+// balloon reads too, so turning it off here silences that as well.
+const updateInfo = computed(() => serverInfo.value?.update ?? null)
+// The block is published for the agent version alone when the product check
+// itself never completed — a Store install whose Store query keeps failing, say.
+// Reporting "up to date" there would turn a failed check into an assurance, so
+// that case says so instead. A Store install can also report an update without
+// naming its version, which is the second fallback.
+const updateLatestLabel = computed(() => {
+  const u = updateInfo.value
+  if (!u) return ''
+  if (!u.product_checked) return t('update.notChecked')
+  if (!u.update_available) return t('update.upToDate')
+  return u.latest_version.trim() || t('update.unknownVersion')
+})
+const updateActionLabel = computed(() =>
+  updateInfo.value?.install_type === 'store' ? t('update.openStore') : t('update.download'),
+)
+// The switch applies immediately (there is no Save button here), so a toast
+// carries the feedback and a failed write rolls the local state back.
+const updateNoticeOff = computed({
+  get: () => updateNotice.noticeDisabled,
+  set: (v: boolean) => void saveUpdateNotice(v),
+})
+async function saveUpdateNotice(v: boolean) {
+  try {
+    await setUpdateNoticeDisabled(v)
+    pushToast({ tone: 'info', title: t('common.saved') })
+  } catch (e) {
+    updateNotice.noticeDisabled = !v
+    pushToast({ tone: 'danger', title: String((e as Error).message || e) })
+  }
+}
+
 // WebhookChannelForm performs the create/update itself (so it can surface
 // failures inline); the parent only closes the editor and refreshes the list.
 async function onWebhookSaved() {
@@ -637,6 +674,8 @@ function channelConfigLabel(c: Channel): string {
 onMounted(() => {
   load()
   loadPolicies()
+  // Shared with the App-level banner; a no-op once loaded.
+  void ensureUpdateNotice()
 })
 </script>
 
@@ -709,6 +748,37 @@ onMounted(() => {
           <button class="btn btn-primary" @click="saveConsoleUrl">{{ t('common.save') }}</button>
           <span v-if="consoleSaved" class="hint saved">✓ {{ t('common.saved') }}</span>
         </div>
+      </div>
+    </section>
+
+    <!-- Only rendered once a check has succeeded: the server omits `update`
+         entirely while checking is switched off or has never returned. -->
+    <section class="panel" v-if="updateInfo">
+      <div class="panel-head"><h3>{{ t('update.settingsTitle') }}</h3></div>
+      <div class="panel-body">
+        <p class="hint">{{ t('update.settingsHint') }}</p>
+        <p class="hint">
+          {{ t('update.currentVersion') }}: <span class="mono">{{ updateInfo.current_version || '—' }}</span>
+        </p>
+        <p class="hint">
+          {{ t('update.latestVersion') }}:
+          <span :class="{ mono: updateInfo.update_available && !!updateInfo.latest_version.trim() }">
+            {{ updateLatestLabel }}
+          </span>
+        </p>
+        <div v-if="updateInfo.update_available" class="row field-row">
+          <a
+            class="btn btn-primary"
+            :href="updateInfo.download_url"
+            target="_blank"
+            rel="noopener noreferrer"
+          >{{ updateActionLabel }}</a>
+        </div>
+        <label class="toggle-row">
+          <input type="checkbox" v-model="updateNoticeOff" />
+          <span>{{ t('update.disableNotice') }}</span>
+        </label>
+        <p class="hint tiny">{{ t('update.disableNoticeHint') }}</p>
       </div>
     </section>
 

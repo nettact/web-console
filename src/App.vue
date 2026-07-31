@@ -4,6 +4,8 @@ import { useRouter, useRoute, RouterLink, RouterView } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { auth, logout } from './auth'
 import { showResumeBanner, saveOnboarding } from './onboarding'
+import { serverInfo } from './serverInfo'
+import { dismissUpdateBanner, ensureUpdateNotice, showUpdateBanner } from './updateInfo'
 import { initNotifications, resetNotifications, stopNotifications } from './notifications'
 import { initTargetStatus, resetTargetStatus, stopTargetStatus } from './targetStatus'
 import { initAgentStatus, resetAgentStatus, stopAgentStatus } from './agentStatus'
@@ -35,6 +37,10 @@ function syncLiveStreams(): void {
     resetAgentStatus()
     return
   }
+  // One-shot and authenticated: loading it here rather than on mount keeps the
+  // update settings off the login screen. Repeat calls are no-ops and it never
+  // rejects, so it needs neither a guard nor a catch.
+  void ensureUpdateNotice()
   if (document.visibilityState === 'visible') {
     initNotifications()
     initTargetStatus()
@@ -105,6 +111,25 @@ function resumeOnboarding(): void {
 async function dismissBanner(): Promise<void> {
   try {
     await saveOnboarding({ banner_dismissed: true })
+  } catch {
+    /* ignore — the banner just reappears next load */
+  }
+}
+
+// ---- update banner ----
+// A Store install can report an update it cannot name, so the message has a
+// version-less variant. The link always goes to the server-provided URL; the
+// install type only decides whether it reads "Open Microsoft Store".
+const updateText = computed(() => {
+  const v = serverInfo.update?.latest_version?.trim()
+  return v ? t('update.bannerText', { version: v }) : t('update.bannerTextUnnamed')
+})
+const updateActionLabel = computed(() =>
+  serverInfo.update?.install_type === 'store' ? t('update.openStore') : t('update.download'),
+)
+async function dismissUpdate(): Promise<void> {
+  try {
+    await dismissUpdateBanner()
   } catch {
     /* ignore — the banner just reappears next load */
   }
@@ -255,6 +280,17 @@ async function dismissBanner(): Promise<void> {
         <span class="setup-banner-text">{{ t('setup.bannerText') }}</span>
         <button class="btn btn-primary btn-sm" @click="resumeOnboarding">{{ t('setup.bannerResume') }}</button>
         <button class="banner-close" :aria-label="t('setup.bannerDismiss')" @click="dismissBanner">✕</button>
+      </div>
+
+      <div v-if="showUpdateBanner && serverInfo.update" class="setup-banner update-banner">
+        <span class="setup-banner-text">{{ updateText }}</span>
+        <a
+          class="btn btn-primary btn-sm"
+          :href="serverInfo.update.download_url"
+          target="_blank"
+          rel="noopener noreferrer"
+        >{{ updateActionLabel }}</a>
+        <button class="banner-close" :aria-label="t('update.bannerDismiss')" @click="dismissUpdate">✕</button>
       </div>
 
       <div class="content">
@@ -662,6 +698,12 @@ async function dismissBanner(): Promise<void> {
   box-shadow: var(--shadow-card);
   backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
   -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
+}
+
+/* Same shell as the resume banner; only the accent differs, so an update reads as
+   news rather than as unfinished setup. */
+.update-banner {
+  border-color: color-mix(in oklch, var(--color-accent) 45%, var(--color-rule-2));
 }
 
 .banner-close {

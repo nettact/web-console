@@ -13,10 +13,34 @@ export interface ListenStatus {
   fallback_from?: string
   overrides_flag: boolean
 }
+// Last successful update check, as reported under server-info's "update" key.
+// The key is absent until a check succeeds and while update checking is switched
+// off, so its absence means "show no update UI at all".
+export interface UpdateInfo {
+  // How this install upgrades: 'store' (Microsoft Store desktop build), 'desktop'
+  // (download-center desktop build) or 'server' (standalone server-lite). It only
+  // changes the wording of the download action, never its destination.
+  install_type: 'store' | 'desktop' | 'server'
+  current_version: string
+  // May be empty on a Store install that reports a pending package update without
+  // naming its version; `update_available` stays authoritative either way.
+  latest_version: string
+  update_available: boolean
+  // Whether the three fields above came from a check that completed. The block is
+  // also published for `latest_agent_version` alone, so when this is false
+  // `update_available: false` means "not known" — never "up to date".
+  product_checked: boolean
+  // Where to send the user, already resolved per install type by the server.
+  download_url: string
+  // Newest agent release, used to flag agents left behind. Omitted when unknown.
+  latest_agent_version?: string
+  checked_at: string
+}
 export interface ServerInfo {
   os: string
   native_notify: boolean
   listen?: ListenStatus
+  update?: UpdateInfo
 }
 export interface Quota {
   used: number

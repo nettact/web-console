@@ -23,6 +23,7 @@ import {
   type RemediationCategory,
 } from '../lib/agentPermissions'
 import { serverInfo, ensureServerInfo } from '../serverInfo'
+import { updateAvailable } from '../lib/semver'
 import MonitorStateBadge from '../components/status/MonitorStateBadge.vue'
 import PermissionChips from '../components/status/PermissionChips.vue'
 import PermissionRemediationDialog from '../components/status/PermissionRemediationDialog.vue'
@@ -64,6 +65,13 @@ const netMetrics = computed<ChartMetric[]>(() => [
 
 // Live per-agent rollup from the shared store (status/resources/groups/alert).
 const row = computed(() => agentIndex.value.get(id.value) || null)
+
+// Same "this Agent is behind the newest release" indicator as the Agents list.
+// Both versions must parse (see lib/semver), so an unstamped build is not flagged.
+const latestAgentVersion = computed(() => serverInfo.update?.latest_agent_version ?? '')
+const agentOutdated = computed(() =>
+  updateAvailable(latestAgentVersion.value, agent.value?.agent_version ?? ''),
+)
 // Derive the firing banner from the LIVE store row (SSE + poll fed), not the
 // once-fetched history, so it appears/clears as the fault opens or resolves
 // (including an immediate mute) without a page reload. connFaults still backs the
@@ -209,7 +217,23 @@ onMounted(() => {
         <div><dt>{{ t('agentStatus.thName') }}</dt><dd><input v-model="agent.display_name" class="name-in" :placeholder="t('agents.namePlaceholder')" @blur="saveName" /></dd></div>
         <div><dt>{{ t('agents.thHostname') }}</dt><dd class="mono">{{ agent.hostname || '—' }}</dd></div>
         <div><dt>{{ t('agents.thPlatform') }}</dt><dd>{{ agent.platform || '—' }}</dd></div>
-        <div><dt>{{ t('agents.thVersion') }}</dt><dd class="mono">{{ agent.agent_version || '—' }}</dd></div>
+        <div>
+          <dt>{{ t('agents.thVersion') }}</dt>
+          <dd class="mono version-fact">
+            {{ agent.agent_version || '—' }}
+            <span
+              v-if="agentOutdated"
+              class="version-outdated"
+              :title="t('agentStatus.outdatedAgent', { version: latestAgentVersion })"
+            >
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M12 20V6" />
+                <path d="m6 12 6-6 6 6" />
+              </svg>
+            </span>
+          </dd>
+        </div>
         <div><dt>{{ t('agentStatus.factStatusSince') }}</dt><dd>{{ fmt(row?.status_since) }}</dd></div>
         <div><dt>{{ t('agentStatus.thLastSeen') }}</dt><dd>{{ fmt(agent.last_seen_at) }}</dd></div>
         <div><dt>{{ t('agentStatus.factFirstConnected') }}</dt><dd>{{ agent.first_connected_at ? fmt(agent.first_connected_at) : t('agentStatus.statusNeverConnected') }}</dd></div>
@@ -422,6 +446,23 @@ onMounted(() => {
   overflow-wrap: anywhere;
   color: var(--color-ink-2);
   font-size: var(--text-sm);
+}
+
+.version-fact {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3xs);
+}
+
+.version-outdated {
+  display: inline-flex;
+  flex: none;
+  color: var(--warning);
+}
+
+.version-outdated svg {
+  width: 14px;
+  height: 14px;
 }
 
 .name-in {
