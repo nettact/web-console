@@ -16,7 +16,6 @@ import {
   type TargetAgentStatusRow,
 } from '../../api'
 import MetricChart from '../MetricChart.vue'
-import StatusBand from '../StatusBand.vue'
 import MetricStatCards from '../MetricStatCards.vue'
 import FaultSignalsTable from '../FaultSignalsTable.vue'
 import MonitorStateBadge from './MonitorStateBadge.vue'
@@ -136,32 +135,34 @@ function chartMetrics(kind: string) {
     samples: samplesFor(p.agent.id, kind),
   }))
 }
+
+// Status timelines keep the range availability beside each Agent label. The
+// percentage remains a summary; the coloured cells and tooltip carry the time
+// evidence behind it.
+function statusChartMetrics(kind: string) {
+  const b = band.value
+  const toUp = b && b.kind === kind ? b.toUp : (value: number) => (value >= 0.5 ? 1 : 0)
+  const now = Date.now()
+  return props.probers.map((p, i) => {
+    const raw = samplesFor(p.agent.id, kind)
+    const points = toPoints(raw).map((point) => ({ t: point.t, v: toUp(point.v) }))
+    const ratio = points.length ? availability(points, now) * 100 : null
+    return {
+      key: p.agent.id,
+      label: `${agentLabel(p.agent)} · ${ratio === null ? '—' : `${ratio.toFixed(1)}%`}`,
+      kind,
+      unit: kindUnit.value.get(kind) || '',
+      color: FALLBACK[i % FALLBACK.length],
+      samples: raw,
+    }
+  })
+}
 const chartHasData = (kind: string) => props.probers.some((p) => samplesFor(p.agent.id, kind).length)
 
 // Availability% → tone (historical, threshold-based; never current inference).
 function availTone(pct: number | null): 'good' | 'bad' | 'warn' | 'unknown' {
   if (pct === null) return 'unknown'
   return pct >= 99 ? 'good' : pct >= 95 ? 'warn' : 'bad'
-}
-
-// One stacked row per agent for a boolean status kind.
-function statusRows(kind: string) {
-  const b = band.value
-  const toUp = b && b.kind === kind ? b.toUp : (v: number) => (v >= 0.5 ? 1 : 0)
-  const now = Date.now()
-  return props.probers.map((p) => {
-    const raw = samplesFor(p.agent.id, kind)
-    const pts = toPoints(raw).map((x) => ({ t: x.t, v: toUp(x.v) }))
-    const avail = pts.length ? availability(pts, now) * 100 : null
-    return {
-      agent: agentLabel(p.agent),
-      id: p.agent.id,
-      samples: raw,
-      toUp,
-      tone: availTone(avail),
-      avail: avail === null ? null : avail.toFixed(1),
-    }
-  })
 }
 
 // Per-agent stat card for a card-only kind. Categorical code kinds (NAT/TCP
@@ -411,18 +412,16 @@ onMounted(reload)
 
     <!-- one trend chart per selected numeric kind, one line per agent -->
     <div class="card chart-card" v-for="k in numericKinds.filter((x) => selectedNumeric.includes(x))" :key="k">
-      <MetricChart :title="`${familyLabel} · ${metricLabel(k)}`" :metrics="chartMetrics(k)" />
+      <MetricChart :title="`${familyLabel} · ${metricLabel(k)}`" :metrics="chartMetrics(k)" :range-sec="rangeSec" />
       <p v-if="!loading && !chartHasData(k)" class="empty-line hint">{{ t('metrics.noDataRange') }}</p>
     </div>
 
-    <!-- per-agent status bands for each boolean metric -->
-    <div class="card band-card" v-for="k in statusKinds" :key="k">
-      <h4>{{ metricLabel(k) }}</h4>
-      <div class="band-row" v-for="row in statusRows(k)" :key="row.id">
-        <span class="ba mono">{{ row.agent }}</span>
-        <StatusBand class="bb" :samples="row.samples" :to-up="row.toUp" />
-        <span class="bc mono" :class="`t-${row.tone}`">{{ row.avail === null ? '—' : row.avail + '%' }}</span>
-      </div>
+    <!-- Boolean state uses the same time axis as trends, but is split into
+         inspectable cells so an outage can be located instead of hidden in one
+         continuous availability bar. -->
+    <div class="card chart-card status-chart-card" v-for="k in statusKinds" :key="k">
+      <MetricChart :title="metricLabel(k)" :metrics="statusChartMetrics(k)" :range-sec="rangeSec" />
+      <p v-if="!loading && !chartHasData(k)" class="empty-line hint">{{ t('metrics.noDataRange') }}</p>
     </div>
 
     <!-- per-agent categorical / sample-count cards -->
@@ -445,6 +444,9 @@ onMounted(reload)
 </template>
 
 <style scoped>
+/* Hallmark · genre: custom application · macrostructure: Workbench
+ * design-system: design.md · pre-emit critique: P5 H5 E5 S5 R5 V4
+ */
 .probed {
   margin: 0 0 12px;
   font-size: 13px;
@@ -550,6 +552,7 @@ onMounted(reload)
 .chart-card {
   position: relative;
   padding: 10px 8px 6px;
+  margin-bottom: var(--space-md);
 }
 .empty-line {
   position: absolute;
@@ -557,34 +560,6 @@ onMounted(reload)
   display: grid;
   place-items: center;
   pointer-events: none;
-}
-.band-card {
-  padding: 14px 16px;
-}
-.band-card h4 {
-  margin: 0 0 12px;
-  font-size: 14px;
-}
-.band-row {
-  display: grid;
-  grid-template-columns: 160px 1fr 60px;
-  align-items: center;
-  gap: 12px;
-  margin-bottom: 8px;
-}
-.band-row:last-child {
-  margin-bottom: 0;
-}
-.ba {
-  font-size: 13px;
-  color: var(--text-dim);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.bc {
-  text-align: right;
-  font-size: 12px;
 }
 .t-good {
   color: #6ee7b7;
@@ -616,5 +591,11 @@ onMounted(reload)
 .na {
   font-size: 12px;
   color: var(--text-muted);
+}
+
+@media (max-width: 680px) {
+  .chart-card {
+    margin-bottom: var(--space-sm);
+  }
 }
 </style>

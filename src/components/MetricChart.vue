@@ -5,8 +5,9 @@ import { useI18n } from 'vue-i18n'
 import type { Sample } from '../api'
 import { toDateLocale } from '../i18n'
 import { theme } from '../theme'
-import { type Seg, boolSegments, toPoints, uptimeSegments } from '../lib/timeline'
+import { type Seg, boolSegments, timelineSlices, toPoints, uptimeSegments } from '../lib/timeline'
 import { fmtByUnit, isByteUnit } from '../lib/format'
+import { escapeHtml } from '../lib/escapeHtml'
 import { lineDataWithGaps } from '../lib/chartSeries'
 import { chartColor, oklchToRgb } from '../lib/chartColor'
 
@@ -53,11 +54,21 @@ interface ChartMetric {
 const props = defineProps<{
   title: string
   metrics: ChartMetric[]
+  rangeSec?: number
 }>()
 
 const el = ref<HTMLDivElement>()
 let chart: echarts.ECharts | null = null
 let resizeObserver: ResizeObserver | null = null
+
+const chartHeight = computed(() => {
+  const timelineRows = props.metrics.every((metric) => metric.unit === 'bool')
+    ? props.metrics.length
+    : props.metrics.length === 1 && props.metrics[0].kind === 'agent.uptime_s'
+      ? 1
+      : 0
+  return timelineRows ? `${Math.max(190, 126 + timelineRows * 32)}px` : undefined
+})
 
 const stateColors = computed(() => ({
   on: chartColor('--color-success', '#34d399'),
@@ -176,7 +187,7 @@ function renderLines(ms: ChartMetric[]) {
           : isDurUnit(u)
             ? fmtDurSec(raw)
             : `${Number.isInteger(raw) ? raw : raw.toFixed(1)}${u ? ' ' + unitName(u) : ''}`
-        return `${p.marker}${p.seriesName}<span style="float:right;margin-left:20px;font-weight:600">${disp}</span>`
+        return `${p.marker}${escapeHtml(p.seriesName)}<span style="float:right;margin-left:20px;font-weight:600">${disp}</span>`
       })
       .join('<br/>')
     return `${fmtTime(params[0].axisValue)}<br/>${rows}`
@@ -228,42 +239,90 @@ function renderLines(ms: ChartMetric[]) {
   )
 }
 
-function renderTimeline(segs: Seg[], onLabel: string, offLabel: string, restarts: number[] = []) {
+interface TimelineRow {
+  label: string
+  segs: Seg[]
+}
+
+function timelineBounds(ms: ChartMetric[], now: number): [number, number] {
+  if (props.rangeSec) return [now - props.rangeSec * 1000, now]
+  const starts = ms.flatMap((metric) => metric.samples.map((sample) => new Date(sample.ts).getTime()))
+  return [starts.length ? Math.min(...starts) : now - 3600_000, now]
+}
+
+function renderTimeline(
+  rows: TimelineRow[],
+  onLabel: string,
+  offLabel: string,
+  rangeStart: number,
+  rangeEnd: number,
+  restarts: number[] = [],
+) {
   if (!chart) return
   const ct = chartTheme.value
   const state = stateColors.value
+  const cells = rows.flatMap((row, rowIndex) =>
+    timelineSlices(row.segs, rangeStart, rangeEnd).map((slice) => [
+      slice.start,
+      slice.end,
+      slice.ok ? 1 : 0,
+      rowIndex,
+      slice.sourceStart,
+      slice.sourceEnd,
+    ]),
+  )
   chart.setOption(
     {
-      title: baseTitle(),
+      title: {
+        ...baseTitle(),
+        subtext: t('chart.statusTimelineHint'),
+        subtextStyle: { color: ct.label, fontSize: 10, fontWeight: 400 },
+      },
       tooltip: {
         trigger: 'item',
         backgroundColor: ct.tooltipBg,
         borderColor: ct.tooltipBorder,
         borderWidth: 1,
         textStyle: { color: ct.tooltipText, fontSize: 12 },
-        formatter: (p: { value: [number, number, number] }) => {
-          const [start, end, ok] = p.value
+        formatter: (p: { value: [number, number, number, number, number, number] }) => {
+          const [start, end, ok, rowIndex, sourceStart, sourceEnd] = p.value
           const label = ok ? onLabel : offLabel
           const dot = ok ? state.on : state.off
+          const row = rows[rowIndex]
+          const issueRange = ok
+            ? ''
+            : `<br/><span style="color:${ct.label}">${t('chart.issueRange')}</span><br/>${fmtTime(sourceStart)} → ${fmtTime(sourceEnd)}` +
+              `<br/><span style="color:${ct.label}">${t('chart.duration', { dur: fmtDur(sourceEnd - sourceStart) })}</span>`
           return (
             `<span style="display:inline-block;width:8px;height:8px;border-radius:2px;background:${dot};margin-right:6px"></span>` +
-            `<b>${label}</b><br/>${fmtTime(start)} → ${fmtTime(end)}<br/><span style="color:${ct.label}">${t('chart.duration', { dur: fmtDur(end - start) })}</span>`
+            `<b>${label}</b>${rows.length > 1 ? `<span style="color:${ct.label};margin-left:8px">${escapeHtml(row.label)}</span>` : ''}` +
+            `<br/><span style="color:${ct.label}">${t('chart.sliceRange')}</span><br/>${fmtTime(start)} → ${fmtTime(end)}` +
+            issueRange
           )
         },
       },
-      grid: { left: 16, right: 20, top: 46, bottom: 28 },
+      grid: { left: 112, right: 20, top: 58, bottom: 30 },
       xAxis: {
         type: 'time',
+        min: rangeStart,
+        max: rangeEnd,
         axisLine: { lineStyle: { color: ct.axisLine } },
         axisLabel: { color: ct.label, fontSize: 11 },
         splitLine: { show: false },
       },
-      yAxis: { type: 'category', data: ['status'], show: false, boundaryGap: true },
+      yAxis: {
+        type: 'category',
+        data: rows.map((row) => row.label),
+        boundaryGap: true,
+        axisLine: { show: false },
+        axisTick: { show: false },
+        axisLabel: { color: ct.label, fontSize: 11, width: 88, overflow: 'truncate' },
+      },
       series: [
         {
           type: 'custom',
-          encode: { x: [0, 1], y: -1 },
-          data: segs.map((s) => [s.start, s.end, s.ok ? 1 : 0]),
+          encode: { x: [0, 1], y: 3 },
+          data: cells,
           renderItem: (
             _params: unknown,
             api: {
@@ -272,13 +331,16 @@ function renderTimeline(segs: Seg[], onLabel: string, offLabel: string, restarts
               size: (p: [number, number]) => [number, number]
             },
           ) => {
-            const start = api.coord([api.value(0), 0])
-            const end = api.coord([api.value(1), 0])
-            const bandH = api.size([0, 1])[1] * 0.5
-            const w = Math.max(end[0] - start[0], 1)
+            const rowIndex = api.value(3)
+            const start = api.coord([api.value(0), rowIndex])
+            const end = api.coord([api.value(1), rowIndex])
+            const bandH = Math.min(api.size([0, 1])[1] * 0.48, 18)
+            const rawW = Math.max(end[0] - start[0], 1)
+            const gap = rawW > 3 ? Math.min(1.6, rawW * 0.25) : 0.35
+            const w = Math.max(rawW - gap, 0.8)
             return {
               type: 'rect',
-              shape: { x: start[0], y: start[1] - bandH / 2, width: w, height: bandH, r: 2 },
+              shape: { x: start[0] + gap / 2, y: start[1] - bandH / 2, width: w, height: bandH, r: 2 },
               style: { fill: api.value(2) ? state.on : state.off },
             }
           },
@@ -301,17 +363,27 @@ function renderTimeline(segs: Seg[], onLabel: string, offLabel: string, restarts
 function render() {
   if (!chart) return
   const ms = props.metrics
-  // A lone status/heartbeat metric keeps its dedicated state timeline; anything
-  // else (including several trend metrics) is overlaid as lines.
+  const now = Date.now()
+  // Boolean metrics share one segmented time axis, with one row per Agent. This
+  // keeps exact state transitions inspectable even in an across-Agent view.
+  if (ms.length && ms.every((m) => m.unit === 'bool')) {
+    const [rangeStart, rangeEnd] = timelineBounds(ms, now)
+    renderTimeline(
+      ms.map((m) => ({ label: m.label, segs: boolSegments(toPoints(m.samples), now) })),
+      t('chart.normalEnabled'),
+      t('chart.interruptedDisabled'),
+      rangeStart,
+      rangeEnd,
+    )
+    return
+  }
+  // A lone uptime counter keeps its dedicated online/offline timeline.
   if (ms.length === 1) {
     const m = ms[0]
-    if (m.unit === 'bool') {
-      renderTimeline(boolSegments(toPoints(m.samples), Date.now()), t('chart.normalEnabled'), t('chart.interruptedDisabled'))
-      return
-    }
     if (m.kind === 'agent.uptime_s') {
-      const { segs, restarts } = uptimeSegments(toPoints(m.samples), Date.now())
-      renderTimeline(segs, t('chart.online'), t('chart.offlineFault'), restarts)
+      const { segs, restarts } = uptimeSegments(toPoints(m.samples), now)
+      const [rangeStart, rangeEnd] = timelineBounds(ms, now)
+      renderTimeline([{ label: m.label, segs }], t('chart.online'), t('chart.offlineFault'), rangeStart, rangeEnd, restarts)
       return
     }
   }
@@ -344,14 +416,14 @@ onBeforeUnmount(() => {
 // `locale` re-renders axis labels/legends/tooltips on language switch; `theme`
 // re-renders the chart chrome palette on light/dark switch.
 watch(
-  () => [props.metrics, locale.value, theme.value],
+  () => [props.metrics, props.rangeSec, locale.value, theme.value],
   render,
   { deep: true },
 )
 </script>
 
 <template>
-  <div ref="el" class="chart"></div>
+  <div ref="el" class="chart" :style="{ height: chartHeight }"></div>
 </template>
 
 <style scoped>

@@ -8,6 +8,7 @@ export const OFFLINE_GAP_MS = 90_000 // >3 missed heartbeats ⇒ treat as offlin
 
 export type Pt = { t: number; v: number }
 export type Seg = { start: number; end: number; ok: boolean }
+export type TimelineSlice = Seg & { sourceStart: number; sourceEnd: number }
 
 export function toPoints(samples: { ts: string; value: number }[]): Pt[] {
   return samples.map((s) => ({ t: new Date(s.ts).getTime(), v: s.value })).sort((a, b) => a.t - b.t)
@@ -47,6 +48,45 @@ export function boolSegments(pts: Pt[], now: number): Seg[] {
     push(segs, pts[i].t, end, ok)
   }
   return segs
+}
+
+// Split long state segments against a fixed time grid without rounding away
+// their real transition boundaries. The small cells make an all-up range
+// readable as time rather than as one anonymous solid bar; sourceStart/sourceEnd
+// retain the exact underlying state interval for the hover detail.
+export function timelineSlices(
+  segs: Seg[],
+  rangeStart: number,
+  rangeEnd: number,
+  targetSlices = 96,
+): TimelineSlice[] {
+  if (!segs.length || rangeEnd <= rangeStart || targetSlices <= 0) return []
+  const sliceMs = (rangeEnd - rangeStart) / targetSlices
+  const out: TimelineSlice[] = []
+
+  for (const seg of segs) {
+    const sourceStart = Math.max(seg.start, rangeStart)
+    const sourceEnd = Math.min(seg.end, rangeEnd)
+    if (sourceEnd <= sourceStart) continue
+
+    let cursor = sourceStart
+    while (cursor < sourceEnd) {
+      const bucket = Math.floor((cursor - rangeStart) / sliceMs)
+      let nextBoundary = rangeStart + (bucket + 1) * sliceMs
+      // Avoid a floating-point boundary leaving the cursor unchanged.
+      if (nextBoundary <= cursor) nextBoundary = cursor + sliceMs
+      const end = Math.min(sourceEnd, nextBoundary)
+      out.push({
+        start: cursor,
+        end,
+        ok: seg.ok,
+        sourceStart,
+        sourceEnd,
+      })
+      cursor = end
+    }
+  }
+  return out
 }
 
 // Time-weighted availability: the mean of each point's value weighted by how
