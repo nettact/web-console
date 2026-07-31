@@ -142,6 +142,8 @@ describe('group-centric target-status page', () => {
     expect(router.currentRoute.value.query).toEqual({ view: 'targets', target: 'target-1', agent: 'agent-1' })
     expect(wrapper.findAll('.target-board-group')).toHaveLength(2)
     expect(wrapper.find('.target-detail-workspace').exists()).toBe(true)
+    expect(wrapper.get('.target-board-row').element.nextElementSibling)
+      .toBe(wrapper.get('.target-detail-workspace').element)
     expect(wrapper.find('a[href="/monitoring/target-1/edit"]').exists()).toBe(false)
     expect(wrapper.find('a[href="/monitoring/new?group=group-1"]').exists()).toBe(false)
     await wrapper.get('.workspace-back').trigger('click')
@@ -152,7 +154,17 @@ describe('group-centric target-status page', () => {
     expect(wrapper.get('.view-switch button.active').text()).toBe(i18n.global.t('targetStatus.viewTargets'))
   })
 
-  it('keeps the global status board visible while target history opens in an inline workspace', async () => {
+  it('expands one target workspace directly below its row', async () => {
+    targetStatus.targets = [
+      statusRow,
+      {
+        ...statusRow,
+        target_id: 'target-2',
+        name: 'Gateway',
+        target: '192.168.1.1',
+        incident_ids: [],
+      },
+    ]
     const router = createRouter({
       history: createMemoryHistory(),
       routes: [
@@ -172,9 +184,14 @@ describe('group-centric target-status page', () => {
     expect(wrapper.find('.summary-grid').exists()).toBe(true)
     expect(wrapper.find('.target-detail-workspace').exists()).toBe(false)
 
-    await wrapper.get('.target-board-row').trigger('click')
+    let publicDnsRow = wrapper.findAll('.target-board-row').find((row) => row.text().includes('Public DNS'))!
+    let gatewayRow = wrapper.findAll('.target-board-row').find((row) => row.text().includes('Gateway'))!
+    await publicDnsRow.trigger('click')
     await flushPromises()
-    expect(wrapper.find('.target-detail-workspace').exists()).toBe(true)
+    expect(wrapper.findAll('.target-detail-workspace')).toHaveLength(1)
+    expect(publicDnsRow.attributes('aria-expanded')).toBe('true')
+    expect(gatewayRow.attributes('aria-expanded')).toBe('false')
+    expect(publicDnsRow.element.nextElementSibling).toBe(wrapper.get('.target-detail-workspace').element)
     expect(wrapper.find('[role="dialog"]').exists()).toBe(false)
     expect(wrapper.find('.drawer-backdrop').exists()).toBe(false)
     expect(wrapper.get('.workspace-back').text()).toContain(i18n.global.t('targetStatus.backToTargetBoard'))
@@ -191,6 +208,23 @@ describe('group-centric target-status page', () => {
       ttab: 'history',
     })
     expect(apiMock.listSeries).toHaveBeenCalledWith('agent-1')
+
+    publicDnsRow = wrapper.findAll('.target-board-row').find((row) => row.text().includes('Public DNS'))!
+    gatewayRow = wrapper.findAll('.target-board-row').find((row) => row.text().includes('Gateway'))!
+    await gatewayRow.trigger('click')
+    await flushPromises()
+    publicDnsRow = wrapper.findAll('.target-board-row').find((row) => row.text().includes('Public DNS'))!
+    gatewayRow = wrapper.findAll('.target-board-row').find((row) => row.text().includes('Gateway'))!
+    expect(wrapper.findAll('.target-detail-workspace')).toHaveLength(1)
+    expect(publicDnsRow.attributes('aria-expanded')).toBe('false')
+    expect(gatewayRow.attributes('aria-expanded')).toBe('true')
+    expect(gatewayRow.element.nextElementSibling).toBe(wrapper.get('.target-detail-workspace').element)
+    expect(router.currentRoute.value.query).toEqual({ view: 'targets', target: 'target-2' })
+
+    await gatewayRow.trigger('click')
+    await flushPromises()
+    expect(wrapper.find('.target-detail-workspace').exists()).toBe(false)
+    expect(router.currentRoute.value.query).toEqual({ view: 'targets' })
   })
 
   it('shows a truthful initial error instead of empty group or healthy summaries', async () => {

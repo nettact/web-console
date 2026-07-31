@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, ref, watch } from 'vue'
+import { computed, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type { TargetAgentStatusRow } from '../../api'
 import type { TargetStatusGroupView } from '../../lib/targetStatusPage'
@@ -27,7 +27,6 @@ const emit = defineEmits<{
 }>()
 
 const { t, locale } = useI18n()
-const targetWorkspace = ref<HTMLElement | null>(null)
 
 const visibleTargetCount = computed(() =>
   props.groups.reduce((sum, group) => sum + group.targets.length, 0),
@@ -76,12 +75,14 @@ function availability(value?: number | null): string {
   return formatAvailability(value ?? undefined) ?? t('targetStatus.availabilityUnknown')
 }
 
-async function openTarget(targetID: string): Promise<void> {
+function openTarget(targetID: string): void {
+  if (props.selectedTargetId === targetID) {
+    closeTarget()
+    return
+  }
   emit('update:selectedTargetId', targetID)
   emit('update:selectedAgentId', '')
   emit('update:tab', 'overview')
-  await nextTick()
-  targetWorkspace.value?.scrollIntoView?.({ block: 'start', behavior: 'smooth' })
 }
 
 function closeTarget(): void {
@@ -146,30 +147,185 @@ watch(
             <span>{{ t('targetStatus.lastObserved') }}</span>
             <span></span>
           </div>
-          <button
-            v-for="target in group.targets"
-            :key="target.target_id"
-            type="button"
-            class="target-board-row"
-            :class="{ selected: selectedTargetId === target.target_id }"
-            :aria-label="t('targetStatus.openTargetDetailsAria', { target: target.name || target.target })"
-            @click="openTarget(target.target_id)"
-          >
-            <span class="board-target-identity">
-              <span class="kind-chip">{{ target.kind.toUpperCase() }}</span>
-              <span>
-                <strong>{{ target.name || target.target }}</strong>
-                <small>{{ target.target }}</small>
+          <template v-for="target in group.targets" :key="target.target_id">
+            <button
+              type="button"
+              class="target-board-row"
+              :class="{ selected: selectedTargetId === target.target_id }"
+              :aria-label="t('targetStatus.openTargetDetailsAria', { target: target.name || target.target })"
+              :aria-expanded="selectedTargetId === target.target_id"
+              :aria-controls="`target-workspace-${target.target_id}`"
+              @click="openTarget(target.target_id)"
+            >
+              <span class="board-target-identity">
+                <span class="kind-chip">{{ target.kind.toUpperCase() }}</span>
+                <span>
+                  <strong>{{ target.name || target.target }}</strong>
+                  <small>{{ target.target }}</small>
+                </span>
               </span>
-            </span>
-            <span><MonitorStateBadge dim="display" :state="target.display_state" /></span>
-            <span class="board-impact">
-              {{ t('targetStatus.affected', { affected: target.affected_agents, total: target.applicable_agents }) }}
-            </span>
-            <span class="board-availability">{{ availability(target.availability_24h) }}</span>
-            <time :datetime="target.last_observed_at">{{ fmt(target.last_observed_at) }}</time>
-            <span class="board-open" aria-hidden="true">›</span>
-          </button>
+              <span><MonitorStateBadge dim="display" :state="target.display_state" /></span>
+              <span class="board-impact">
+                {{ t('targetStatus.affected', { affected: target.affected_agents, total: target.applicable_agents }) }}
+              </span>
+              <span class="board-availability">{{ availability(target.availability_24h) }}</span>
+              <time :datetime="target.last_observed_at">{{ fmt(target.last_observed_at) }}</time>
+              <span class="board-open" aria-hidden="true">›</span>
+            </button>
+
+            <section
+              v-if="selectedTargetId === target.target_id && selectedTarget"
+              :id="`target-workspace-${target.target_id}`"
+              class="target-detail-workspace"
+              :aria-label="t('targetStatus.targetWorkspaceAria')"
+            >
+              <header class="workspace-head">
+                <div class="workspace-identity">
+                  <span class="kind-chip">{{ selectedTarget.kind.toUpperCase() }}</span>
+                  <div>
+                    <h3>{{ selectedTarget.name || selectedTarget.target }}</h3>
+                    <p>{{ selectedGroup?.name }} · {{ selectedTarget.target }}</p>
+                  </div>
+                </div>
+                <button type="button" class="workspace-back" @click="closeTarget">
+                  <span aria-hidden="true">←</span>
+                  <span>{{ t('targetStatus.backToTargetBoard') }}</span>
+                </button>
+              </header>
+
+              <nav class="target-tabs" role="tablist" :aria-label="t('targetStatus.targetTabsAria')">
+                <button
+                  v-for="item in ([
+                    { id: 'overview', label: t('targetStatus.targetTabOverview') },
+                    { id: 'agents', label: t('targetStatus.targetTabAgents', { n: sortedAgents.length }) },
+                    { id: 'history', label: t('targetStatus.targetTabHistory') },
+                  ] as Array<{ id: TargetWorkspaceTab; label: string }>)"
+                  :key="item.id"
+                  type="button"
+                  role="tab"
+                  :class="{ active: tab === item.id }"
+                  :aria-selected="tab === item.id"
+                  :disabled="item.id === 'history' && !sortedAgents.length"
+                  @click="updateTab(item.id)"
+                >
+                  {{ item.label }}
+                </button>
+              </nav>
+
+              <div class="workspace-body">
+                <section v-if="tab === 'overview'" class="target-overview" role="tabpanel">
+                  <div class="target-summary-grid">
+                    <div>
+                      <span>{{ t('targetStatus.currentState') }}</span>
+                      <MonitorStateBadge dim="display" :state="selectedTarget.display_state" />
+                    </div>
+                    <div>
+                      <span>{{ t('targetStatus.agentImpact') }}</span>
+                      <strong>{{ selectedTarget.affected_agents }}/{{ selectedTarget.applicable_agents }}</strong>
+                    </div>
+                    <div>
+                      <span>{{ t('targetStatus.availability24h') }}</span>
+                      <strong>{{ availability(selectedTarget.availability_24h) }}</strong>
+                    </div>
+                    <div>
+                      <span>{{ t('targetStatus.incidentsLabel') }}</span>
+                      <strong>{{ selectedTarget.incident_ids.length }}</strong>
+                    </div>
+                  </div>
+
+                  <dl class="target-facts">
+                    <div><dt>{{ t('targetStatus.groupLabel') }}</dt><dd>{{ selectedGroup?.name || '—' }}</dd></div>
+                    <div><dt>{{ t('targetStatus.kindLabel') }}</dt><dd>{{ selectedTarget.kind.toUpperCase() }}</dd></div>
+                    <div><dt>{{ t('targetStatus.addressLabel') }}</dt><dd class="mono">{{ selectedTarget.target }}</dd></div>
+                    <div><dt>{{ t('targetStatus.lastObserved') }}</dt><dd>{{ fmt(selectedTarget.last_observed_at) }}</dd></div>
+                  </dl>
+
+                  <section class="priority-agents">
+                    <div class="workspace-section-head">
+                      <div>
+                        <h4>{{ t('targetStatus.priorityAgents') }}</h4>
+                        <p>{{ t('targetStatus.priorityAgentsHint') }}</p>
+                      </div>
+                      <button type="button" class="text-action" @click="updateTab('agents')">
+                        {{ t('targetStatus.viewAllAgents') }}
+                      </button>
+                    </div>
+                    <div v-if="priorityAgents.length" class="priority-agent-list">
+                      <button
+                        v-for="agent in priorityAgents"
+                        :key="agent.agent_id"
+                        type="button"
+                        @click="openHistory(agent.agent_id)"
+                      >
+                        <span class="agent-state-dot" :class="toneClass(agent)" aria-hidden="true"></span>
+                        <span>
+                          <strong>{{ agent.agent_name || agent.agent_id }}</strong>
+                          <small>{{ t(`targetStatus.reason.${agent.reason_code}`) }}</small>
+                        </span>
+                        <MonitorStateBadge dim="probe" :state="agent.probe_state" />
+                        <span class="text-action">{{ t('targetStatus.openHistory') }}</span>
+                      </button>
+                    </div>
+                    <div v-else class="quiet-state">
+                      <strong>{{ t('targetStatus.noPriorityAgents') }}</strong>
+                      <span>{{ t('targetStatus.noPriorityAgentsHint') }}</span>
+                    </div>
+                  </section>
+                </section>
+
+                <section v-else-if="tab === 'agents'" class="target-agent-matrix" role="tabpanel">
+                  <div class="workspace-section-head">
+                    <div>
+                      <h4>{{ t('targetStatus.agentMatrixTitle') }}</h4>
+                      <p>{{ t('targetStatus.agentMatrixHint') }}</p>
+                    </div>
+                  </div>
+                  <div v-if="sortedAgents.length" class="agent-matrix">
+                    <article v-for="agent in sortedAgents" :key="agent.agent_id" class="agent-matrix-row">
+                      <span class="agent-state-dot" :class="toneClass(agent)" aria-hidden="true"></span>
+                      <div class="matrix-agent">
+                        <strong>{{ agent.agent_name || agent.agent_id }}</strong>
+                        <small>{{ agent.agent_id }}</small>
+                      </div>
+                      <div class="matrix-states">
+                        <MonitorStateBadge dim="execution" :state="agent.execution_state" />
+                        <MonitorStateBadge v-if="agent.probe_state !== 'not_applicable'" dim="probe" :state="agent.probe_state" />
+                        <MonitorStateBadge dim="fault" :state="agent.fault_state" />
+                      </div>
+                      <span class="matrix-reason">{{ t(`targetStatus.reason.${agent.reason_code}`) }}</span>
+                      <span class="matrix-availability">{{ availability(agent.availability_24h) }}</span>
+                      <time :datetime="agent.last_observed_at">{{ fmt(agent.last_observed_at) }}</time>
+                      <button type="button" class="history-action" @click="openHistory(agent.agent_id)">
+                        {{ t('targetStatus.openHistory') }}
+                      </button>
+                    </article>
+                  </div>
+                  <div v-else class="quiet-state">
+                    <strong>{{ t('targetStatus.noApplicableAgents') }}</strong>
+                  </div>
+                </section>
+
+                <section v-else class="target-history-panel" role="tabpanel">
+                  <label class="history-agent-picker">
+                    <span>{{ t('targetStatus.historyAgentLabel') }}</span>
+                    <select
+                      :value="selectedAgent?.agent_id || ''"
+                      @change="emit('update:selectedAgentId', ($event.target as HTMLSelectElement).value)"
+                    >
+                      <option v-for="agent in sortedAgents" :key="agent.agent_id" :value="agent.agent_id">
+                        {{ agent.agent_name || agent.agent_id }}
+                      </option>
+                    </select>
+                  </label>
+                  <TargetStatusHistory
+                    v-if="selectedAgent"
+                    :target="selectedTarget"
+                    :agent-id="selectedAgent.agent_id"
+                  />
+                </section>
+              </div>
+            </section>
+          </template>
         </div>
         <p v-else class="board-group-empty">
           {{ group.allTargets.length ? t('targetStatus.noFilterResultsInGroup') : t('targetStatus.emptyGroup') }}
@@ -182,163 +338,11 @@ watch(
       <span>{{ t('targetStatus.noFilterResultsHint') }}</span>
     </div>
 
-    <section
-      v-if="selectedTarget"
-      ref="targetWorkspace"
-      class="target-detail-workspace"
-      :aria-label="t('targetStatus.targetWorkspaceAria')"
-    >
-        <header class="workspace-head">
-          <div class="workspace-identity">
-            <span class="kind-chip">{{ selectedTarget.kind.toUpperCase() }}</span>
-            <div>
-              <h3>{{ selectedTarget.name || selectedTarget.target }}</h3>
-              <p>{{ selectedGroup?.name }} · {{ selectedTarget.target }}</p>
-            </div>
-          </div>
-          <button type="button" class="workspace-back" @click="closeTarget">
-            <span aria-hidden="true">←</span>
-            <span>{{ t('targetStatus.backToTargetBoard') }}</span>
-          </button>
-        </header>
-
-        <nav class="target-tabs" role="tablist" :aria-label="t('targetStatus.targetTabsAria')">
-          <button
-            v-for="item in ([
-              { id: 'overview', label: t('targetStatus.targetTabOverview') },
-              { id: 'agents', label: t('targetStatus.targetTabAgents', { n: sortedAgents.length }) },
-              { id: 'history', label: t('targetStatus.targetTabHistory') },
-            ] as Array<{ id: TargetWorkspaceTab; label: string }>)"
-            :key="item.id"
-            type="button"
-            role="tab"
-            :class="{ active: tab === item.id }"
-            :aria-selected="tab === item.id"
-            :disabled="item.id === 'history' && !sortedAgents.length"
-            @click="updateTab(item.id)"
-          >
-            {{ item.label }}
-          </button>
-        </nav>
-
-        <div class="workspace-body">
-          <section v-if="tab === 'overview'" class="target-overview" role="tabpanel">
-            <div class="target-summary-grid">
-              <div>
-                <span>{{ t('targetStatus.currentState') }}</span>
-                <MonitorStateBadge dim="display" :state="selectedTarget.display_state" />
-              </div>
-              <div>
-                <span>{{ t('targetStatus.agentImpact') }}</span>
-                <strong>{{ selectedTarget.affected_agents }}/{{ selectedTarget.applicable_agents }}</strong>
-              </div>
-              <div>
-                <span>{{ t('targetStatus.availability24h') }}</span>
-                <strong>{{ availability(selectedTarget.availability_24h) }}</strong>
-              </div>
-              <div>
-                <span>{{ t('targetStatus.incidentsLabel') }}</span>
-                <strong>{{ selectedTarget.incident_ids.length }}</strong>
-              </div>
-            </div>
-
-            <dl class="target-facts">
-              <div><dt>{{ t('targetStatus.groupLabel') }}</dt><dd>{{ selectedGroup?.name || '—' }}</dd></div>
-              <div><dt>{{ t('targetStatus.kindLabel') }}</dt><dd>{{ selectedTarget.kind.toUpperCase() }}</dd></div>
-              <div><dt>{{ t('targetStatus.addressLabel') }}</dt><dd class="mono">{{ selectedTarget.target }}</dd></div>
-              <div><dt>{{ t('targetStatus.lastObserved') }}</dt><dd>{{ fmt(selectedTarget.last_observed_at) }}</dd></div>
-            </dl>
-
-            <section class="priority-agents">
-              <div class="workspace-section-head">
-                <div>
-                  <h4>{{ t('targetStatus.priorityAgents') }}</h4>
-                  <p>{{ t('targetStatus.priorityAgentsHint') }}</p>
-                </div>
-                <button type="button" class="text-action" @click="updateTab('agents')">
-                  {{ t('targetStatus.viewAllAgents') }}
-                </button>
-              </div>
-              <div v-if="priorityAgents.length" class="priority-agent-list">
-                <button
-                  v-for="agent in priorityAgents"
-                  :key="agent.agent_id"
-                  type="button"
-                  @click="openHistory(agent.agent_id)"
-                >
-                  <span class="agent-state-dot" :class="toneClass(agent)" aria-hidden="true"></span>
-                  <span>
-                    <strong>{{ agent.agent_name || agent.agent_id }}</strong>
-                    <small>{{ t(`targetStatus.reason.${agent.reason_code}`) }}</small>
-                  </span>
-                  <MonitorStateBadge dim="probe" :state="agent.probe_state" />
-                  <span class="text-action">{{ t('targetStatus.openHistory') }}</span>
-                </button>
-              </div>
-              <div v-else class="quiet-state">
-                <strong>{{ t('targetStatus.noPriorityAgents') }}</strong>
-                <span>{{ t('targetStatus.noPriorityAgentsHint') }}</span>
-              </div>
-            </section>
-          </section>
-
-          <section v-else-if="tab === 'agents'" class="target-agent-matrix" role="tabpanel">
-            <div class="workspace-section-head">
-              <div>
-                <h4>{{ t('targetStatus.agentMatrixTitle') }}</h4>
-                <p>{{ t('targetStatus.agentMatrixHint') }}</p>
-              </div>
-            </div>
-            <div v-if="sortedAgents.length" class="agent-matrix">
-              <article v-for="agent in sortedAgents" :key="agent.agent_id" class="agent-matrix-row">
-                <span class="agent-state-dot" :class="toneClass(agent)" aria-hidden="true"></span>
-                <div class="matrix-agent">
-                  <strong>{{ agent.agent_name || agent.agent_id }}</strong>
-                  <small>{{ agent.agent_id }}</small>
-                </div>
-                <div class="matrix-states">
-                  <MonitorStateBadge dim="execution" :state="agent.execution_state" />
-                  <MonitorStateBadge v-if="agent.probe_state !== 'not_applicable'" dim="probe" :state="agent.probe_state" />
-                  <MonitorStateBadge dim="fault" :state="agent.fault_state" />
-                </div>
-                <span class="matrix-reason">{{ t(`targetStatus.reason.${agent.reason_code}`) }}</span>
-                <span class="matrix-availability">{{ availability(agent.availability_24h) }}</span>
-                <time :datetime="agent.last_observed_at">{{ fmt(agent.last_observed_at) }}</time>
-                <button type="button" class="history-action" @click="openHistory(agent.agent_id)">
-                  {{ t('targetStatus.openHistory') }}
-                </button>
-              </article>
-            </div>
-            <div v-else class="quiet-state">
-              <strong>{{ t('targetStatus.noApplicableAgents') }}</strong>
-            </div>
-          </section>
-
-          <section v-else class="target-history-panel" role="tabpanel">
-            <label class="history-agent-picker">
-              <span>{{ t('targetStatus.historyAgentLabel') }}</span>
-              <select
-                :value="selectedAgent?.agent_id || ''"
-                @change="emit('update:selectedAgentId', ($event.target as HTMLSelectElement).value)"
-              >
-                <option v-for="agent in sortedAgents" :key="agent.agent_id" :value="agent.agent_id">
-                  {{ agent.agent_name || agent.agent_id }}
-                </option>
-              </select>
-            </label>
-            <TargetStatusHistory
-              v-if="selectedAgent"
-              :target="selectedTarget"
-              :agent-id="selectedAgent.agent_id"
-            />
-          </section>
-        </div>
-    </section>
   </section>
 </template>
 
 <style scoped>
-/* Hallmark · genre: custom application · macrostructure: Global Status Board + Inline Workbench
+/* Hallmark · genre: custom application · macrostructure: Global Status Board + Single-Open Inline Accordion
  * design-system: design.md · designed-as-app
  * post-emit critique: P5 H5 E4 S5 R5 V5
  * contrast: pass (40–41) · honest: pass (46) · chrome: pass (47) · tokens: pass (48)
@@ -457,11 +461,12 @@ watch(
   transition: background var(--dur-micro) var(--ease-out);
 }
 
-.target-board-row:last-child {
+.target-board-row:last-of-type {
   border-bottom: 0;
 }
 
 .target-board-row.selected {
+  border-bottom: var(--rule-hair) solid var(--color-rule);
   background: var(--color-glass-strong);
 }
 
@@ -523,6 +528,11 @@ watch(
   color: var(--color-muted);
   font-size: var(--text-xl);
   text-align: right;
+  transition: transform var(--dur-micro) var(--ease-out);
+}
+
+.target-board-row.selected .board-open {
+  transform: rotate(90deg);
 }
 
 .target-board-row:focus-visible,
@@ -574,14 +584,13 @@ watch(
   grid-template-rows: auto auto auto;
   width: 100%;
   min-width: 0;
-  margin-top: var(--space-md);
   overflow: hidden;
-  border: var(--rule-hair) solid var(--color-rule);
-  border-radius: var(--radius-panel);
-  background: var(--color-glass-strong);
-  box-shadow: var(--shadow-card);
-  backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
-  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
+  border-bottom: var(--rule-hair) solid var(--color-rule);
+  background: var(--color-paper-2);
+}
+
+.target-detail-workspace:last-child {
+  border-bottom: 0;
 }
 
 .workspace-head {
@@ -973,6 +982,7 @@ watch(
 
 @media (prefers-reduced-motion: reduce) {
   .target-board-row,
+  .board-open,
   .workspace-back,
   .target-tabs button,
   .priority-agent-list button,
