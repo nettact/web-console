@@ -64,7 +64,6 @@ const note = ref('')
 const newToken = ref('')
 const error = ref('')
 const busy = ref(false)
-const serverUrl = window.location.origin
 
 // Rows scoped by group + search (but NOT status), so the summary-card counts and
 // the status filter compose: clicking a status card narrows to exactly its count.
@@ -451,7 +450,7 @@ onBeforeUnmount(() => {
           <code>{{ newToken }}</code>
           <button class="link-btn" @click="copyToken">{{ t('agents.copy') }}</button>
         </div>
-        <EnrollExamples class="enroll-examples" :server-url="serverUrl" :token="newToken" />
+        <EnrollExamples class="enroll-examples" :token="newToken" />
       </div>
       <div class="table-wrap">
         <table class="data-table">

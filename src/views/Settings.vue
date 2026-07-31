@@ -17,6 +17,7 @@ import {
   type StorageStats,
 } from '../api'
 import { auth } from '../auth'
+import { setConsoleBase } from '../consoleBaseUrl'
 import { pushToast } from '../toasts'
 import WebhookChannelForm from '../components/WebhookChannelForm.vue'
 import ChannelAddForm from '../components/ChannelAddForm.vue'
@@ -581,6 +582,7 @@ async function load() {
     // concrete, saveable value instead of only the placeholder (which looks like
     // a value but saves empty). Entering the console also auto-sets it (see auth).
     consoleUrl.value = settings['console_base_url'] || window.location.origin
+    setConsoleBase(settings['console_base_url'] || '')
     populateDiag(settings)
     populateAgentSettings(settings)
     populateStorm(settings)
@@ -593,6 +595,9 @@ async function load() {
 async function saveConsoleUrl() {
   try {
     await api.updateSettings({ console_base_url: consoleUrl.value.trim() })
+    // Enrollment commands read this address; publish it so an Agents page that is
+    // already mounted (KeepAlive) generates the new one without a reload.
+    setConsoleBase(consoleUrl.value.trim())
     consoleSaved.value = true
     setTimeout(() => (consoleSaved.value = false), 2000)
   } catch (e) {

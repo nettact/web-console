@@ -6,6 +6,7 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type { PermissionCatalogEntry } from '../api'
+import { consoleBase, ensureConsoleBase } from '../consoleBaseUrl'
 import { permissionCatalog, ensurePermissionCatalog } from '../permissionCatalog'
 import { usePermissionMeta } from '../composables/usePermissionMeta'
 import {
@@ -18,7 +19,7 @@ import {
   type EnrollPlatform,
 } from '../lib/permissionSelection'
 
-const props = defineProps<{ serverUrl: string; token: string }>()
+const props = defineProps<{ token: string }>()
 
 type Tab = EnrollPlatform
 const tabs: Tab[] = ['windows', 'macos', 'linux', 'docker']
@@ -37,7 +38,10 @@ const presetHint = (id: string) =>
 
 // A real token when one was just generated, else a clear placeholder.
 const tok = computed(() => props.token || '<enrollment-token>')
-const url = computed(() => props.serverUrl || 'https://nettact.example:12450')
+// The configured console address (Settings → console URL), never this browser's
+// origin: the operator's own address often isn't reachable from the machine the
+// Agent is being installed on.
+const url = computed(() => consoleBase.url)
 
 // --- permission policy ------------------------------------------------------
 
@@ -135,6 +139,7 @@ async function copy() {
 }
 
 onMounted(() => {
+  ensureConsoleBase()
   ensurePermissionCatalog()
 })
 </script>

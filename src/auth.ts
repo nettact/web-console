@@ -1,5 +1,6 @@
 import { reactive } from 'vue'
 import { api, type User } from './api'
+import { setConsoleBase } from './consoleBaseUrl'
 
 // Global auth state. `ready` gates the router guard until the first /auth/me.
 export const auth = reactive<{ user: User | null; ready: boolean }>({
@@ -30,12 +31,17 @@ export async function login(username: string, password: string): Promise<void> {
 // time they enter the console with it unset. This spares the user from having to
 // configure it manually (and from the placeholder-looks-like-a-value trap on the
 // Settings page). Best-effort: never blocks entry, and never overwrites a value
-// the admin has already set.
+// the admin has already set. The resolved value is published to the shared
+// console-address state, so enrollment commands can point Agents at it without
+// a second settings read.
 async function ensureConsoleBaseURL(): Promise<void> {
   try {
     const s = await api.settings()
     if (!s['console_base_url']) {
       await api.updateSettings({ console_base_url: window.location.origin })
+      setConsoleBase(window.location.origin)
+    } else {
+      setConsoleBase(s['console_base_url'])
     }
   } catch {
     // ignore — the Settings page still lets the admin set/override it manually

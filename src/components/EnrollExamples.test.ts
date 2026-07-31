@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it } from 'vitest'
 
 import en from '../locales/en'
 import EnrollExamples from './EnrollExamples.vue'
+import { consoleBase, setConsoleBase } from '../consoleBaseUrl'
 import { permissionCatalog } from '../permissionCatalog'
 
 // A miniature catalog with a real dependency chain, so the picker's behaviour is
@@ -41,13 +42,16 @@ function seedCatalog(loaded = true) {
     : []
 }
 
+// The install commands must carry the configured console address, so seed it as
+// loaded — that also keeps the component from reaching for the settings API.
+function seedConsoleBase(url = "https://net'tact.example:12450") {
+  setConsoleBase(url)
+}
+
 function mountExamples() {
   const i18n = createI18n({ legacy: false, locale: 'en', messages: { en } })
   return mount(EnrollExamples, {
-    props: {
-      serverUrl: "https://net'tact.example:12450",
-      token: "to'ken",
-    },
+    props: { token: "to'ken" },
     global: { plugins: [i18n] },
   })
 }
@@ -57,7 +61,10 @@ const policyIn = (w: ReturnType<typeof mountExamples>) =>
   (code(w).match(/-Permissions '([^']+)'/)?.[1] || '').split(',').filter(Boolean)
 
 describe('EnrollExamples', () => {
-  beforeEach(() => seedCatalog())
+  beforeEach(() => {
+    seedCatalog()
+    seedConsoleBase()
+  })
 
   it('renders one-command installers for all four platforms', async () => {
     const wrapper = mountExamples()
@@ -86,10 +93,34 @@ describe('EnrollExamples', () => {
     await wrapper.findAll('.tab')[3].trigger('click')
     expect(code(wrapper)).not.toContain('--auto-update')
   })
+
+  it('points every platform at the configured console address, not this origin', async () => {
+    // The browser origin is frequently unreachable from the machine being
+    // enrolled (localhost, a tunnel, the desktop build's ephemeral port), so the
+    // command must follow the console-URL setting — trailing slash stripped, or
+    // the Agent would build "//api/..." request paths.
+    seedConsoleBase('https://nettact.lan:12450/')
+    const wrapper = mountExamples()
+
+    expect(code(wrapper)).toContain("-ServerUrl 'https://nettact.lan:12450'")
+    expect(code(wrapper)).not.toContain(window.location.origin)
+
+    await wrapper.findAll('.tab')[2].trigger('click')
+    expect(code(wrapper)).toContain("--server-url 'https://nettact.lan:12450'")
+  })
+
+  it('falls back to this origin when no console address is configured', () => {
+    setConsoleBase('')
+    expect(consoleBase.url).toBe(window.location.origin)
+    expect(code(mountExamples())).toContain(`-ServerUrl '${window.location.origin}'`)
+  })
 })
 
 describe('EnrollExamples permission picker', () => {
-  beforeEach(() => seedCatalog())
+  beforeEach(() => {
+    seedCatalog()
+    seedConsoleBase()
+  })
 
   it('omits the permission argument for the recommended preset', () => {
     // The recommended bundle IS the Agent's default policy, so spelling it out

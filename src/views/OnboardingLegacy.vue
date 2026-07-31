@@ -428,7 +428,6 @@ async function applyNotifyAndNext(): Promise<void> {
 // ---- enroll step ----
 const enrollToken = ref('')
 const enrollError = ref('')
-const serverUrl = window.location.origin
 async function genToken(): Promise<void> {
   enrollError.value = ''
   try {
@@ -618,7 +617,7 @@ async function genToken(): Promise<void> {
           <span v-if="enrollToken" class="muted">{{ t('setup.tokenOnce') }}</span>
           <span v-if="enrollError" class="err">{{ enrollError }}</span>
         </div>
-        <EnrollExamples class="enroll-examples" :server-url="serverUrl" :token="enrollToken" />
+        <EnrollExamples class="enroll-examples" :token="enrollToken" />
       </section>
 
       <!-- done -->
