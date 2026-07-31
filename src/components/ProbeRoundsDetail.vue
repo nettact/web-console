@@ -22,6 +22,27 @@ const { probeReasonLabel, metricLabel } = useMetricMeta()
 // above already carries the date.
 const fmtRoundTime = (ts: number) =>
   new Date(ts * 1000).toLocaleTimeString(toDateLocale(locale.value), { hour12: false })
+
+// Every round listed here FAILED, so a probe's 0/1 success flag must never be
+// rendered as "<label> <value>". Four of the five primary metrics are such flags
+// and their labels are affirmative — "请求成功", "解析成功", "连接成功" — so a
+// failing round came out as "请求成功 0", which reads as the exact opposite of
+// what happened. The flag also carries no information the row does not already
+// state, so it is dropped rather than reworded.
+//
+// probe.icmp.loss_pct is the one primary metric whose value is a magnitude: 100%
+// loss and 60% loss are different findings, so it stays.
+const isSuccessFlag = (kind: string) => kind.endsWith('.ok')
+
+// Percentage kinds print their unit; nothing else numeric reaches this list today.
+const fmtValue = (r: ProbeRound) =>
+  `${fmtNum(r.value)}${r.metric_kind.endsWith('_pct') ? '%' : ''}`
+
+const showsValue = (r: ProbeRound) => !!r.metric_kind && !isSuccessFlag(r.metric_kind)
+
+// With the flag suppressed, a round carrying neither a reason code nor a magnitude
+// would render as a bare timestamp. Say plainly that it failed instead.
+const needsFallback = (r: ProbeRound) => r.reason_code <= 0 && !showsValue(r)
 </script>
 
 <template>
@@ -32,8 +53,9 @@ const fmtRoundTime = (ts: number) =>
         <span class="idx">{{ t('targetStatus.roundNo', { i: i + 1 }) }}</span>
         <span class="ts mono">{{ fmtRoundTime(r.ts) }}</span>
         <span v-if="r.reason_code > 0" class="reason-chip">{{ probeReasonLabel(r.reason_code) }}</span>
-        <span v-if="r.metric_kind" class="val mono">
-          {{ metricLabel(r.metric_kind) }} {{ fmtNum(r.value) }}
+        <span v-else-if="needsFallback(r)" class="reason-chip">{{ t('targetStatus.roundFailed') }}</span>
+        <span v-if="showsValue(r)" class="val mono">
+          {{ metricLabel(r.metric_kind) }} {{ fmtValue(r) }}
         </span>
         <!-- Verbatim: the machine text is the actionable part. -->
         <code v-if="r.reason_detail" class="detail" :title="r.reason_detail">{{ r.reason_detail }}</code>

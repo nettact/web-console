@@ -1961,6 +1961,7 @@ export default {
     fluctuationLinkedHint: 'This target went on to confirm a fault, and this fluctuation is kept as its precursor: exempt from retention, deleted with the incident.',
     roundBreakdown: 'Round-by-round',
     roundNo: 'Round {i}',
+    roundFailed: 'Probe failed',
     errorBanner: 'Could not load current status.',
     staleBanner: 'Status may be outdated — last updated {time}.',
     unavailable: 'Status unavailable',

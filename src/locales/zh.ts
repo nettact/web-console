@@ -1968,6 +1968,7 @@ export default {
     fluctuationLinkedHint: '该目标随后确认了故障，此次波动已作为前兆归入该事故；不再按保留期清理，随事故一并删除。',
     roundBreakdown: '逐轮明细',
     roundNo: '第 {i} 轮',
+    roundFailed: '探测失败',
     errorBanner: '无法加载当前状态。',
     staleBanner: '状态可能已过期 —— 最后更新于 {time}。',
     unavailable: '状态不可用',
