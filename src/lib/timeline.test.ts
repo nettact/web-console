@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { timelineSlices, type Seg, visibleTimelineBounds } from './timeline'
+import { availability, availabilityOutages, boolSegments, timelineSlices, type Seg, visibleTimelineBounds } from './timeline'
 
 describe('visibleTimelineBounds', () => {
   it('starts at the first observed sample when monitoring began inside the selected window', () => {
@@ -55,5 +55,27 @@ describe('timelineSlices', () => {
     expect(slices).toHaveLength(2)
     expect(slices[0].sourceStart).toBe(0)
     expect(slices[1].sourceEnd).toBe(1_000)
+  })
+})
+
+describe('rolled-up availability', () => {
+  const minute = 60 * 1000
+  const points = [
+    { t: 0, v: 1 },
+    { t: minute, v: 0.5 },
+    { t: 2 * minute, v: 1 },
+  ]
+
+  it('keeps a partial-failure bucket visible as interrupted', () => {
+    expect(boolSegments(points, 3 * minute)).toEqual([
+      { start: 0, end: minute, ok: true },
+      { start: minute, end: 2 * minute, ok: false },
+      { start: 2 * minute, end: 3 * minute, ok: true },
+    ])
+  })
+
+  it('uses the bucket success ratio without rounding away failures', () => {
+    expect(availability(points, 3 * minute)).toBeCloseTo(5 / 6)
+    expect(availabilityOutages(points)).toBe(1)
   })
 })

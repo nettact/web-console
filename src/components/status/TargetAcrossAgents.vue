@@ -33,7 +33,7 @@ import {
   orderOf,
 } from '../../lib/metricMeta'
 import { bandSeriesFor, type Prober } from '../../lib/targetGroups'
-import { availability, toPoints } from '../../lib/timeline'
+import { availability, availabilityOutages, toPoints, type Pt } from '../../lib/timeline'
 import { availabilityTone, formatAvailability, type Tone } from '../../lib/targetStatus'
 import { targetIndex } from '../../targetStatus'
 import { fmtByUnit, isByteUnit } from '../../lib/format'
@@ -98,6 +98,12 @@ const selectedNumeric = ref<string[]>([])
 
 // The historical band series used for the summary's availability/outages.
 const band = computed(() => bandSeriesFor(props.family))
+// User-created probes have a server-derived verdict for every completed round.
+// Unlike family metrics (for example HTTP status or averaged ICMP loss), this
+// remains an exact success ratio after minute/hour rollup and therefore keeps
+// availability consistent when the range crosses a storage-tier boundary.
+const ROUND_AVAILABILITY_KIND = 'probe.round.ok'
+const bandSampleKind = computed(() => props.monitorId && band.value ? ROUND_AVAILABILITY_KIND : band.value?.kind ?? '')
 // The headline numeric shown as "latest" in the summary (RTT / resolve / latency).
 const primaryNumeric = computed(() => numericKinds.value[0] ?? '')
 
@@ -111,7 +117,7 @@ const codeKinds = computed(() => cardKinds.value.filter((k) => CODE_KINDS.has(k)
 const fetchKinds = computed(() => {
   const set = new Set<string>([...selectedNumeric.value, ...statusKinds.value, ...cardKinds.value])
   for (const k of CODE_KINDS) set.delete(k)
-  if (band.value) set.add(band.value.kind)
+  if (bandSampleKind.value) set.add(bandSampleKind.value)
   if (primaryNumeric.value) set.add(primaryNumeric.value)
   return [...set]
 })
@@ -130,6 +136,19 @@ function toggleNumeric(k: string) {
 
 const samplesFor = (agentId: string, kind: string) => samples.value[skey(agentId, kind)] ?? []
 
+function bandPoints(agentId: string): Pt[] {
+  const b = band.value
+  if (!b) return []
+  const points = toPoints(samplesFor(agentId, bandSampleKind.value))
+  // probe.round.ok rollups are already success ratios and must not be rounded
+  // back to booleans. Monitor-less system bands still use their family mapping.
+  return props.monitorId ? points : points.map((point) => ({ ...point, v: b.toUp(point.v) }))
+}
+
+function statusSamplesFor(agentId: string, kind: string): Sample[] {
+  return band.value?.kind === kind ? samplesFor(agentId, bandSampleKind.value) : samplesFor(agentId, kind)
+}
+
 // One overlaid line per agent for a given kind.
 function chartMetrics(kind: string) {
   return props.probers.map((p, i) => ({
@@ -147,15 +166,17 @@ function chartMetrics(kind: string) {
 // evidence behind it.
 function statusChartMetrics(kind: string) {
   const b = band.value
-  const toUp = b && b.kind === kind ? b.toUp : (value: number) => (value >= 0.5 ? 1 : 0)
   const now = Date.now()
   return props.probers.map((p, i) => {
-    const raw = samplesFor(p.agent.id, kind)
-    const points = toPoints(raw).map((point) => ({ t: point.t, v: toUp(point.v) }))
+    const isBand = b?.kind === kind
+    const raw = statusSamplesFor(p.agent.id, kind)
+    const points = isBand
+      ? bandPoints(p.agent.id)
+      : toPoints(raw).map((point) => ({ t: point.t, v: point.v >= 0.5 ? 1 : 0 }))
     const ratio = points.length ? availability(points, now) * 100 : null
     return {
       key: p.agent.id,
-      label: `${agentLabel(p.agent)} · ${ratio === null ? '—' : `${ratio.toFixed(1)}%`}`,
+      label: `${agentLabel(p.agent)} · ${ratio === null ? '—' : formatAvailability(ratio / 100)}`,
       kind,
       unit: kindUnit.value.get(kind) || '',
       color: FALLBACK[i % FALLBACK.length],
@@ -164,6 +185,7 @@ function statusChartMetrics(kind: string) {
   })
 }
 const chartHasData = (kind: string) => props.probers.some((p) => samplesFor(p.agent.id, kind).length)
+const statusChartHasData = (kind: string) => props.probers.some((p) => statusSamplesFor(p.agent.id, kind).length)
 
 // Availability% → tone (historical, threshold-based; never current inference).
 function availTone(pct: number | null): 'good' | 'bad' | 'warn' | 'unknown' {
@@ -213,10 +235,10 @@ const summary = computed<SummaryRow[]>(() => {
     let avail: number | null = null
     let outages = 0
     if (b) {
-      const pts = toPoints(samplesFor(base.id, b.kind)).map((x) => ({ t: x.t, v: b.toUp(x.v) }))
+      const pts = bandPoints(base.id)
       if (pts.length) {
         avail = availability(pts, now) * 100
-        for (let i = 1; i < pts.length; i++) if (pts[i - 1].v >= 0.5 && pts[i].v < 0.5) outages++
+        outages = availabilityOutages(pts)
       }
     }
     let latest = '—'
@@ -233,7 +255,7 @@ const summary = computed<SummaryRow[]>(() => {
       online: base.online,
       row: base.row,
       availTone: availTone(avail),
-      avail: avail === null ? null : avail.toFixed(1),
+      avail: avail === null ? null : formatAvailability(avail / 100),
       outages,
       latest,
     }
@@ -465,7 +487,7 @@ onMounted(reload)
               class="num mono"
               :class="`t-${windowTone(r.id, w)}`"
             >{{ windowAvail(r.id, w) }}</td>
-            <td class="num mono" :class="`t-${r.availTone}`">{{ r.avail === null ? '—' : r.avail + '%' }}</td>
+            <td class="num mono" :class="`t-${r.availTone}`">{{ r.avail === null ? '—' : r.avail }}</td>
             <td class="num mono">{{ r.avail === null ? '—' : r.outages }}</td>
             <td class="num mono">{{ fluxCell(r.id) }}</td>
             <td class="num mono">{{ r.latest }}</td>
@@ -502,7 +524,7 @@ onMounted(reload)
          continuous availability bar. -->
     <div class="card chart-card status-chart-card" v-for="k in statusKinds" :key="k">
       <MetricChart :title="metricLabel(k)" :metrics="statusChartMetrics(k)" :range-sec="rangeSec" />
-      <p v-if="!loading && !chartHasData(k)" class="empty-line hint">{{ t('metrics.noDataRange') }}</p>
+      <p v-if="!loading && !statusChartHasData(k)" class="empty-line hint">{{ t('metrics.noDataRange') }}</p>
     </div>
 
     <!-- per-agent categorical / sample-count cards -->

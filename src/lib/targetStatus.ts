@@ -83,15 +83,14 @@ export function agentHeadlineTone(row: TargetAgentStatusRow): Tone {
   return PROBE_TONE[row.probe_state]
 }
 
-// formatAvailability renders a 0..1 ratio as a percentage string. An absent
-// ratio is "unknown", which is deliberately NOT rendered as 0% — a window with
-// no verdict says nothing about availability.
+// Render a 0..1 ratio by truncating to one decimal place. Never round an
+// observed failure up to 100%: unavailability evidence takes precedence over a
+// cosmetically rounded headline. No verdict remains unknown rather than 0%.
 export function formatAvailability(ratio: number | undefined): string | null {
   if (ratio === undefined || ratio === null || Number.isNaN(ratio)) return null
-  const pct = ratio * 100
-  if (pct >= 99.95 && pct < 100) return '99.9%'
-  if (pct > 0 && pct < 0.05) return '0.1%'
-  return `${Math.round(pct * 10) / 10}%`
+  const clamped = Math.min(Math.max(ratio, 0), 1)
+  const tenths = clamped >= 1 ? 1000 : Math.min(999, Math.floor(clamped * 1000))
+  return `${tenths / 10}%`
 }
 
 // availabilityTone grades a ratio for the badge beside it. The thresholds are

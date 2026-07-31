@@ -4,6 +4,7 @@ import { useI18n } from 'vue-i18n'
 
 import type { Sample, TargetStatusRow } from '../api'
 import { natCodeLabel } from '../lib/metricMeta'
+import { formatAvailability } from '../lib/targetStatus'
 
 const props = defineProps<{
   target: TargetStatusRow
@@ -91,7 +92,7 @@ const details = computed(() => {
     }
   }
   if (agent.value?.availability_24h != null) {
-    items.push({ label: t('targetStatus.availability24h'), value: `${(agent.value.availability_24h * 100).toFixed(1)}%` })
+    items.push({ label: t('targetStatus.availability24h'), value: formatAvailability(agent.value.availability_24h) ?? '—' })
   }
   return items.slice(0, 3)
 })

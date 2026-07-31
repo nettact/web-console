@@ -40,7 +40,7 @@ import { chartColor } from '../lib/chartColor'
 import { buildDashboardPath } from '../lib/dashboardPath'
 import { agentLabel } from '../lib/agentLabel'
 import { natCodeLabel, natTone } from '../lib/metricMeta'
-import { PROBE_TONE } from '../lib/targetStatus'
+import { formatAvailability, PROBE_TONE } from '../lib/targetStatus'
 import { targetStatus } from '../targetStatus'
 
 const { t, te, locale } = useI18n()
@@ -1110,14 +1110,14 @@ onBeforeUnmount(() => {
       <article v-if="cardVisible('availability')" class="insight-card dashboard-card-shell" :class="availabilityPct == null ? 'is-unknown' : availabilityPct >= 99 ? 'is-good' : availabilityPct >= 95 ? 'is-warn' : 'is-bad'" :style="cardGridStyle('availability')" data-layout-card="availability" :data-layout-editing="editingLayout || undefined" :data-dragging="draggingCardID === 'availability' || undefined" :draggable="editingLayout" @dragstart="startCardDrag('availability', $event)" @dragend="draggingCardID = ''" @dragover.prevent @drop="dropLayoutCard('availability')">
         <DashboardCardControls v-if="editingLayout" :title="t(cardDefinition('availability').titleKey)" :size="cardLayout('availability')!.size" :sizes="cardDefinition('availability').sizes" :first="visibleCardIndex('availability') === 0" :last="visibleCardIndex('availability') === visibleCardCount - 1" @resize="updateCardSize('availability', $event)" @move="moveVisibleCard('availability', $event)" @remove="removeWidget('availability')" @pointer-drag="startPointerCardDrag('availability', $event)" />
         <span>{{ t('dashboard.cardAvailability') }}</span>
-        <strong>{{ availabilityPct == null ? '--' : `${availabilityPct.toFixed(1)}%` }}</strong>
+        <strong>{{ availabilityPct == null ? '--' : formatAvailability(availabilityPct / 100) }}</strong>
         <p v-if="availabilityPct != null && worstAvailabilityTarget" class="availability-attribution">
           <RouterLink
             v-if="worstAvailabilityTarget.targetId"
             class="attribution-link"
             :to="{ path: '/target-status', query: { agent: selected, target: worstAvailabilityTarget.targetId } }"
-          >{{ worstAvailabilityTarget.name }} {{ worstAvailabilityTarget.pct.toFixed(0) }}%</RouterLink>
-          <span v-else class="mono">{{ worstAvailabilityTarget.name }} {{ worstAvailabilityTarget.pct.toFixed(0) }}%</span>
+          >{{ worstAvailabilityTarget.name }} {{ formatAvailability(worstAvailabilityTarget.pct / 100) }}</RouterLink>
+          <span v-else class="mono">{{ worstAvailabilityTarget.name }} {{ formatAvailability(worstAvailabilityTarget.pct / 100) }}</span>
           <span v-if="availabilityOffenders.length > 1"> · {{ t('dashboard.availabilityMoreOffenders', { n: availabilityOffenders.length - 1 }) }}</span>
         </p>
         <p v-else>{{ t('dashboard.availabilityFoot', { n: publicLosses.length }) }}</p>

@@ -59,11 +59,28 @@ export function boolSegments(pts: Pt[], now: number): Seg[] {
   if (!pts.length) return segs
   const stale = boolStaleMs(pts)
   for (let i = 0; i < pts.length; i++) {
-    const ok = pts[i].v >= 0.5
+    // Rollup buckets carry the fraction of successful rounds. Any value below
+    // 1 means the bucket contains at least one failure and must stay visible as
+    // an interrupted segment; thresholding at 0.5 would erase short failures.
+    const ok = pts[i].v >= 1
     const end = i + 1 < pts.length ? pts[i + 1].t : Math.min(now, pts[i].t + stale)
     push(segs, pts[i].t, end, ok)
   }
   return segs
+}
+
+// Count contiguous runs containing one or more failed rounds. This accepts both
+// raw booleans and rollup success ratios, so changing the selected range cannot
+// make the same short outage disappear at a coarser resolution.
+export function availabilityOutages(pts: Pt[]): number {
+  let outages = 0
+  let wasUp = true
+  for (const point of pts) {
+    const up = point.v >= 1
+    if (wasUp && !up) outages++
+    wasUp = up
+  }
+  return outages
 }
 
 // Split long state segments against a fixed time grid without rounding away
