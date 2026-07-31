@@ -1699,6 +1699,8 @@ export default {
       host_uptime_s: '运行时长',
       host_net_rx_bps: '接收速率',
       host_net_tx_bps: '发送速率',
+      host_temp_c: '温度',
+      host_temp_sensor_c: '传感器温度',
     },
     nat: {
       foot: '更新于 {time}',
@@ -1985,6 +1987,7 @@ export default {
     host_load_read: '负载读取',
     host_uptime_read: '运行时长读取',
     host_network_io_read: '网络 I/O 读取',
+    host_temperature_read: '温度读取',
     host_process_basic_read: '进程基础信息',
     host_process_owner_read: '进程所属用户',
     host_process_resource_read: '进程资源占用',
@@ -2030,6 +2033,7 @@ export default {
     host_load_read: '读取系统平均负载',
     host_uptime_read: '读取主机运行时长',
     host_network_io_read: '读取主机网络吞吐',
+    host_temperature_read: '读取主机温度传感器（CPU / 主板等）',
     host_process_basic_read: '读取进程基础信息（名称/PID/状态）',
     host_process_owner_read: '读取进程所属用户',
     host_process_resource_read: '读取每个进程的 CPU/内存占用',
@@ -2057,6 +2061,7 @@ export default {
     network_neighbor_hostname_read: 'Windows 与 Linux 版 Agent 已实现邻居主机名解析；macOS 版尚未实现。',
     diagnostic_traceroute_icmp: 'Windows 与 Linux 版 Agent 已实现 ICMP 路径诊断。与 ICMP 探测不同，它必须收到中间跳的 Time-Exceeded，因此 Linux 上必须有 CAP_NET_RAW 或以 root 运行（无特权 ping socket 收不到这类报文）。macOS 版尚未实现。',
     diagnostic_traceroute_tcp: 'Windows 与 Linux 版 Agent 已实现 TCP 路径诊断，两者都需要提权（Windows 管理员 / Linux CAP_NET_RAW 或 root）。macOS 版尚未实现。',
+    host_temperature_read: '温度取决于机器本身是否有可读的传感器，Agent 启动时会自检一次，只有真正读到有效读数才会声明支持。Linux 读取 /sys/class/hwmon（容器内需挂载宿主机 /sys）；Windows 通过 WMI ACPI 温度区读取，部分主板与虚拟机不提供该接口，且通常需要管理员权限；macOS 版尚未实现。',
   },
 
   // 权限受阻解决方案弹窗（AGENT-003）。

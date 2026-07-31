@@ -1690,6 +1690,8 @@ export default {
       host_uptime_s: 'Uptime',
       host_net_rx_bps: 'RX rate',
       host_net_tx_bps: 'TX rate',
+      host_temp_c: 'Temperature',
+      host_temp_sensor_c: 'Sensor temperature',
     },
     nat: {
       foot: 'Updated {time}',
@@ -1977,6 +1979,7 @@ export default {
     host_load_read: 'Load read',
     host_uptime_read: 'Uptime read',
     host_network_io_read: 'Network I/O read',
+    host_temperature_read: 'Temperature read',
     host_process_basic_read: 'Process basics',
     host_process_owner_read: 'Process owner',
     host_process_resource_read: 'Process resources',
@@ -2023,6 +2026,7 @@ export default {
     host_load_read: 'Read system load average',
     host_uptime_read: 'Read host uptime',
     host_network_io_read: 'Read host network throughput',
+    host_temperature_read: 'Read host temperature sensors (CPU / mainboard)',
     host_process_basic_read: 'Read basic process info (name/PID/status)',
     host_process_owner_read: 'Read the owning user of processes',
     host_process_resource_read: 'Read per-process CPU and memory usage',
@@ -2052,6 +2056,7 @@ export default {
     network_neighbor_hostname_read: 'The Windows and Linux Agent builds implement neighbor hostname resolution. The macOS build does not implement it yet.',
     diagnostic_traceroute_icmp: 'The Windows and Linux Agent builds implement ICMP path diagnostics. Unlike ICMP probing it must receive intermediate Time-Exceeded replies, so on Linux it does require CAP_NET_RAW or root — an unprivileged ping socket never sees them. The macOS build does not implement it yet.',
     diagnostic_traceroute_tcp: 'The Windows and Linux Agent builds implement TCP path diagnostics, and both need extra privilege (Administrator on Windows, CAP_NET_RAW or root on Linux). The macOS build does not implement it yet.',
+    host_temperature_read: 'Temperature depends on whether the machine exposes readable sensors at all, so the Agent probes once at startup and claims support only when a real reading succeeds. Linux reads /sys/class/hwmon (a container needs the host /sys mounted); Windows reads the WMI ACPI thermal zone, which some mainboards and virtual machines do not expose and which usually requires Administrator. The macOS build does not implement it yet.',
   },
 
   // Permission remediation dialog (AGENT-003).

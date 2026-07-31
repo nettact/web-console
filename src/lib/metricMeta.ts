@@ -16,7 +16,10 @@ export const RANGES = [
 ]
 
 // agent.wal_pending is an internal buffer depth, not a user-facing target — hide it.
-export const HIDDEN_KINDS = new Set(['agent.wal_pending'])
+// host.temp.sensor.c is the per-sensor detail behind the host.temp.c aggregate:
+// a group fetches one target, so per-sensor targets cannot render here. It stays
+// available through the API until a dedicated sensor view exists.
+export const HIDDEN_KINDS = new Set(['agent.wal_pending', 'host.temp.sensor.c'])
 
 // The server serves raw (unaggregated) samples only for ranges up to 2h; beyond
 // that /metrics returns bucket averages. Categorical CODE_KINDS must never be
@@ -96,6 +99,7 @@ const METRIC_ORDER = [
   'host.mem.total',
   'host.net.rx_bps',
   'host.net.tx_bps',
+  'host.temp.c',
   'host.load.1m',
   'host.load.5m',
   'host.load.15m',
@@ -149,6 +153,7 @@ const KIND_COLORS: Record<string, string> = {
   'host.disk.free': '#34d399',
   'host.net.rx_bps': '#38bdf8',
   'host.net.tx_bps': '#f472b6',
+  'host.temp.c': '#fb923c',
 }
 export const FALLBACK = ['#38bdf8', '#fbbf24', '#a78bfa', '#f472b6', '#818cf8', '#34d399']
 export const kindColor = (k: string) => KIND_COLORS[k] || FALLBACK[Math.abs(hash(k)) % FALLBACK.length]

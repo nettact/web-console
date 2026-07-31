@@ -30,6 +30,15 @@ const NEEDS_RAW_SOCKET_OFF_WINDOWS = new Set([
   'diagnostic.traceroute.tcp',
 ])
 
+// Windows capabilities that only an elevated process gets: the raw socket behind
+// TCP path diagnostics, and the WMI ACPI thermal zone the temperature sensors are
+// read through. The installer's scheduled task runs as SYSTEM, so both are
+// usually satisfied in practice.
+const NEEDS_ELEVATION_ON_WINDOWS = new Set([
+  'diagnostic.traceroute.tcp',
+  'host.temperature.read',
+])
+
 // Implemented only in the Windows and Linux builds today.
 const NOT_ON_MACOS = new Set([
   'probe.icmp',
@@ -38,6 +47,8 @@ const NOT_ON_MACOS = new Set([
   'network.neighbor.hostname.read',
   'diagnostic.traceroute.icmp',
   'diagnostic.traceroute.tcp',
+  // The macOS build reaches the sensors through cgo, which the agent does not use.
+  'host.temperature.read',
 ])
 
 // What to expect of a permission on a platform, used when choosing a policy at
@@ -46,10 +57,10 @@ const NOT_ON_MACOS = new Set([
 export function platformSupport(id: string, platform: EnrollPlatform): PlatformSupport {
   if (platform === 'macos') return NOT_ON_MACOS.has(id) ? 'unsupported' : 'ok'
   if (platform === 'windows') {
-    // Raw-socket TCP path diagnostics is the one Windows capability that needs an
-    // elevated process; the installer's scheduled task runs as SYSTEM, so it is
-    // usually satisfied.
-    return id === 'diagnostic.traceroute.tcp' ? 'privileged' : 'ok'
+    // Raw-socket TCP path diagnostics and the WMI ACPI thermal zone are the
+    // Windows capabilities that need an elevated process; the installer's
+    // scheduled task runs as SYSTEM, so both are usually satisfied.
+    return NEEDS_ELEVATION_ON_WINDOWS.has(id) ? 'privileged' : 'ok'
   }
   // Linux and the Linux-based container image behave identically here.
   return NEEDS_RAW_SOCKET_OFF_WINDOWS.has(id) ? 'privileged' : 'ok'
@@ -64,7 +75,7 @@ export function platformSupport(id: string, platform: EnrollPlatform): PlatformS
 // platform cannot do it, which is false.
 export function privilegeCanEnable(id: string, platform: EnrollPlatform): boolean {
   if (platform === 'macos') return false // not implemented; privilege is irrelevant
-  if (platform === 'windows') return id === 'diagnostic.traceroute.tcp'
+  if (platform === 'windows') return NEEDS_ELEVATION_ON_WINDOWS.has(id)
   return (
     NEEDS_RAW_SOCKET_OFF_WINDOWS.has(id) || id === 'probe.icmp' || id === 'network.gateway.probe'
   )
