@@ -5,7 +5,7 @@ import { useI18n } from 'vue-i18n'
 import type { Sample } from '../api'
 import { toDateLocale } from '../i18n'
 import { theme } from '../theme'
-import { type Seg, boolSegments, timelineSlices, toPoints, uptimeSegments } from '../lib/timeline'
+import { type Seg, boolSegments, timelineSlices, toPoints, uptimeSegments, visibleTimelineBounds } from '../lib/timeline'
 import { fmtByUnit, isByteUnit } from '../lib/format'
 import { escapeHtml } from '../lib/escapeHtml'
 import { lineDataWithGaps } from '../lib/chartSeries'
@@ -245,9 +245,9 @@ interface TimelineRow {
 }
 
 function timelineBounds(ms: ChartMetric[], now: number): [number, number] {
-  if (props.rangeSec) return [now - props.rangeSec * 1000, now]
-  const starts = ms.flatMap((metric) => metric.samples.map((sample) => new Date(sample.ts).getTime()))
-  return [starts.length ? Math.min(...starts) : now - 3600_000, now]
+  const requestedStart = props.rangeSec ? now - props.rangeSec * 1000 : now - 3600_000
+  const sampleTimes = ms.flatMap((metric) => metric.samples.map((sample) => new Date(sample.ts).getTime()))
+  return visibleTimelineBounds(sampleTimes, requestedStart, now)
 }
 
 function renderTimeline(

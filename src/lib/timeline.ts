@@ -10,6 +10,22 @@ export type Pt = { t: number; v: number }
 export type Seg = { start: number; end: number; ok: boolean }
 export type TimelineSlice = Seg & { sourceStart: number; sourceEnd: number }
 
+// A selected window may start before a target existed. Status bands should not
+// reserve most of their width for that unobserved time: begin at the first real
+// sample, while still clipping older histories to the requested window.
+export function visibleTimelineBounds(
+  sampleTimes: number[],
+  requestedStart: number,
+  rangeEnd: number,
+): [number, number] {
+  let firstObserved = Number.POSITIVE_INFINITY
+  for (const value of sampleTimes) {
+    if (Number.isFinite(value) && value < rangeEnd && value < firstObserved) firstObserved = value
+  }
+  if (!Number.isFinite(firstObserved)) return [requestedStart, rangeEnd]
+  return [Math.max(requestedStart, firstObserved), rangeEnd]
+}
+
 export function toPoints(samples: { ts: string; value: number }[]): Pt[] {
   return samples.map((s) => ({ t: new Date(s.ts).getTime(), v: s.value })).sort((a, b) => a.t - b.t)
 }

@@ -161,6 +161,7 @@ describe('group-centric target-status page', () => {
         ...statusRow,
         target_id: 'target-2',
         name: 'Gateway',
+        kind: 'gateway',
         target: '192.168.1.1',
         incident_ids: [],
       },
@@ -186,6 +187,7 @@ describe('group-centric target-status page', () => {
 
     let publicDnsRow = wrapper.findAll('.target-board-row').find((row) => row.text().includes('Public DNS'))!
     let gatewayRow = wrapper.findAll('.target-board-row').find((row) => row.text().includes('Gateway'))!
+    expect(gatewayRow.get('.kind-chip').text()).toBe('GATEWAY')
     await publicDnsRow.trigger('click')
     await flushPromises()
     expect(wrapper.findAll('.target-detail-workspace')).toHaveLength(1)

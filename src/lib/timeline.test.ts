@@ -1,5 +1,19 @@
 import { describe, expect, it } from 'vitest'
-import { timelineSlices, type Seg } from './timeline'
+import { timelineSlices, type Seg, visibleTimelineBounds } from './timeline'
+
+describe('visibleTimelineBounds', () => {
+  it('starts at the first observed sample when monitoring began inside the selected window', () => {
+    expect(visibleTimelineBounds([8_000, 9_000], 0, 10_000)).toEqual([8_000, 10_000])
+  })
+
+  it('clips longer histories to the selected window', () => {
+    expect(visibleTimelineBounds([-5_000, 2_000], 0, 10_000)).toEqual([0, 10_000])
+  })
+
+  it('keeps the selected window when there are no usable samples', () => {
+    expect(visibleTimelineBounds([Number.NaN, 10_000], 0, 10_000)).toEqual([0, 10_000])
+  })
+})
 
 describe('timelineSlices', () => {
   it('turns one continuous state into evenly spaced time cells', () => {

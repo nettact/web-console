@@ -455,6 +455,7 @@ watch(
 
 .agent-detail-pane {
   display: none;
+  container-type: inline-size;
   background: var(--color-paper-2);
 }
 
@@ -927,7 +928,7 @@ watch(
 
 .agent-target-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr);
   gap: var(--space-xs);
   padding-block: var(--space-xs);
   border-bottom: var(--rule-hair) solid var(--color-rule);
@@ -963,11 +964,19 @@ watch(
 }
 
 .kind-chip {
-  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 var(--space-2xl);
+  width: var(--space-2xl);
+  min-width: 0;
   padding: var(--space-3xs) var(--space-2xs);
+  overflow: hidden;
   color: var(--color-accent);
   font-family: var(--font-outlier);
   font-size: var(--text-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
   border: var(--rule-hair) solid var(--color-rule-2);
   border-radius: var(--radius-xs);
   background: var(--color-paper-3);
@@ -976,7 +985,7 @@ watch(
 .target-row-states {
   display: flex;
   align-items: center;
-  justify-content: flex-end;
+  justify-content: flex-start;
   gap: var(--space-3xs);
   flex-wrap: wrap;
 }
@@ -1081,8 +1090,21 @@ watch(
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
+}
+
+@container (min-width: 32rem) {
   .agent-target-row {
-    grid-template-columns: minmax(210px, 1.2fr) minmax(240px, 1fr) 72px minmax(125px, auto) auto;
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .target-row-states {
+    justify-content: flex-end;
+  }
+}
+
+@container (min-width: 55rem) {
+  .agent-target-row {
+    grid-template-columns: minmax(210px, 1.2fr) minmax(240px, 1fr) var(--space-2xl) minmax(125px, auto) auto;
     align-items: center;
   }
 }
