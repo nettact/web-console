@@ -18,7 +18,13 @@ import {
 } from '../api'
 import { auth } from '../auth'
 import { setConsoleBase } from '../consoleBaseUrl'
-import { ensureUpdateNotice, setUpdateNoticeDisabled, updateNotice } from '../updateInfo'
+import { publishServerInfo, serverInfo as liveServerInfo } from '../serverInfo'
+import {
+  applyUpdateNoticeSettings,
+  setUpdateNoticeDisabled,
+  updateNotice,
+  updateNoticeReadToken,
+} from '../updateInfo'
 import { pushToast } from '../toasts'
 import WebhookChannelForm from '../components/WebhookChannelForm.vue'
 import ChannelAddForm from '../components/ChannelAddForm.vue'
@@ -38,6 +44,10 @@ const tab = ref<'general' | 'notifications' | 'data'>('general')
 
 const quota = ref<Quota | null>(null)
 const stats = ref<StorageStats | null>(null)
+// Held locally for the fields the shared store does not keep (`listen`,
+// `native_notify`), which are fixed for the life of the server. The `update`
+// block is NOT read from here — it changes underneath an open page, so it comes
+// from the shared store instead (see updateInfo below).
 const serverInfo = ref<ServerInfo | null>(null)
 const error = ref('')
 
@@ -576,6 +586,9 @@ function delayLabel(sec: number): string {
 
 async function load() {
   try {
+    // Captured before the reads leave, so a switch toggled while they are in
+    // flight is not overwritten by the older answer (see updateNoticeReadToken).
+    const token = updateNoticeReadToken()
     const [q, s, ch, si, settings] = await Promise.all([
       api.quota(), api.stats(), api.channels(), api.serverInfo(), api.settings(),
     ])
@@ -583,6 +596,9 @@ async function load() {
     stats.value = s
     channels.value = ch
     serverInfo.value = si
+    // Share the same payload rather than keeping `update` to ourselves: the panel
+    // reads it from there, and so does the app-level banner.
+    publishServerInfo(si)
     // Prefill with the current origin when unset, so the field always shows a
     // concrete, saveable value instead of only the placeholder (which looks like
     // a value but saves empty). Entering the console also auto-sets it (see auth).
@@ -592,6 +608,10 @@ async function load() {
     populateAgentSettings(settings)
     populateStorm(settings)
     populateDeviceRetention(settings)
+    // The notice switch is shared with the desktop tray, which writes it without
+    // telling this tab. Publishing it from the settings map already in hand is
+    // what makes opening (or reloading) this page show the tray's current answer.
+    applyUpdateNoticeSettings(settings, token)
     populateListen()
   } catch (e) {
     error.value = String((e as Error).message || e)
@@ -609,11 +629,19 @@ async function saveConsoleUrl() {
     error.value = String((e as Error).message || e)
   }
 }
-// Software update. The panel exists only once the server has reported a
-// successful check; the whole `update` block is absent while update checking is
-// switched off. The notice switch writes a shared setting the desktop tray
-// balloon reads too, so turning it off here silences that as well.
-const updateInfo = computed(() => serverInfo.value?.update ?? null)
+// Software update. The block is published as soon as the server has an update
+// service at all — a check that has not finished, or cannot finish, still leaves
+// the panel here — and is absent only where update checking is switched off
+// outright, which is also the only case with nothing to configure. The notice
+// switch writes a setting the desktop tray shares, so turning it off here
+// unchecks the tray item and vice versa; neither side hides this panel, because
+// this switch is the way back on.
+//
+// Read from the shared store, not the local snapshot above: the daily check
+// publishes its result while this page sits open, and App.vue re-reads it on
+// every return to the tab. A copy taken at mount would sit on "暂时无法检查"
+// until the user navigated away and back.
+const updateInfo = computed(() => liveServerInfo.update)
 // The block is published for the agent version alone when the product check
 // itself never completed — a Store install whose Store query keeps failing, say.
 // Reporting "up to date" there would turn a failed check into an assurance, so
@@ -678,8 +706,6 @@ function channelConfigLabel(c: Channel): string {
 onMounted(() => {
   load()
   loadPolicies()
-  // Shared with the App-level banner; a no-op once loaded.
-  void ensureUpdateNotice()
 })
 </script>
 
@@ -733,30 +759,11 @@ onMounted(() => {
       role="tabpanel"
       aria-labelledby="settings-tab-general"
     >
-    <section class="panel">
-      <div class="panel-head"><h3>{{ t('setup.settingsTitle') }}</h3></div>
-      <div class="panel-body">
-        <p class="hint">{{ t('setup.settingsHint') }}</p>
-        <div class="row field-row">
-          <button class="btn btn-primary" @click="router.push('/onboarding')">{{ t('setup.settingsReopen') }}</button>
-        </div>
-      </div>
-    </section>
-
-    <section class="panel">
-      <div class="panel-head"><h3>{{ t('settings.consoleUrl') }}</h3></div>
-      <div class="panel-body">
-        <p class="hint">{{ t('settings.consoleUrlHint') }}</p>
-        <div class="row field-row">
-          <input v-model="consoleUrl" placeholder="http://localhost:12450" class="wide" />
-          <button class="btn btn-primary" @click="saveConsoleUrl">{{ t('common.save') }}</button>
-          <span v-if="consoleSaved" class="hint saved">✓ {{ t('common.saved') }}</span>
-        </div>
-      </div>
-    </section>
-
-    <!-- Only rendered once a check has succeeded: the server omits `update`
-         entirely while checking is switched off or has never returned. -->
+    <!-- First: this is the panel a new-version notification sends people to, and
+         it holds the only switch that turns those notifications back on. The
+         server omits `update` solely where update checking is switched off — a
+         pending or failed check still renders the panel, saying so in place of a
+         version. -->
     <section class="panel" v-if="updateInfo">
       <div class="panel-head"><h3>{{ t('update.settingsTitle') }}</h3></div>
       <div class="panel-body">
@@ -783,6 +790,18 @@ onMounted(() => {
           <span>{{ t('update.disableNotice') }}</span>
         </label>
         <p class="hint tiny">{{ t('update.disableNoticeHint') }}</p>
+      </div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-head"><h3>{{ t('settings.consoleUrl') }}</h3></div>
+      <div class="panel-body">
+        <p class="hint">{{ t('settings.consoleUrlHint') }}</p>
+        <div class="row field-row">
+          <input v-model="consoleUrl" placeholder="http://localhost:12450" class="wide" />
+          <button class="btn btn-primary" @click="saveConsoleUrl">{{ t('common.save') }}</button>
+          <span v-if="consoleSaved" class="hint saved">✓ {{ t('common.saved') }}</span>
+        </div>
       </div>
     </section>
 
@@ -1019,6 +1038,19 @@ onMounted(() => {
           <span v-if="agentDisplaySaved" class="hint saved">✓ {{ t('common.saved') }}</span>
         </div>
         <p v-if="agentDisplayError" class="err inline">{{ agentDisplayError }}</p>
+      </div>
+    </section>
+
+    <!-- Last: re-running the first-run guide is a one-off errand, not a setting,
+         and it navigates away from this page — so it sits below everything a
+         return visit is actually here to change. -->
+    <section class="panel">
+      <div class="panel-head"><h3>{{ t('setup.settingsTitle') }}</h3></div>
+      <div class="panel-body">
+        <p class="hint">{{ t('setup.settingsHint') }}</p>
+        <div class="row field-row">
+          <button class="btn btn-primary" @click="router.push('/onboarding')">{{ t('setup.settingsReopen') }}</button>
+        </div>
       </div>
     </section>
 

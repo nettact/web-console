@@ -5,7 +5,7 @@ import { useI18n } from 'vue-i18n'
 import { auth, logout } from './auth'
 import { showResumeBanner, saveOnboarding } from './onboarding'
 import { serverInfo } from './serverInfo'
-import { dismissUpdateBanner, ensureUpdateNotice, showUpdateBanner } from './updateInfo'
+import { dismissUpdateBanner, showUpdateBanner, syncUpdateNotice } from './updateInfo'
 import { initNotifications, resetNotifications, stopNotifications } from './notifications'
 import { initTargetStatus, resetTargetStatus, stopTargetStatus } from './targetStatus'
 import { initAgentStatus, resetAgentStatus, stopAgentStatus } from './agentStatus'
@@ -37,11 +37,12 @@ function syncLiveStreams(): void {
     resetAgentStatus()
     return
   }
-  // One-shot and authenticated: loading it here rather than on mount keeps the
-  // update settings off the login screen. Repeat calls are no-ops and it never
-  // rejects, so it needs neither a guard nor a catch.
-  void ensureUpdateNotice()
   if (document.visibilityState === 'visible') {
+    // Authenticated, so it is read here rather than on mount to keep the update
+    // settings off the login screen — and re-read on every return to the tab,
+    // because the daily check and the desktop tray both change what it reports
+    // while this tab sits open. It never rejects, so it needs no catch.
+    void syncUpdateNotice()
     initNotifications()
     initTargetStatus()
     initAgentStatus()

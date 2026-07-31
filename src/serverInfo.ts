@@ -1,5 +1,5 @@
 import { reactive } from 'vue'
-import { api, type UpdateInfo } from './api'
+import { api, type ServerInfo, type UpdateInfo } from './api'
 
 // Shared, lazily-loaded server-info singleton. Several views need only one fact —
 // whether this server runs the desktop all-in-one (its embedded Agent has a fixed
@@ -19,6 +19,18 @@ export const serverInfo = reactive<{
   os: '',
   update: null,
 })
+
+// publishServerInfo shares a payload the caller already fetched. A view that
+// reads /server-info for fields this store does not keep (Settings.vue needs
+// `listen` and `native_notify`) publishes it here rather than leaving a second,
+// separately-aging copy of `update` behind it — that block changes while a page
+// sits open, and two snapshots of it drift apart.
+export function publishServerInfo(si: ServerInfo): void {
+  serverInfo.desktop = si.listen?.desktop === true
+  serverInfo.os = si.os
+  serverInfo.update = si.update ?? null
+  serverInfo.loaded = true
+}
 
 let inflight: Promise<void> | null = null
 
@@ -41,12 +53,7 @@ export function ensureServerInfo(): Promise<void> {
   // hook.
   inflight = Promise.resolve()
     .then(() => api.serverInfo())
-    .then((si) => {
-      serverInfo.desktop = si.listen?.desktop === true
-      serverInfo.os = si.os
-      serverInfo.update = si.update ?? null
-      serverInfo.loaded = true
-    })
+    .then(publishServerInfo)
     .catch(() => {
       /* leave defaults; a non-desktop assumption keeps remediation guidance visible */
     })

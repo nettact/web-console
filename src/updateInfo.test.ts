@@ -1,7 +1,25 @@
-import { describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+
+// syncUpdateNotice() reads server-info and /settings; stub both so the module's
+// own logic is what is under test.
+const apiMock = vi.hoisted(() => ({
+  serverInfo: vi.fn(),
+  settings: vi.fn(),
+  updateSettings: vi.fn(),
+}))
+vi.mock('./api', () => ({ api: apiMock }))
 
 import type { UpdateInfo } from './api'
-import { UNKNOWN_VERSION, dismissalKey, shouldShowBanner } from './updateInfo'
+import { serverInfo } from './serverInfo'
+import {
+  UNKNOWN_VERSION,
+  dismissUpdateBanner,
+  dismissalKey,
+  setUpdateNoticeDisabled,
+  shouldShowBanner,
+  syncUpdateNotice,
+  updateNotice,
+} from './updateInfo'
 
 const update = (extra: Partial<UpdateInfo> = {}): UpdateInfo => ({
   install_type: 'server',
@@ -70,5 +88,132 @@ describe('shouldShowBanner', () => {
 
   it('does not let a named dismissal hide a later unnamed update', () => {
     expect(shouldShowBanner(update({ latest_version: '' }), true, false, 'v1.3.0')).toBe(true)
+  })
+})
+
+// The notice switch is one server setting the desktop tray writes too, so the
+// console cannot read it once and keep that answer: the tray flips it while a tab
+// sits open, and a stale checkbox would offer to turn on what is already on.
+describe('syncUpdateNotice', () => {
+  beforeEach(() => {
+    apiMock.serverInfo.mockReset()
+    apiMock.settings.mockReset()
+    apiMock.updateSettings.mockReset()
+    apiMock.serverInfo.mockResolvedValue({ os: 'windows', native_notify: true, update: update() })
+    apiMock.updateSettings.mockResolvedValue(undefined)
+    serverInfo.loaded = false
+    serverInfo.update = update()
+    updateNotice.loaded = false
+    updateNotice.noticeDisabled = false
+    updateNotice.dismissedVersion = ''
+  })
+
+  it('publishes the stored preferences', async () => {
+    apiMock.settings.mockResolvedValue({
+      update_notice_disabled: '1',
+      update_dismissed_version: 'v1.3.0',
+    })
+    await syncUpdateNotice()
+    expect(updateNotice).toMatchObject({
+      loaded: true,
+      noticeDisabled: true,
+      dismissedVersion: 'v1.3.0',
+    })
+  })
+
+  it('picks up a switch the tray flipped after the first read', async () => {
+    apiMock.settings.mockResolvedValue({ update_notice_disabled: '1' })
+    await syncUpdateNotice()
+    expect(updateNotice.noticeDisabled).toBe(true)
+
+    // The tray re-enabled notices; the next pass must see it rather than latch.
+    apiMock.settings.mockResolvedValue({ update_notice_disabled: '0' })
+    await syncUpdateNotice()
+    expect(updateNotice.noticeDisabled).toBe(false)
+  })
+
+  it('re-reads the check result, so a tab opened before it lands still learns of an update', async () => {
+    apiMock.settings.mockResolvedValue({})
+    apiMock.serverInfo.mockResolvedValue({
+      os: 'windows',
+      native_notify: true,
+      // Published from startup, but nothing checked yet.
+      update: update({ latest_version: '', update_available: false, product_checked: false }),
+    })
+    await syncUpdateNotice()
+    expect(serverInfo.update?.update_available).toBe(false)
+
+    apiMock.serverInfo.mockResolvedValue({ os: 'windows', native_notify: true, update: update() })
+    await syncUpdateNotice()
+    expect(serverInfo.update?.latest_version).toBe('v1.3.0')
+  })
+
+  it('keeps the last known answer when a refresh fails', async () => {
+    apiMock.settings.mockResolvedValue({
+      update_notice_disabled: '1',
+      update_dismissed_version: 'v1.3.0',
+    })
+    await syncUpdateNotice()
+
+    // A dropped request must not read as "notices on, nothing dismissed" — that
+    // would put a banner back up that the user has already answered.
+    apiMock.settings.mockRejectedValue(new Error('offline'))
+    await syncUpdateNotice()
+    expect(updateNotice).toMatchObject({
+      loaded: true,
+      noticeDisabled: true,
+      dismissedVersion: 'v1.3.0',
+    })
+  })
+
+  it('shares one round trip between concurrent callers', async () => {
+    apiMock.settings.mockResolvedValue({})
+    await Promise.all([syncUpdateNotice(), syncUpdateNotice(), syncUpdateNotice()])
+    expect(apiMock.settings).toHaveBeenCalledTimes(1)
+  })
+
+  // Returning to the tab starts a refresh, and the banner is the first thing the
+  // user sees — so dismissing it (or flipping the switch) lands squarely inside
+  // that request's flight. The reply was read before the write and must not be
+  // applied over it, or the banner the user just closed comes straight back.
+  it('does not let a read that started before a dismissal undo it', async () => {
+    let release: (s: Record<string, string>) => void = () => {}
+    apiMock.settings.mockReturnValue(
+      new Promise<Record<string, string>>((resolve) => {
+        release = resolve
+      }),
+    )
+    const syncing = syncUpdateNotice()
+
+    await dismissUpdateBanner()
+    expect(updateNotice.dismissedVersion).toBe('v1.3.0')
+
+    release({}) // the pre-dismissal state of /settings
+    await syncing
+    expect(updateNotice.dismissedVersion).toBe('v1.3.0')
+  })
+
+  it('does not let a read that started before a switch write undo it', async () => {
+    let release: (s: Record<string, string>) => void = () => {}
+    apiMock.settings.mockReturnValue(
+      new Promise<Record<string, string>>((resolve) => {
+        release = resolve
+      }),
+    )
+    const syncing = syncUpdateNotice()
+
+    await setUpdateNoticeDisabled(true)
+    release({ update_notice_disabled: '0' })
+    await syncing
+    expect(updateNotice.noticeDisabled).toBe(true)
+  })
+
+  // The guard must not latch: once the write is done, the NEXT read is the truth
+  // again — including one that reports what the desktop tray wrote.
+  it('applies reads that start after the write', async () => {
+    apiMock.settings.mockResolvedValue({ update_notice_disabled: '0' })
+    await setUpdateNoticeDisabled(true)
+    await syncUpdateNotice()
+    expect(updateNotice.noticeDisabled).toBe(false)
   })
 })
