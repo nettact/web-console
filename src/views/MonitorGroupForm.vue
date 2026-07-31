@@ -392,7 +392,7 @@ onMounted(load)
           </div>
 
           <div v-else class="policy-edit">
-            <PolicyFields v-model="policyDraft" :channels="channels" />
+            <PolicyFields v-model="policyDraft" scope="group" :channels="channels" />
             <p class="hint tiny">{{ tr('mgroup.policyOverrideSaveHint') }}</p>
           </div>
         </div>

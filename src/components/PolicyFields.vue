@@ -7,16 +7,20 @@
 //
 // Delays are entered in minutes because a notification delay is a human patience
 // setting, while the wire field is seconds (0..86400).
+import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
-import type { Channel, NotificationPolicyInput } from '../api'
+import type { Channel, NotificationPolicyInput, PolicyScope } from '../api'
 
 const props = withDefaults(
   defineProps<{
     modelValue: NotificationPolicyInput
     channels: Channel[]
     disabled?: boolean
+    // scope only changes what this editor SAYS and shows, never what it writes —
+    // the two things below both depend on which incidents the policy governs.
+    scope?: PolicyScope
   }>(),
-  { disabled: false },
+  { disabled: false, scope: 'site' },
 )
 const emit = defineEmits<{ 'update:modelValue': [NotificationPolicyInput] }>()
 
@@ -24,6 +28,22 @@ const { t: tr } = useI18n()
 
 const SEVERITIES = ['info', 'warn', 'error', 'critical']
 const MAX_DELAY_SEC = 86400
+
+// Disabling a policy does not mean the same thing at every scope. The site
+// default is the last link in the chain, so switching it off leaves nothing
+// governing the fault and nothing is sent. A group or agent policy is an
+// override: switching it off hands its faults back to the site default, which
+// may well have channels — so telling the user "no notifications are sent" there
+// is not a wording nit, it is advice that can cause unintended paging.
+const enabledHintKey = computed(() =>
+  props.scope === 'site' ? 'notificationPolicy.enabledHint' : 'notificationPolicy.enabledHintFallback',
+)
+
+// Agent-offline faults are always critical. Every allowed floor covers critical
+// and the delay tier consulted is always the critical one, so at this scope the
+// minimum-severity and warning-delay controls are inert — offering them would
+// let someone change and save a value that cannot affect anything.
+const severityTiersApply = computed(() => props.scope !== 'agent')
 
 function patch(p: Partial<NotificationPolicyInput>) {
   emit('update:modelValue', { ...props.modelValue, ...p })
@@ -67,10 +87,10 @@ function toggleChannel(id: string) {
       />
       <span>{{ tr('notificationPolicy.enabled') }}</span>
     </label>
-    <p class="hint tiny">{{ tr('notificationPolicy.enabledHint') }}</p>
+    <p class="hint tiny">{{ tr(enabledHintKey) }}</p>
 
     <div class="pf-grid">
-      <label class="pf-field">
+      <label v-if="severityTiersApply" class="pf-field">
         <span class="pf-label">{{ tr('notificationPolicy.minSeverity') }}</span>
         <select
           :value="modelValue.min_severity"
@@ -82,7 +102,7 @@ function toggleChannel(id: string) {
         <small class="hint tiny">{{ tr('notificationPolicy.minSeverityHint') }}</small>
       </label>
 
-      <label class="pf-field">
+      <label v-if="severityTiersApply" class="pf-field">
         <span class="pf-label">{{ tr('notificationPolicy.warnDelay') }}</span>
         <span class="pf-input">
           <input
@@ -100,7 +120,9 @@ function toggleChannel(id: string) {
       </label>
 
       <label class="pf-field">
-        <span class="pf-label">{{ tr('notificationPolicy.criticalDelay') }}</span>
+        <span class="pf-label">
+          {{ severityTiersApply ? tr('notificationPolicy.criticalDelay') : tr('notificationPolicy.singleDelay') }}
+        </span>
         <span class="pf-input">
           <input
             type="number"
@@ -118,7 +140,9 @@ function toggleChannel(id: string) {
         </small>
       </label>
     </div>
-    <p class="hint tiny">{{ tr('notificationPolicy.delayHint') }}</p>
+    <p class="hint tiny">
+      {{ severityTiersApply ? tr('notificationPolicy.delayHint') : tr('notificationPolicy.singleDelayHint') }}
+    </p>
 
     <label class="pf-toggle">
       <input

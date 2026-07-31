@@ -1071,8 +1071,15 @@ export interface TraceAttemptView {
 // takes no part in detecting one: detection always runs, so a policy with no
 // channels is a legal, meaningful state meaning "record everything, send
 // nothing". Exactly one policy applies to any incident, resolved by a fixed
-// precedence with no stacking: group > site default.
-export type PolicyScope = 'site' | 'group'
+// precedence with no stacking: group > site default for a probe fault, and
+// agent > site default for an Agent-offline one.
+//
+// 'agent' is a per-site singleton, not one policy per Agent: an offline Agent
+// belongs to no monitor group, so it is the one scope that lets Agent-liveness
+// notices be routed separately from everything else. Like the site default it is
+// created with the site and cannot be deleted — switching it OFF is how you fall
+// back to the site default.
+export type PolicyScope = 'site' | 'group' | 'agent'
 export interface NotificationPolicy {
   id: string
   site_id: string
@@ -1644,6 +1651,13 @@ export const api = {
   // Preview which single policy governs a target, and through which scope.
   effectiveNotificationPolicy: (targetID: string) =>
     req<EffectivePolicy>('GET', `/api/v1/targets/${encodeURIComponent(targetID)}/effective-notification-policy`),
+  // The same question for Agent-offline faults, which belong to no target and so
+  // cannot be resolved through the call above.
+  agentConnectivityNotificationPolicy: (siteID: string) =>
+    req<EffectivePolicy>(
+      'GET',
+      `/api/v1/sites/${encodeURIComponent(siteID)}/agent-connectivity-notification-policy`,
+    ),
   // Built-in detector sensitivity for one target.
   detectionSettings: (targetID: string) =>
     req<DetectionSettings>('GET', `/api/v1/targets/${encodeURIComponent(targetID)}/detection-settings`),

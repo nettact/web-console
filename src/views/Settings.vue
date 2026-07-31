@@ -428,22 +428,28 @@ async function saveDeviceRetention() {
 
 // ---- notification policies ----
 // A policy decides whether/when/where a RECORDED fault is announced; it never
-// decides whether the fault is detected. Exactly one policy governs any target
-// (group > site default, no stacking), so the preview below can show the single
+// decides whether the fault is detected. Exactly one policy governs any incident
+// (group > site default for a probe fault, agent > site default for an
+// Agent-offline one, no stacking), so the preview below can show the single
 // winner instead of a merged result.
 const policies = ref<NotificationPolicy[]>([])
 const policyGroups = ref<MonitorGroup[]>([])
 const policyTargets = ref<ProbeTarget[]>([])
 const policyError = ref('')
 const policyBusy = ref(false)
-const policySaved = ref('') // '' | 'default' | <policy id>
+const policySaved = ref('') // '' | 'default' | 'agent' | <policy id>
 // Drafts are separate objects so an in-flight edit survives a channel reload.
 const defaultDraft = ref<NotificationPolicyInput | null>(null)
+const agentDraft = ref<NotificationPolicyInput | null>(null)
 const editingPolicyId = ref('')
 const policyDraft = ref<NotificationPolicyInput | null>(null)
 
 const defaultPolicy = computed(() => policies.value.find((p) => p.is_default) ?? null)
-const overrides = computed(() => policies.value.filter((p) => !p.is_default))
+// The Agent-connectivity policy is a built-in singleton with its own panel, so
+// it is kept out of the override table: it has no monitor group to be retargeted
+// from and no delete action to offer.
+const agentPolicy = computed(() => policies.value.find((p) => p.scope_kind === 'agent') ?? null)
+const overrides = computed(() => policies.value.filter((p) => !p.is_default && p.scope_kind !== 'agent'))
 
 function toInput(p: NotificationPolicy): NotificationPolicyInput {
   return {
@@ -472,8 +478,24 @@ async function loadPolicies() {
     policyTargets.value = tgt
     const def = pol.find((p) => p.is_default)
     defaultDraft.value = def ? toInput(def) : null
+    const ag = pol.find((p) => p.scope_kind === 'agent')
+    agentDraft.value = ag ? toInput(ag) : null
+    await loadAgentEffective()
   } catch (e) {
     policyError.value = String((e as Error).message || e)
+  }
+}
+
+// loadAgentEffective asks the server which policy actually governs Agent-offline
+// faults right now. The rule is simple enough to restate in the UI, but restating
+// it is exactly how a console starts disagreeing with the delivery planner — so
+// the same resolver answers both.
+async function loadAgentEffective() {
+  try {
+    agentEffective.value = await api.agentConnectivityNotificationPolicy(SITE)
+  } catch {
+    // Best-effort: the panel below still shows and saves the policy itself.
+    agentEffective.value = null
   }
 }
 
@@ -485,6 +507,32 @@ async function saveDefaultPolicy() {
   try {
     await api.updateNotificationPolicy(def.id, defaultDraft.value)
     policySaved.value = 'default'
+    setTimeout(() => (policySaved.value = ''), 2000)
+    await loadPolicies()
+  } catch (e) {
+    policyError.value = String((e as Error).message || e)
+  } finally {
+    policyBusy.value = false
+  }
+}
+
+// ---- Agent-connectivity policy ----
+// Its own panel rather than a row in the override table: there is exactly one
+// per site, it cannot be deleted, and its scope is the Agent-liveness detector
+// rather than anything the operator picked. Turning it OFF means "route Agent
+// outages like everything else"; turning it ON with no channel means "keep
+// recording them, stop telling me" — neither of which needs the detector itself
+// switched off.
+const agentEffective = ref<EffectivePolicy | null>(null)
+
+async function saveAgentPolicy() {
+  const ag = agentPolicy.value
+  if (!ag || !agentDraft.value) return
+  policyBusy.value = true
+  policyError.value = ''
+  try {
+    await api.updateNotificationPolicy(ag.id, agentDraft.value)
+    policySaved.value = 'agent'
     setTimeout(() => (policySaved.value = ''), 2000)
     await loadPolicies()
   } catch (e) {
@@ -569,6 +617,7 @@ function scopeLabel(p: NotificationPolicy): string {
     const g = policyGroups.value.find((x) => x.id === p.scope_id)
     return t('notificationPolicy.scopeGroup', { name: g?.name || p.scope_id })
   }
+  if (p.scope_kind === 'agent') return t('notificationPolicy.scopeAgent')
   return t('notificationPolicy.scopeSite')
 }
 function targetOptionLabel(tg: ProbeTarget): string {
@@ -1182,6 +1231,41 @@ onMounted(() => {
       </div>
     </section>
 
+    <!-- Agent-offline faults belong to no monitor group, so before this panel the
+         only way to route them differently was to change the site default — which
+         governs every probe fault too. -->
+    <section class="panel">
+      <div class="panel-head">
+        <h3>{{ t('notificationPolicy.agentTitle') }}</h3>
+        <span v-if="agentPolicy && !agentPolicy.enabled" class="badge neutral def-badge">
+          {{ t('notificationPolicy.agentFollowsDefault') }}
+        </span>
+      </div>
+      <div class="panel-body">
+        <p class="hint">{{ t('notificationPolicy.agentHint') }}</p>
+        <p class="hint tiny">{{ t('notificationPolicy.agentEnabledHint') }}</p>
+        <PolicyFields
+          v-if="agentDraft"
+          v-model="agentDraft"
+          scope="agent"
+          :channels="channels"
+          :disabled="policyBusy"
+        />
+        <p v-else class="hint">{{ t('common.noData') }}</p>
+        <p v-if="agentEffective" class="hint tiny">
+          {{ t('notificationPolicy.agentEffective', {
+            source: t(`notificationPolicy.source_${agentEffective.source}`),
+          }) }}
+        </p>
+        <div class="row field-row">
+          <button class="btn btn-primary" :disabled="!agentDraft || policyBusy" @click="saveAgentPolicy">
+            {{ t('common.save') }}
+          </button>
+          <span v-if="policySaved === 'agent'" class="hint saved">✓ {{ t('common.saved') }}</span>
+        </div>
+      </div>
+    </section>
+
     <section class="panel">
       <div class="panel-head">
         <h3>{{ t('notificationPolicy.overridesTitle') }}</h3>
@@ -1234,7 +1318,13 @@ onMounted(() => {
               </tr>
               <tr v-if="editingPolicyId === p.id" class="wh-edit-row">
                 <td colspan="7">
-                  <PolicyFields v-if="policyDraft" v-model="policyDraft" :channels="channels" :disabled="policyBusy" />
+                  <PolicyFields
+                    v-if="policyDraft"
+                    v-model="policyDraft"
+                    :scope="p.scope_kind"
+                    :channels="channels"
+                    :disabled="policyBusy"
+                  />
                   <p class="hint tiny">{{ t('notificationPolicy.scopeFixedHint') }}</p>
                   <div class="row field-row">
                     <button class="btn btn-primary" :disabled="policyBusy" @click="saveEditedPolicy(p)">
