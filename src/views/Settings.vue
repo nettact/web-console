@@ -176,6 +176,7 @@ const diag = reactive({
   globalConc: 16, // diag_global_concurrency
   resolveHops: false, // diag_resolve_hops
   retentionDays: 30, // evidence_retention_days
+  fluctuationRetentionDays: 30, // fluctuation_retention_days
 })
 // [min, max] in the presented unit, mirroring server-core settings.IntKeys.
 const BOUNDS: Record<string, [number, number]> = {
@@ -187,6 +188,7 @@ const BOUNDS: Record<string, [number, number]> = {
   agentConc: [1, 16],
   globalConc: [1, 64],
   retentionDays: [1, 365],
+  fluctuationRetentionDays: [1, 365],
 }
 const diagSaved = ref(false)
 const diagError = ref('')
@@ -206,6 +208,7 @@ function populateDiag(s: Record<string, string>) {
   diag.globalConc = num('diag_global_concurrency', 16)
   diag.resolveHops = num('diag_resolve_hops', 0) !== 0
   diag.retentionDays = num('evidence_retention_days', 30)
+  diag.fluctuationRetentionDays = num('fluctuation_retention_days', 30)
 }
 function diagInRange(): boolean {
   return Object.entries(BOUNDS).every(([k, [min, max]]) => {
@@ -231,6 +234,7 @@ async function saveDiag() {
       diag_global_concurrency: String(diag.globalConc),
       diag_resolve_hops: diag.resolveHops ? '1' : '0',
       evidence_retention_days: String(diag.retentionDays),
+      fluctuation_retention_days: String(diag.fluctuationRetentionDays),
     })
     diagSaved.value = true
     setTimeout(() => (diagSaved.value = false), 2000)
@@ -882,6 +886,14 @@ onMounted(() => {
               <span class="unit">{{ t('settings.unit.days') }}</span>
             </span>
             <span class="knob-help hint">{{ t('settings.evidence.retentionHelp') }}</span>
+          </label>
+          <label class="knob">
+            <span class="knob-label">{{ t('settings.evidence.fluctuationRetention') }}</span>
+            <span class="knob-input">
+              <input type="number" v-model.number="diag.fluctuationRetentionDays" min="1" max="365" step="1" />
+              <span class="unit">{{ t('settings.unit.days') }}</span>
+            </span>
+            <span class="knob-help hint">{{ t('settings.evidence.fluctuationRetentionHelp') }}</span>
           </label>
         </div>
       </div>

@@ -468,6 +468,14 @@ export default {
       storm: {
         joined: 'Merged into an alert storm',
       },
+      // The message is a count; the wording lives here so it reads in both locales.
+      fluctuation: {
+        linked: 'Fluctuations before confirmation',
+      },
+    },
+    precursors: {
+      title: 'Precursor fluctuations',
+      sub: 'Brief failures on this target in the hour before the fault confirmed, none of which reached the threshold. Something that had been faltering first calls for a different investigation than something that failed outright.',
     },
     resolveReason: {
       recovered: 'Recovered',
@@ -1416,6 +1424,8 @@ export default {
       snapshotMaxHelp: 'Serialized size cap for one incident snapshot (64–1024 KiB); over the cap, non-critical detail is truncated by priority.',
       retention: 'Evidence retention',
       retentionHelp: 'Days after an incident resolves before scene detail and per-hop diagnostics are cleared (1–365); the incident and summaries are always kept.',
+      fluctuationRetention: 'Fluctuation retention',
+      fluctuationRetentionHelp: 'How long to keep records of streaks that recovered below the fault threshold (1–365 days). Fluctuations kept as an incident precursor are exempt and go with the incident.',
     },
     diag: {
       title: 'Path diagnostics (traceroute)',
@@ -1870,7 +1880,28 @@ export default {
     thCurrent: 'Current status',
     thAvailability: 'Availability',
     thOutages: 'Outages',
+    thFluctuations: 'Fluctuations',
     thLatest: 'Latest value',
+    // Fluctuations: failing streaks that recovered below the fault threshold — what
+    // explains availability under 100% with no fault to show for it. Deliberately
+    // not called "jitter", which already names the ICMP latency-variance metric.
+    fluctuations: 'Fluctuations',
+    fluctuationsHint: 'Brief failures that recovered before reaching the fault threshold: recorded only, never alerted.',
+    noFluctuations: 'No fluctuations in this range.',
+    fluctuationsUnavailable: 'Could not load fluctuations — this does not mean there were none.',
+    fluctuationsPartial: '{total} total, showing the {n} most recent',
+    thFailRounds: 'Failed rounds',
+    thScope: 'Scope',
+    failRoundsOfNeed: '{n} of {need}',
+    fluctuationLasted: 'lasted {d}',
+    fluctuationCount24h: '{n} fluctuation(s) in 24h',
+    fluctuationConcurrent: '{n} other target(s) affected',
+    fluctuationConcurrentHint: 'Also failing on this Agent over the same window: {f} fluctuation(s), {a} fault(s). Several targets at once points at the link rather than at any one target.',
+    fluctuationIsolated: 'This target only',
+    fluctuationLinked: 'Precursor · linked to a fault',
+    fluctuationLinkedHint: 'This target went on to confirm a fault, and this fluctuation is kept as its precursor: exempt from retention, deleted with the incident.',
+    roundBreakdown: 'Round-by-round',
+    roundNo: 'Round {i}',
     errorBanner: 'Could not load current status.',
     staleBanner: 'Status may be outdated — last updated {time}.',
     unavailable: 'Status unavailable',

@@ -417,6 +417,9 @@ export interface TargetAgentStatusRow {
   confirm?: ConfirmProgress
   fault?: TargetFaultRef
   availability_24h?: number
+  // Sub-threshold streaks that recovered over the same 24h — the explanation for
+  // an availability figure under 100% with no fault beside it.
+  fluctuations_24h?: number
 }
 // One target's aggregated current status across every applicable Agent.
 export interface TargetStatusRow {
@@ -435,6 +438,8 @@ export interface TargetStatusRow {
   // Share of verdict-reaching probe rounds in the last 24h that succeeded (0..1).
   // Absent when the window holds no verdict at all — "unknown" is not "0%".
   availability_24h?: number
+  // Recovered sub-threshold streaks over the same window, summed across agents.
+  fluctuations_24h?: number
   signal_ids: string[]
   incident_ids: string[]
   agents: TargetAgentStatusRow[]
@@ -739,9 +744,78 @@ export interface FaultSignal {
   // Read-time overlay: whether the detector still has an unbroken failing streak.
   // False on a firing signal ⇒ it is answering again but has not yet recovered.
   currently_abnormal: boolean
+  // Every round of the confirming streak, oldest first — three failing rounds can
+  // fail three different ways, and the summary fields above only carry the last.
+  // Null for agent_connectivity, which has no rounds.
+  rounds?: ProbeRound[] | null
   // Server-rendered fault description in both languages.
   desc_zh?: string
   desc_en?: string
+}
+
+// ---- fluctuations ----
+// One round's frozen failure cause, shared by fault signals and fluctuations so
+// both explain themselves identically.
+export interface ProbeRound {
+  ts: number // epoch seconds
+  metric_kind: string
+  value: number
+  reason_code: number // telemetry.ProbeReason*; render via probeReasonLabel
+  // Raw underlying error, English machine text, deliberately not localized.
+  reason_detail: string
+}
+// A fluctuation: a failing streak that recovered BEFORE reaching the fault
+// threshold. This is what explains a 99% availability figure with no fault behind
+// it — the dip was real, but 2 failures out of 3 needed is not an outage, so it is
+// recorded and never notified.
+export interface Fluctuation {
+  id: string
+  site_id: string
+  agent_id: string
+  agent_name: string
+  target_id: string
+  target_name: string
+  target_addr: string
+  target_port?: number
+  probe_kind: string
+  group_id?: string
+  layer: string
+  // fail_rounds of fail_threshold: how many rounds failed, and the threshold they
+  // did not reach. Rendered together, they say why no alert fired.
+  fail_rounds: number
+  fail_threshold: number
+  metric_kind: string
+  comparator: string
+  value: number
+  threshold: number
+  reason_code: number
+  reason_detail: string
+  // Every failing round of the streak, oldest first. Null (not []) when empty —
+  // Go marshals an empty slice as null here.
+  rounds?: ProbeRound[] | null
+  started_at: string
+  ended_at: string
+  // Set when a later fault on the same target+agent claimed this as a precursor.
+  // Such a record is that incident's evidence: exempt from retention, deleted
+  // with the incident.
+  incident_id?: string
+  // How many OTHER targets on the same Agent were also in trouble over this
+  // window — the answer to "was it the link, or just this target?". Use this
+  // rather than adding the two breakdowns below: it is a DISTINCT count over both,
+  // and a neighbour that dipped and then failed appears in both while still being
+  // one other target.
+  concurrent_targets: number
+  // The same set broken down by kind, for a tooltip. May overlap each other.
+  concurrent_fluctuations: number
+  concurrent_faults: number
+  desc_zh?: string
+  desc_en?: string
+}
+// `total` counts the whole filter match set, not the returned page, so a badge
+// can say "12 fluctuations in 24h" while fetching one row.
+export interface FluctuationPage {
+  items: Fluctuation[]
+  total: number
 }
 export interface TimelineEntry {
   ts: string
@@ -1518,6 +1592,25 @@ export const api = {
     for (const [k, v] of Object.entries(opts)) if (v) p.set(k, String(v))
     const qs = p.toString()
     return req<FaultSignal[]>('GET', `/api/v1/fault-signals${qs ? '?' + qs : ''}`)
+  },
+  // Fluctuations: failing streaks that recovered before confirming a fault — the
+  // explanation for an availability dip the fault centre has no record of. Filter
+  // by agent, target, incident (its precursors) and an ended_at range in epoch
+  // seconds.
+  fluctuations: (
+    opts: {
+      agent?: string
+      target?: string
+      incident?: string
+      since?: number
+      until?: number
+      limit?: number
+    } = {},
+  ) => {
+    const p = new URLSearchParams()
+    for (const [k, v] of Object.entries(opts)) if (v) p.set(k, String(v))
+    const qs = p.toString()
+    return req<FluctuationPage>('GET', `/api/v1/fluctuations${qs ? '?' + qs : ''}`)
   },
   // Monitor groups own targets, their shared Agent execution scope and the
   // incident-merge policy. CRUD is site-scoped; the default group cannot be

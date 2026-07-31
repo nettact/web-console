@@ -19,6 +19,7 @@ const KINDS = [
   'incident.resolved',
   'incident.terminated',
   'storm.joined',
+  'fluctuation.linked',
 ]
 
 describe('incident timeline kind labels', () => {

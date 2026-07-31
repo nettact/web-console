@@ -74,6 +74,11 @@ function availabilityLabel(agent: TargetAgentStatusRow): string {
   return formatAvailability(agent.availability_24h) ?? t('targetStatus.availabilityUnknown')
 }
 
+// Fluctuations over the same 24 hours the availability figure covers, per Agent.
+// It rides along on the authoritative status batch (one grouped query for the whole
+// site) rather than being fetched here, so the number costs nothing extra and
+// cannot disagree with the count shown on the collapsed row.
+
 // Native tooltip for the stale probe badge: explains the per-agent freshness
 // window that classified this pair as stale. Only shown when the pair is stale
 // and the server reported a window (omitted for host targets).
@@ -157,7 +162,12 @@ function openHistory(agentID: string): void {
         <div class="fact-card availability-fact">
           <span>{{ t('targetStatus.availability24h') }}</span>
           <strong>{{ availabilityLabel(agent) }}</strong>
-          <small>{{ t('targetStatus.availabilityHint') }}</small>
+          <!-- The explanation for a figure below 100% that raised no fault. The card
+               opens the history page, where each one is listed with its cause. -->
+          <small v-if="agent.fluctuations_24h" class="flux-note">
+            {{ t('targetStatus.fluctuationCount24h', { n: agent.fluctuations_24h }) }}
+          </small>
+          <small v-else>{{ t('targetStatus.availabilityHint') }}</small>
         </div>
         <div class="fact-card">
           <span>{{ t('targetStatus.executionContext') }}</span>
@@ -279,6 +289,9 @@ function openHistory(agentID: string): void {
 .fact-card small { display: block; margin-top: 5px; overflow-wrap: anywhere; }
 .fact-card strong { color: var(--text-dim); font-size: 12px; font-weight: 550; }
 .fact-card small { color: var(--text-muted); font-size: 10.5px; }
+/* The fluctuation count replaces the generic hint and has to be noticed: it is the
+   answer to the question the figure above it raises. */
+.fact-card small.flux-note { color: #fcd34d; }
 .missing-permissions { margin-top: 10px; }
 .fault-panel {
   display: grid;

@@ -203,6 +203,14 @@ function availabilityLabel(row: TargetStatusRow): string {
                 :class="`is-${availabilityTone(row.availability_24h)}`"
                 :title="t('targetStatus.availabilityHint')"
               >{{ availabilityLabel(row) }}</span>
+              <!-- A figure under 100% used to be a dead end here: no fault to open,
+                   nothing to click. This says how many dips are behind it; expanding
+                   the row shows each one's cause. -->
+              <span
+                v-if="row.fluctuations_24h"
+                class="flux-note"
+                :title="t('targetStatus.fluctuationsHint')"
+              >{{ t('targetStatus.fluctuationCount24h', { n: row.fluctuations_24h }) }}</span>
             </div>
 
             <div class="observed-cell" :data-label="t('targetStatus.lastObserved')">{{ fmtTime(row.last_observed_at) }}</div>
@@ -497,6 +505,9 @@ function availabilityLabel(row: TargetStatusRow): string {
 .avail-pill.is-warn { color: #fcd34d; border-color: rgba(251, 191, 36, 0.35); background: var(--warning-soft); }
 .avail-pill.is-bad { color: #fca5a5; border-color: rgba(248, 113, 113, 0.35); background: var(--danger-soft); }
 .avail-pill.is-unknown { color: var(--text-muted); border-color: var(--border-strong); }
+/* Sits under the pill it explains. Quiet enough not to compete with a real fault,
+   present enough that a dipped figure no longer looks unexplained. */
+.flux-note { display: block; margin-top: 3px; font-size: 10.5px; color: #fcd34d; }
 .muted,
 .observed-cell { color: var(--text-muted); font-size: 10.5px; }
 .target-actions {

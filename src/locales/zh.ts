@@ -477,6 +477,14 @@ export default {
       storm: {
         joined: '并入报警风暴',
       },
+      // message 为条数，措辞在这里，因此两种语言都读得通。
+      fluctuation: {
+        linked: '确认前的波动次数',
+      },
+    },
+    precursors: {
+      title: '前兆波动',
+      sub: '故障确认前一小时内，该目标已出现但未达阈值的短暂失败。爆发前是否已在抖动，与突然中断是两种不同的排查方向。',
     },
     resolveReason: {
       recovered: '自动恢复',
@@ -1426,6 +1434,8 @@ export default {
       snapshotMaxHelp: '单个事故快照的序列化大小上限（64–1024 KiB），超出按优先级截断非关键明细。',
       retention: '证据保留',
       retentionHelp: '事故恢复多少天后清理现场明细与逐跳诊断（1–365 天），事故与摘要始终保留。',
+      fluctuationRetention: '波动记录保留',
+      fluctuationRetentionHelp: '未达故障阈值即恢复的波动记录保留多少天（1–365 天）。已作为前兆归入事故的波动不受此限，随事故一并删除。',
     },
     diag: {
       title: '路径诊断（Traceroute）',
@@ -1878,7 +1888,27 @@ export default {
     thCurrent: '当前状态',
     thAvailability: '可用率',
     thOutages: '故障次数',
+    thFluctuations: '波动次数',
     thLatest: '最新值',
+    // 波动记录：未达故障阈值即恢复的失败连击 —— 可用率不到 100% 却查不到故障时的解释。
+    // 刻意避开"抖动"一词，那是 ICMP 时延抖动指标的既有叫法。
+    fluctuations: '波动记录',
+    fluctuationsHint: '未达故障确认阈值就恢复的短暂失败：仅记录，不告警。',
+    noFluctuations: '该时间范围内没有波动记录。',
+    fluctuationsUnavailable: '无法加载波动记录 —— 这不代表没有波动。',
+    fluctuationsPartial: '共 {total} 次，显示最近 {n} 次',
+    thFailRounds: '失败轮数',
+    thScope: '影响范围',
+    failRoundsOfNeed: '{n}/{need} 轮',
+    fluctuationLasted: '持续 {d}',
+    fluctuationCount24h: '24 小时内 {n} 次波动',
+    fluctuationConcurrent: '同时段另有 {n} 个目标异常',
+    fluctuationConcurrentHint: '同一 Agent 下同时段异常：波动 {f} 次、故障 {a} 次。多个目标同时异常，更像链路波动而非单个目标的问题。',
+    fluctuationIsolated: '仅此目标',
+    fluctuationLinked: '前兆 · 已关联故障',
+    fluctuationLinkedHint: '该目标随后确认了故障，此次波动已作为前兆归入该事故；不再按保留期清理，随事故一并删除。',
+    roundBreakdown: '逐轮明细',
+    roundNo: '第 {i} 轮',
     errorBanner: '无法加载当前状态。',
     staleBanner: '状态可能已过期 —— 最后更新于 {time}。',
     unavailable: '状态不可用',

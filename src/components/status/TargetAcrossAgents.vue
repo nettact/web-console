@@ -11,6 +11,7 @@ import {
   api,
   type AvailabilityWindow,
   type FaultSignal,
+  type Fluctuation,
   type KindSummary,
   type Sample,
   type TargetAgentStatusRow,
@@ -18,6 +19,7 @@ import {
 import MetricChart from '../MetricChart.vue'
 import MetricStatCards from '../MetricStatCards.vue'
 import FaultSignalsTable from '../FaultSignalsTable.vue'
+import FluctuationsTable from '../FluctuationsTable.vue'
 import MonitorStateBadge from './MonitorStateBadge.vue'
 import { useMetricMeta } from '../../composables/useMetricMeta'
 import { useMetricCards, type Card } from '../../composables/useMetricCards'
@@ -62,11 +64,15 @@ const samples = ref<Record<string, Sample[]>>({}) // key: `${agentId}::${kind}`
 // summary endpoint instead of a raw sample window. key: `${agentId}::${kind}`.
 const summaries = ref<Record<string, KindSummary>>({})
 const faults = ref<FaultSignal[]>([])
+const fluctuations = ref<Fluctuation[]>([])
+const fluxTotal = ref(0)
+const fluxLoaded = ref(false)
 // window -> agent id -> success ratio. A missing entry is "unknown", never 0%.
 const availWindows = ref<Record<string, Map<string, number>>>({})
 const loading = ref(false)
 let dataSeq = 0
 let faultSeq = 0
+let fluxSeq = 0
 let availSeq = 0
 
 const skey = (agentId: string, kind: string) => `${agentId}::${kind}`
@@ -294,11 +300,56 @@ async function loadFaults() {
     return
   }
   try {
-    const list = await api.faultSignals({ target: props.monitorId, limit: 20 })
+    // On the single-agent history route the page is scoped to one Agent, so the
+    // records must be too — arriving from "3 fluctuations on Agent A" and landing on
+    // a table mixing A, B and C makes the number unverifiable.
+    const list = await api.faultSignals({
+      target: props.monitorId,
+      agent: props.restrictToProbers && props.probers.length === 1 ? props.probers[0].agent.id : undefined,
+      limit: 20,
+    })
     if (seq !== faultSeq) return
     faults.value = [...list].sort((a, b) => new Date(b.confirmed_at).getTime() - new Date(a.confirmed_at).getTime())
   } catch {
     if (seq === faultSeq) faults.value = []
+  }
+}
+
+// Fluctuations over the selected range: the sub-threshold streaks that explain an
+// availability figure below 100% with no fault behind it. Scoped to the range
+// picker (unlike the fault list, which is a fixed recent history) because that is
+// the question being asked here — what happened during the window I am looking at.
+//
+// fluxTotal is the server's full match count, kept apart from the loaded rows so a
+// range with more dips than the page cap still reports the true number. fluxLoaded
+// distinguishes "none" from "never asked": a monitor-less system series and a failed
+// request both leave the list empty, and rendering 0 for either would answer the
+// question this table exists to answer with a fact we do not have.
+const FLUX_PAGE = 500
+async function loadFluctuations() {
+  const seq = ++fluxSeq
+  if (!props.monitorId) {
+    fluctuations.value = []
+    fluxTotal.value = 0
+    fluxLoaded.value = false
+    return
+  }
+  try {
+    const res = await api.fluctuations({
+      target: props.monitorId,
+      agent: props.restrictToProbers && props.probers.length === 1 ? props.probers[0].agent.id : undefined,
+      since: Math.floor(Date.now() / 1000) - props.rangeSec,
+      limit: FLUX_PAGE,
+    })
+    if (seq !== fluxSeq) return
+    fluctuations.value = res.items
+    fluxTotal.value = res.total
+    fluxLoaded.value = true
+  } catch {
+    if (seq !== fluxSeq) return
+    fluctuations.value = []
+    fluxTotal.value = 0
+    fluxLoaded.value = false
   }
 }
 
@@ -326,6 +377,27 @@ async function loadAvailability() {
   }
 }
 
+// Fluctuations per Agent over the range, for the summary column beside outages.
+// Counted client-side from the rows already loaded rather than with one request
+// per Agent.
+const fluxCountByAgent = computed(() => {
+  const m = new Map<string, number>()
+  for (const f of fluctuations.value) m.set(f.agent_id, (m.get(f.agent_id) ?? 0) + 1)
+  return m
+})
+
+// True when the range holds more dips than one page, so the table can say the list
+// is partial instead of quietly under-reporting.
+const fluxTruncated = computed(() => fluxTotal.value > fluctuations.value.length)
+
+// Per-Agent cell text. Every neighbouring column distinguishes unknown from zero and
+// so must this one — "0 fluctuations" is a claim, not a placeholder. Two ways to not
+// know: the request failed, or it returned a capped page, in which case an Agent
+// whose dips all fell outside that page would read as a confident 0. The card header
+// still reports the true total for the range.
+const fluxCell = (agentId: string): string =>
+  fluxLoaded.value && !fluxTruncated.value ? String(fluxCountByAgent.value.get(agentId) ?? 0) : '—'
+
 const windowRatio = (agentId: string, window: AvailabilityWindow) => availWindows.value[window]?.get(agentId)
 const windowAvail = (agentId: string, window: AvailabilityWindow): string =>
   formatAvailability(windowRatio(agentId, window)) ?? t('targetStatus.availabilityUnknown')
@@ -335,6 +407,7 @@ function reload() {
   applyDefaults()
   loadData()
   loadFaults()
+  loadFluctuations()
   loadAvailability()
 }
 
@@ -343,7 +416,11 @@ watch([
   () => props.target,
   () => props.probers.map((p) => p.agent.id).join(','),
 ], reload)
-watch(() => props.rangeSec, loadData)
+// Fluctuations are range-scoped, so they reload with the range picker.
+watch(() => props.rangeSec, () => {
+  loadData()
+  loadFluctuations()
+})
 onMounted(reload)
 </script>
 
@@ -363,6 +440,9 @@ onMounted(reload)
             <th class="num">{{ t('targetStatus.availability30d') }}</th>
             <th class="num">{{ t('targetStatus.thAvailability') }}</th>
             <th class="num">{{ t('targetStatus.thOutages') }}</th>
+            <th class="num" :title="t('targetStatus.fluctuationsHint')">
+              {{ t('targetStatus.thFluctuations') }}
+            </th>
             <th class="num">{{ t('targetStatus.thLatest') }}</th>
           </tr>
         </thead>
@@ -387,6 +467,7 @@ onMounted(reload)
             >{{ windowAvail(r.id, w) }}</td>
             <td class="num mono" :class="`t-${r.availTone}`">{{ r.avail === null ? '—' : r.avail + '%' }}</td>
             <td class="num mono">{{ r.avail === null ? '—' : r.outages }}</td>
+            <td class="num mono">{{ fluxCell(r.id) }}</td>
             <td class="num mono">{{ r.latest }}</td>
           </tr>
         </tbody>
@@ -440,6 +521,18 @@ onMounted(reload)
     <!-- Confirmed fault history. Every column is frozen at confirmation time, so a
          later rename or deletion of the target cannot rewrite what it said. -->
     <FaultSignalsTable :signals="faults" show-agent />
+
+    <!-- And the dips that never became faults: the reason an availability figure
+         above can read 99% while the table above it is empty. Only for real monitors:
+         a monitor-less system series has no target, so "fluctuations" is not a
+         question that applies to it rather than one whose answer is none. -->
+    <FluctuationsTable
+      v-if="monitorId"
+      :items="fluctuations"
+      show-agent
+      :loaded="fluxLoaded"
+      :total="fluxTruncated ? fluxTotal : undefined"
+    />
   </div>
 </template>
 

@@ -17,6 +17,7 @@ import {
   type SnapshotView,
   type TraceReportView,
   type FaultSignal,
+  type Fluctuation,
   type NotificationDelivery,
 } from '../../api'
 import { toDateLocale } from '../../i18n'
@@ -25,6 +26,7 @@ import { useMetricMeta } from '../../composables/useMetricMeta'
 import { usePolling } from '../../composables/usePolling'
 import SnapshotSection from './SnapshotSection.vue'
 import TraceCard from './TraceCard.vue'
+import FluctuationsTable from '../FluctuationsTable.vue'
 import { agentIndex } from '../../agentStatus'
 
 const props = defineProps<{ incidentId: string }>()
@@ -48,6 +50,14 @@ const timeline = ref<TimelineEntry[]>([])
 const snapshot = ref<SnapshotView | null>(null)
 const traces = ref<TraceReportView[]>([])
 const notifications = ref<NotificationDelivery[]>([])
+// Sub-threshold streaks this fault claimed as its precursors: the same target was
+// already faltering before it failed outright. Often the most useful thing in the
+// drawer, because "it had been flapping for half an hour" and "it died out of
+// nowhere" call for different investigations.
+const precursors = ref<Fluctuation[]>([])
+// The server's full count for this incident, kept so a capped page is declared
+// rather than presented as the complete evidence.
+const precursorTotal = ref(0)
 // Whether the notification records could be read at all. An empty list means
 // "nothing was due to be sent", which is a legitimate and reassuring state; a
 // failed request must not borrow that wording and tell the operator no channel
@@ -111,7 +121,7 @@ function nextDeliveryDelay(notes: NotificationDelivery[]): boolean | number {
 async function load(): Promise<boolean | number> {
   const id = props.incidentId
   try {
-    const [d, tl, snap, sums, notes] = await Promise.all([
+    const [d, tl, snap, sums, notes, pre] = await Promise.all([
       api.incident(id),
       api.timeline(id),
       api.incidentSnapshot(id),
@@ -119,6 +129,10 @@ async function load(): Promise<boolean | number> {
       // Kept out of the failure path of the drawer as a whole — the fault itself
       // is still worth showing — but the failure is recorded, not erased.
       api.incidentNotifications(id).catch(() => null),
+      // Same reasoning: precursors are context, not the incident itself. 500 is the
+      // server's maximum page; a merged group incident can accumulate precursors from
+      // every member, and evidence that is silently cut off is worse than none.
+      api.fluctuations({ incident: id, limit: 500 }).catch(() => null),
     ])
     if (id !== props.incidentId) return false // selection changed mid-flight
     detail.value = d
@@ -126,6 +140,8 @@ async function load(): Promise<boolean | number> {
     snapshot.value = snap
     notifyFailed.value = notes === null
     notifications.value = notes ?? []
+    precursors.value = pre?.items ?? []
+    precursorTotal.value = pre?.total ?? 0
     const reports = await Promise.all(
       sums.map((s) => api.traceReport(s.report_id).catch(() => null)),
     )
@@ -370,6 +386,19 @@ onBeforeUnmount(() => {
               </tbody>
             </table>
           </div>
+        </section>
+
+        <!-- Precursors: this target's sub-threshold streaks in the hour before the
+             fault confirmed. Rendered only when there were any — an absence is not
+             a finding worth a heading. -->
+        <section v-if="precursors.length" class="block" aria-labelledby="pre-h">
+          <h4 id="pre-h">{{ t('incidents.precursors.title') }}</h4>
+          <p class="hint">{{ t('incidents.precursors.sub') }}</p>
+          <FluctuationsTable
+            :items="precursors"
+            show-agent
+            :total="precursorTotal > precursors.length ? precursorTotal : undefined"
+          />
         </section>
 
         <!-- Immutable snapshot. -->

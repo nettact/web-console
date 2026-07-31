@@ -6,14 +6,29 @@
 // A row states what broke and why — the server renders the standard statement and
 // freezes the failure reason at confirmation time, so the table never has to
 // re-derive a description from raw metrics.
+//
+// A row expands to the cause of every round of the confirming streak, the same
+// breakdown a fluctuation offers: the summary carries only the confirming round,
+// and "timed out twice then refused" is a different diagnosis from three refusals.
+import { ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type { FaultSignal } from '../api'
 import { fmtNum } from '../lib/metricMeta'
 import { useMetricMeta } from '../composables/useMetricMeta'
+import ProbeRoundsDetail from './ProbeRoundsDetail.vue'
 
 defineProps<{ signals: FaultSignal[]; showAgent?: boolean }>()
 const { t, locale } = useI18n()
 const { sevTone, sevLabel, fmtTime, probeReasonLabel } = useMetricMeta()
+
+const expanded = ref<Set<string>>(new Set())
+const toggle = (id: string) => {
+  const next = new Set(expanded.value)
+  if (!next.delete(id)) next.add(id)
+  expanded.value = next
+}
+// Agent-connectivity faults have no probe rounds, so there is nothing to expand.
+const hasRounds = (s: FaultSignal) => (s.rounds?.length ?? 0) > 0
 
 const description = (s: FaultSignal) =>
   s.title || (locale.value === 'en' ? s.desc_en : s.desc_zh) || s.target_name || s.target_addr
@@ -36,6 +51,7 @@ const stateKey = (s: FaultSignal) => {
     <table v-else class="alerts">
       <thead>
         <tr>
+          <th class="expander"></th>
           <th>{{ t('metrics.thTime') }}</th>
           <th v-if="showAgent">{{ t('metrics.thAgent') }}</th>
           <th>{{ t('metrics.thFault') }}</th>
@@ -45,28 +61,46 @@ const stateKey = (s: FaultSignal) => {
         </tr>
       </thead>
       <tbody>
-        <tr v-for="s in signals" :key="s.id">
-          <td class="mono">{{ fmtTime(s.confirmed_at) }}</td>
-          <td v-if="showAgent" class="mono">{{ s.agent_name || s.agent_id }}</td>
-          <td>
-            <router-link
-              v-if="s.incident_id"
-              class="link"
-              :to="`/incidents?incident=${encodeURIComponent(s.incident_id)}`"
-            >{{ description(s) }}</router-link>
-            <template v-else>{{ description(s) }}</template>
-          </td>
-          <td><span class="sev" :class="`is-${sevTone(s.severity)}`">{{ sevLabel(s.severity) }}</span></td>
-          <td>{{ t(`metrics.faultState.${stateKey(s)}`) }}</td>
-          <td class="num mono">
-            {{ s.metric_kind ? fmtNum(s.value) : '—' }}
-            <span
-              v-if="s.reason_code > 0"
-              class="reason-chip"
-              :title="s.reason_detail || undefined"
-            >{{ probeReasonLabel(s.reason_code) }}</span>
-          </td>
-        </tr>
+        <template v-for="s in signals" :key="s.id">
+          <tr :class="{ 'is-open': expanded.has(s.id) }">
+            <td class="expander">
+              <button
+                v-if="hasRounds(s)"
+                type="button"
+                class="toggle"
+                :aria-expanded="expanded.has(s.id)"
+                :title="t('targetStatus.roundBreakdown')"
+                @click="toggle(s.id)"
+              >{{ expanded.has(s.id) ? '−' : '+' }}</button>
+            </td>
+            <td class="mono">{{ fmtTime(s.confirmed_at) }}</td>
+            <td v-if="showAgent" class="mono">{{ s.agent_name || s.agent_id }}</td>
+            <td>
+              <router-link
+                v-if="s.incident_id"
+                class="link"
+                :to="`/incidents?incident=${encodeURIComponent(s.incident_id)}`"
+              >{{ description(s) }}</router-link>
+              <template v-else>{{ description(s) }}</template>
+            </td>
+            <td><span class="sev" :class="`is-${sevTone(s.severity)}`">{{ sevLabel(s.severity) }}</span></td>
+            <td>{{ t(`metrics.faultState.${stateKey(s)}`) }}</td>
+            <td class="num mono">
+              {{ s.metric_kind ? fmtNum(s.value) : '—' }}
+              <span
+                v-if="s.reason_code > 0"
+                class="reason-chip"
+                :title="s.reason_detail || undefined"
+              >{{ probeReasonLabel(s.reason_code) }}</span>
+            </td>
+          </tr>
+          <tr v-if="expanded.has(s.id) && s.rounds" class="detail-row">
+            <td></td>
+            <td :colspan="showAgent ? 6 : 5">
+              <ProbeRoundsDetail :rounds="s.rounds" />
+            </td>
+          </tr>
+        </template>
       </tbody>
     </table>
   </div>
@@ -101,6 +135,32 @@ const stateKey = (s: FaultSignal) => {
   text-align: left;
   padding: 9px 10px;
   border-bottom: 1px solid var(--border);
+  vertical-align: top;
+}
+.alerts tr.is-open td {
+  border-bottom-color: transparent;
+}
+.alerts .detail-row td {
+  padding-top: 0;
+}
+.expander {
+  width: 28px;
+  padding-right: 0 !important;
+}
+.toggle {
+  width: 20px;
+  height: 20px;
+  line-height: 1;
+  border-radius: 5px;
+  border: 1px solid var(--border-strong);
+  background: transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+  font-size: 13px;
+}
+.toggle:hover {
+  color: var(--text);
+  border-color: var(--text-muted);
 }
 .alerts th {
   font-size: 11px;
