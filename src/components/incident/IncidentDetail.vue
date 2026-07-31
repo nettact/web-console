@@ -73,6 +73,7 @@ const members = computed(() => detail.value?.members ?? [])
 // evidence is immutable.
 const abnormalTargetCount = computed(() => detail.value?.abnormal_target_count ?? 0)
 const titleId = 'incident-detail-title'
+const summaryId = 'incident-detail-summary'
 
 const fmtDateTime = (s: string | null) =>
   s ? new Date(s).toLocaleString(toDateLocale(locale.value), { hour12: false }) : '—'
@@ -223,12 +224,16 @@ onBeforeUnmount(() => {
     role="dialog"
     aria-modal="true"
     :aria-labelledby="titleId"
+    :aria-describedby="incident ? summaryId : undefined"
+    :aria-busy="!loaded && !error"
     @click.stop
   >
     <div class="drawer-head">
       <div class="drawer-title">
         <h3 :id="titleId">{{ t('incidents.detail.title') }}</h3>
-        <p v-if="incident" class="drawer-sub">{{ incident.summary || incident.title }}</p>
+        <p v-if="incident" :id="summaryId" class="drawer-sub">
+          {{ incident.summary || incident.title }}
+        </p>
       </div>
       <button ref="closeBtn" class="drawer-close" @click="emit('close')" :aria-label="t('common.close')">
         ×
@@ -317,9 +322,9 @@ onBeforeUnmount(() => {
                   </span>
                 </dd>
               </div>
-              <div v-if="m.reason_code > 0">
+              <div v-if="m.reason_code > 0" class="fact-reason">
                 <dt>{{ t('incidents.detail.evReason') }}</dt>
-                <dd>
+                <dd class="reason-value">
                   <span class="reason-chip">{{ probeReasonLabel(m.reason_code) }}</span>
                   <span v-if="m.reason_detail" class="hint mono ev-detail" :title="m.reason_detail">{{ m.reason_detail }}</span>
                 </dd>
@@ -339,7 +344,7 @@ onBeforeUnmount(() => {
                 <dt>{{ t('incidents.detail.evResolved') }}</dt>
                 <dd class="hint">{{ fmtDateTime(m.resolved_at) }}</dd>
               </div>
-              <div>
+              <div class="fact-sensitivity">
                 <dt>{{ t('incidents.detail.evSensitivity') }}</dt>
                 <dd class="hint">
                   {{ t('incidents.detail.sensitivityValue', { fail: m.fail_threshold, recover: m.recover_threshold }) }}
@@ -432,133 +437,211 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
+/* Hallmark · component: wide incident modal · genre: custom application
+ * theme: NetTact Liquid Glass · design-system: design.md
+ * states: open · loading · error · loaded · focus · active · responsive · reduced-motion
+ * pre-emit critique: P5 H5 E4 S5 R5 V4
+ */
 .drawer-backdrop {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.45);
-  z-index: 90;
+  z-index: var(--z-modal);
+  background: var(--color-backdrop);
+  backdrop-filter: blur(var(--space-3xs));
+  -webkit-backdrop-filter: blur(var(--space-3xs));
+  animation: incident-backdrop-in var(--dur-short) var(--ease-out) both;
 }
 .drawer {
   position: fixed;
-  top: 0;
-  right: 0;
-  bottom: 0;
-  width: min(940px, 96vw);
-  background: var(--surface-solid);
-  border-left: 1px solid var(--border);
-  box-shadow: -10px 0 34px rgba(0, 0, 0, 0.32);
-  z-index: 100;
+  inset: var(--space-md);
+  z-index: calc(var(--z-modal) + 1);
   display: flex;
   flex-direction: column;
+  width: auto;
+  max-width: 1440px;
+  margin-inline: auto;
+  overflow: hidden;
+  border: var(--rule-hair) solid var(--glass-border);
+  border-radius: var(--radius-panel);
+  background: var(--color-glass-strong);
+  box-shadow: var(--shadow-float);
+  backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
+  animation: incident-modal-in var(--dur-long) var(--ease-out) both;
 }
 .drawer-head {
   display: flex;
+  flex: 0 0 auto;
   align-items: flex-start;
   justify-content: space-between;
-  gap: 12px;
-  padding: 16px 18px;
-  border-bottom: 1px solid var(--border);
+  gap: var(--space-md);
+  padding: var(--space-sm) var(--space-md);
+  border-bottom: var(--rule-hair) solid var(--color-rule);
+  background: var(--color-glass);
+}
+.drawer-title {
+  min-width: 0;
 }
 .drawer-title h3 {
-  font-size: 15px;
+  font-family: var(--font-display);
+  font-size: var(--text-lg);
+  line-height: 1.2;
+  letter-spacing: -0.028em;
 }
 .drawer-sub {
-  margin-top: 5px;
-  font-size: 12.5px;
-  line-height: 1.45;
-  color: var(--text-dim);
+  max-width: 100ch;
+  margin-top: var(--space-2xs);
+  color: var(--color-ink-2);
+  font-size: var(--text-sm);
+  line-height: 1.55;
+  overflow-wrap: anywhere;
 }
 .drawer-close {
-  border: none;
-  background: transparent;
-  color: var(--text-muted);
-  font-size: 24px;
+  display: grid;
+  flex: 0 0 auto;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  border: var(--rule-hair) solid var(--color-rule);
+  border-radius: var(--radius-input);
+  background: var(--color-glass-subtle);
+  color: var(--color-muted);
+  font-size: var(--text-xl);
   line-height: 1;
   cursor: pointer;
-  padding: 0 2px;
+  transition: transform var(--dur-micro) var(--ease-out);
 }
-.drawer-close:hover {
-  color: var(--text);
+.drawer-close:focus-visible {
+  outline: var(--rule-fine) solid var(--color-focus);
+  outline-offset: var(--space-3xs);
+}
+.drawer-close:active {
+  transform: translateY(1px);
+}
+.drawer-close:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
 }
 .drawer-body {
-  flex: 1;
+  flex: 1 1 auto;
+  min-height: 0;
+  padding: var(--space-md) var(--space-lg) var(--space-xl);
+  overflow-x: clip;
   overflow-y: auto;
-  padding: 16px 20px 40px;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+  background: var(--surface-solid);
+}
+.drawer-body > * {
+  width: 100%;
+  max-width: 1320px;
+  margin-inline: auto;
 }
 .head-facts {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 8px;
-  margin-bottom: 10px;
+  gap: var(--space-2xs);
+  margin-bottom: var(--space-xs);
 }
 .facts {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px 22px;
-  margin: 6px 0 10px;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: var(--space-2xs) var(--space-lg);
+  margin: var(--space-2xs) 0 var(--space-sm);
 }
 .facts > div {
   display: flex;
-  gap: 8px;
-  font-size: 12.5px;
+  min-width: 0;
+  gap: var(--space-2xs);
+  font-size: var(--text-sm);
 }
 .facts dt {
+  flex: 0 0 auto;
   margin: 0;
-  color: var(--text-muted);
+  color: var(--color-muted);
 }
 .facts dd {
   /* Reset the browser's default 40px dd indent, which otherwise stacks on top of
      the flex gap and pushes each value far from its label. */
   margin: 0;
-  color: var(--text-dim);
+  min-width: 0;
+  color: var(--color-ink-2);
   font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
 }
 .block {
-  margin-top: 20px;
+  margin-top: var(--space-lg);
 }
 .block > h4 {
-  font-size: 14px;
-  margin-bottom: 8px;
+  margin-bottom: var(--space-xs);
+  font-family: var(--font-display);
+  font-size: var(--text-md);
+  line-height: 1.3;
 }
 .card.sub {
-  padding: 12px 14px;
-  margin: 10px 0;
+  margin: var(--space-xs) 0;
+  padding: var(--space-sm) var(--space-md);
 }
 .member-head {
   display: flex;
   align-items: center;
-  gap: 10px;
-  flex-wrap: wrap;
-  margin-bottom: 8px;
+  gap: var(--space-2xs);
+  margin-bottom: var(--space-xs);
+}
+.member-head > b {
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 /* A member's frozen evidence reads as label/value pairs rather than a one-row
    table: a built-in detector reaches its verdict from a single metric, so there
    is nothing to tabulate. */
 .member-facts {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   margin: 0;
-  gap: 6px 26px;
+  gap: 0 var(--space-lg);
+}
+.member-facts > div {
+  display: grid;
+  align-content: start;
+  gap: var(--space-3xs);
+  padding-block: var(--space-xs);
+  border-top: var(--rule-hair) solid var(--color-rule);
+}
+.member-facts .fact-reason {
+  grid-column: 1 / -1;
+}
+.member-facts .fact-sensitivity {
+  grid-column: span 2;
+}
+.reason-value {
+  display: flex;
+  min-width: 0;
+  align-items: flex-start;
+  gap: var(--space-xs);
 }
 .agent-name {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
+  gap: var(--space-2xs);
+  margin-left: auto;
 }
 .presence-dot {
+  display: inline-block;
   width: 7px;
   height: 7px;
-  border-radius: 50%;
-  display: inline-block;
+  border-radius: var(--radius-pill);
 }
 .presence-dot.online {
-  background: #34d399;
+  background: var(--color-success);
 }
 .presence-dot.offline {
-  background: #f87171;
+  background: var(--color-danger);
 }
 .pill.abnormal {
   color: var(--color-danger-text);
-  border-color: rgba(248, 113, 113, 0.4);
+  border-color: color-mix(in oklch, var(--color-danger) 40%, transparent);
   background: var(--danger-soft);
 }
 .badge.tiny {
@@ -569,13 +652,13 @@ onBeforeUnmount(() => {
    shown beside the metric so the operator sees WHY, not just the breached value. */
 .reason-chip {
   display: inline-block;
-  margin-left: 6px;
+  flex: 0 0 auto;
   padding: 1px 7px;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   font-size: 10.5px;
   color: var(--color-danger-text);
-  border: 1px solid rgba(248, 113, 113, 0.4);
-  background: rgba(248, 113, 113, 0.1);
+  border: var(--rule-hair) solid color-mix(in oklch, var(--color-danger) 40%, transparent);
+  background: var(--danger-soft);
   white-space: nowrap;
 }
 /* Raw underlying error under the reason chip (verbatim machine text, never
@@ -583,14 +666,18 @@ onBeforeUnmount(() => {
    column out; the full text is in the hover title. */
 .ev-detail {
   display: block;
-  max-width: 300px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: 11px;
+  min-width: 0;
+  color: var(--color-ink-2);
+  font-size: var(--text-xs);
+  line-height: 1.55;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 .table-scroll {
+  max-width: 100%;
   overflow-x: auto;
+  overscroll-behavior-inline: contain;
 }
 /* "We could not read this" must not look like the calm "nothing to report". */
 .warn-text {
@@ -598,21 +685,22 @@ onBeforeUnmount(() => {
 }
 .mini-table {
   width: 100%;
+  min-width: 720px;
   border-collapse: collapse;
-  font-size: 12px;
+  font-size: var(--text-sm);
 }
 .mini-table th,
 .mini-table td {
   text-align: left;
-  padding: 4px 8px;
-  border-bottom: 1px solid var(--border);
+  padding: var(--space-2xs) var(--space-xs);
+  border-bottom: var(--rule-hair) solid var(--color-rule);
   vertical-align: top;
   /* Keep headers and short values on one line so narrow columns can't collapse
      into single-character vertical wrapping; the target column opts back out. */
   white-space: nowrap;
 }
 .mini-table th {
-  color: var(--text-muted);
+  color: var(--color-muted);
   font-weight: 600;
 }
 .mini-table td.num {
@@ -623,8 +711,8 @@ onBeforeUnmount(() => {
    hogging width and squeezing every other column. */
 .mini-table td.ev-target {
   white-space: normal;
-  word-break: break-all;
   min-width: 220px;
+  overflow-wrap: anywhere;
 }
 /* Stack the name and address on separate lines so the URL starts at the cell's
    left edge and every wrapped line stays column-aligned (an inline " · addr"
@@ -634,77 +722,155 @@ onBeforeUnmount(() => {
   display: block;
 }
 .notice {
-  font-size: 12.5px;
-  color: var(--text-dim);
+  font-size: var(--text-sm);
+  color: var(--color-ink-2);
   background: var(--surface-2);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  padding: 7px 11px;
-  margin: 8px 0;
+  border: var(--rule-hair) solid var(--color-rule);
+  border-radius: var(--radius-input);
+  padding: var(--space-2xs) var(--space-xs);
+  margin: var(--space-xs) 0;
 }
 .timeline {
   list-style: none;
   margin: 0;
-  padding: 6px 4px;
+  padding: var(--space-2xs) var(--space-3xs);
 }
 .timeline li {
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(130px, auto) minmax(120px, auto) minmax(0, 1fr) 40ch;
   align-items: baseline;
-  gap: 12px;
+  gap: var(--space-xs);
   position: relative;
-  padding: 9px 0 9px 20px;
+  padding: var(--space-xs) 0 var(--space-xs) var(--space-md);
 }
 .timeline li:not(:last-child)::before {
   content: '';
   position: absolute;
-  left: 4px;
-  top: 20px;
-  bottom: -4px;
-  width: 1px;
-  background: var(--border-strong);
+  left: var(--space-3xs);
+  top: var(--space-md);
+  bottom: calc(var(--space-3xs) * -1);
+  width: var(--rule-hair);
+  background: var(--color-rule-2);
 }
 .timeline .node {
   position: absolute;
   left: 0;
-  top: 12px;
+  top: var(--space-xs);
   width: 9px;
   height: 9px;
-  border-radius: 50%;
-  background: var(--primary);
-  box-shadow: 0 0 8px var(--primary-glow);
+  border-radius: var(--radius-pill);
+  background: var(--color-accent);
 }
 .timeline .ts {
-  flex: 0 0 auto;
-  color: var(--text-muted);
-  min-width: 120px;
-  font-size: 12px;
+  color: var(--color-muted);
+  font-size: var(--text-xs);
   font-variant-numeric: tabular-nums;
 }
 .timeline .kind {
-  flex: 0 0 auto;
-  font-size: 12px;
-  min-width: 120px;
+  font-size: var(--text-xs);
   color: var(--color-accent-text);
 }
 .timeline .msg {
-  flex: 1 1 auto;
   min-width: 0;
-  color: var(--text-dim);
-  word-break: break-word;
+  color: var(--color-ink-2);
+  overflow-wrap: anywhere;
 }
 .timeline .ref {
-  flex: 0 0 auto;
-  font-family: var(--mono);
-  font-size: 10.5px;
-  color: var(--text-muted);
-  max-width: 140px;
+  width: 40ch;
+  max-width: 100%;
+  min-width: 0;
+  font-family: var(--font-outlier);
+  font-size: var(--text-xs);
+  color: var(--color-muted);
+  white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  white-space: nowrap;
 }
-@media (max-width: 560px) {
+@keyframes incident-backdrop-in {
+  from { opacity: 0; }
+}
+@keyframes incident-modal-in {
+  from {
+    opacity: 0;
+    transform: scale(0.985);
+  }
+}
+@keyframes incident-modal-fade {
+  from { opacity: 0; }
+}
+@media (hover: hover) and (pointer: fine) {
+  .drawer-close:hover {
+    background: var(--color-glass-hover);
+    color: var(--color-ink);
+  }
+}
+@media (max-width: 1024px) {
+  .drawer {
+    inset: 0;
+    max-width: none;
+    border: 0;
+    border-radius: 0;
+  }
+  .drawer-backdrop {
+    display: none;
+  }
+  .drawer-head {
+    padding: var(--space-sm);
+  }
+  .drawer-body {
+    padding: var(--space-sm) var(--space-sm) var(--space-xl);
+  }
+  .member-facts {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
   .timeline li {
+    grid-template-columns: minmax(120px, auto) minmax(0, 1fr);
+  }
+  .timeline .msg,
+  .timeline .ref {
+    grid-column: 2;
+  }
+}
+@media (max-width: 700px) {
+  .drawer-title h3 {
+    font-size: var(--text-md);
+  }
+  .facts,
+  .member-facts {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .member-facts .fact-reason,
+  .member-facts .fact-sensitivity {
+    grid-column: auto;
+  }
+  .member-head {
+    align-items: flex-start;
     flex-wrap: wrap;
+  }
+  .member-head > b {
+    flex-basis: 100%;
+  }
+  .agent-name {
+    width: 100%;
+    margin-left: 0;
+  }
+  .reason-value {
+    flex-direction: column;
+  }
+  .timeline li {
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--space-3xs);
+  }
+  .timeline .msg,
+  .timeline .ref {
+    grid-column: auto;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .drawer-backdrop,
+  .drawer {
+    animation-name: incident-modal-fade;
+    animation-duration: var(--dur-micro);
   }
 }
 </style>

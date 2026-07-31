@@ -52,7 +52,7 @@ const cpuPct = (v?: number) => (v == null ? '—' : `${v.toFixed(0)}%`)
 
         <div v-if="base.agents.length" class="grp">
           <span class="grp-label">{{ t('incidents.snap.frozenAgents') }}</span>
-          <ul class="plain">
+          <ul class="plain agent-list">
             <li v-for="a in base.agents" :key="a.agent_id">
               <b>{{ a.name || a.hostname || a.agent_id }}</b>
               <span class="hint"> · {{ a.platform || '—' }} · {{ a.agent_version || '—' }}</span>
@@ -61,7 +61,7 @@ const cpuPct = (v?: number) => (v == null ? '—' : `${v.toFixed(0)}%`)
         </div>
         <div v-if="base.targets.length" class="grp">
           <span class="grp-label">{{ t('incidents.snap.frozenTargets') }}</span>
-          <ul class="plain">
+          <ul class="plain target-list">
             <li v-for="tg in base.targets" :key="tg.monitor_id">
               <span class="badge neutral">{{ tg.kind || '—' }}</span>
               <span class="mono"> {{ tg.target || '—' }}<template v-if="tg.port">:{{ tg.port }}</template></span>
@@ -104,24 +104,29 @@ const cpuPct = (v?: number) => (v == null ? '—' : `${v.toFixed(0)}%`)
         <template v-if="e.payload">
           <div v-if="e.payload.network" class="grp">
             <span class="grp-label">{{ t('incidents.snap.group.network') }}</span>
-            <div v-if="e.payload.network.default_route" class="hint">
-              {{ t('incidents.snap.defaultRoute') }}:
-              <span class="mono">{{ e.payload.network.default_route.gateway || '—' }}</span>
-              <template v-if="e.payload.network.default_route.interface">
-                · {{ e.payload.network.default_route.interface }}
-              </template>
+            <div v-if="e.payload.network.default_route" class="hint network-line">
+              <span>{{ t('incidents.snap.defaultRoute') }}:</span>
+              <span class="network-value">
+                <span class="mono">{{ e.payload.network.default_route.gateway || '—' }}</span>
+                <template v-if="e.payload.network.default_route.interface">
+                  · {{ e.payload.network.default_route.interface }}
+                </template>
+              </span>
             </div>
-            <div v-if="e.payload.network.dns_servers?.length" class="hint">
-              DNS: <span class="mono">{{ e.payload.network.dns_servers.join(', ') }}</span>
+            <div v-if="e.payload.network.dns_servers?.length" class="hint network-line">
+              <span>DNS:</span>
+              <span class="mono network-value">{{ e.payload.network.dns_servers.join(', ') }}</span>
             </div>
-            <ul v-if="e.payload.network.interfaces?.length" class="plain">
+            <ul v-if="e.payload.network.interfaces?.length" class="plain interface-list">
               <li v-for="iface in e.payload.network.interfaces" :key="iface.name">
                 <span class="badge" :class="iface.up ? 'ok' : 'open'">
                   {{ iface.up ? t('incidents.snap.ifaceUp') : t('incidents.snap.ifaceDown') }}
                 </span>
-                <b>{{ iface.name }}</b>
+                <b class="interface-name">{{ iface.name }}</b>
                 <span v-if="iface.is_wireless" class="badge neutral">{{ t('incidents.snap.wireless') }}</span>
-                <span v-if="iface.addrs?.length" class="mono hint"> {{ iface.addrs.join(', ') }}</span>
+                <span v-if="iface.addrs?.length" class="mono hint interface-addrs">
+                  {{ iface.addrs.join(', ') }}
+                </span>
               </li>
             </ul>
           </div>
@@ -146,7 +151,8 @@ const cpuPct = (v?: number) => (v == null ? '—' : `${v.toFixed(0)}%`)
 
           <div v-if="e.payload.targets?.length" class="grp">
             <span class="grp-label">{{ t('incidents.snap.group.targets') }}</span>
-            <table class="mini-table">
+            <div class="table-scroll">
+              <table class="mini-table">
               <thead>
                 <tr>
                   <th>{{ t('incidents.snap.thTarget') }}</th>
@@ -163,7 +169,8 @@ const cpuPct = (v?: number) => (v == null ? '—' : `${v.toFixed(0)}%`)
                   <td>{{ tg.error_class ? errorClassLabel(tg.error_class) : '—' }}</td>
                 </tr>
               </tbody>
-            </table>
+              </table>
+            </div>
           </div>
         </template>
         <p v-else-if="!e.reason" class="hint">{{ t('incidents.snap.collecting') }}</p>
@@ -173,65 +180,75 @@ const cpuPct = (v?: number) => (v == null ? '—' : `${v.toFixed(0)}%`)
 </template>
 
 <style scoped>
+/* Hallmark · component: incident snapshot · genre: custom application
+ * theme: NetTact Liquid Glass · design-system: design.md
+ * states: empty · collecting · partial · complete · failed · truncated · expired · responsive
+ * pre-emit critique: P5 H5 E4 S5 R5 V4
+ */
 .snap {
-  margin-top: 18px;
+  margin-top: var(--space-lg);
 }
 .sec-head {
   display: flex;
   align-items: center;
-  gap: 10px;
-  margin-bottom: 10px;
+  gap: var(--space-xs);
+  margin-bottom: var(--space-xs);
 }
 .sec-head h4 {
-  font-size: 14px;
+  font-family: var(--font-display);
+  font-size: var(--text-md);
+  line-height: 1.3;
 }
 .card.sub {
-  padding: 12px 14px;
-  margin: 10px 0;
+  margin: var(--space-xs) 0;
+  padding: var(--space-sm) var(--space-md);
 }
 .card.sub h5 {
-  font-size: 13px;
-  margin-bottom: 8px;
+  margin-bottom: var(--space-xs);
+  font-family: var(--font-display);
+  font-size: var(--text-base);
 }
 .entry-head {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: var(--space-xs);
   flex-wrap: wrap;
-  margin-bottom: 6px;
+  margin-bottom: var(--space-2xs);
 }
 .facts {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px 22px;
-  margin: 6px 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: var(--space-2xs) var(--space-lg);
+  margin: var(--space-2xs) 0;
 }
 .facts > div {
   display: flex;
-  gap: 8px;
-  font-size: 12.5px;
+  min-width: 0;
+  gap: var(--space-2xs);
+  font-size: var(--text-sm);
 }
 .facts dt {
+  flex: 0 0 auto;
   margin: 0;
-  color: var(--text-muted);
+  color: var(--color-muted);
 }
 .facts dd {
   /* Reset the browser's default 40px dd indent so each value sits next to its
      label instead of far to the right. */
   margin: 0;
-  color: var(--text-dim);
+  min-width: 0;
+  color: var(--color-ink-2);
   font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
 }
 .grp {
-  margin: 8px 0;
+  margin: var(--space-sm) 0;
 }
 .grp-label {
   display: block;
-  font-size: 11px;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  color: var(--text-muted);
-  margin-bottom: 4px;
+  margin-bottom: var(--space-2xs);
+  color: var(--color-muted);
+  font-size: var(--text-xs);
 }
 ul.plain {
   list-style: none;
@@ -239,14 +256,42 @@ ul.plain {
   padding: 0;
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: var(--space-2xs);
 }
 ul.plain li {
   display: flex;
   align-items: center;
-  gap: 8px;
+  min-width: 0;
+  gap: var(--space-2xs);
   flex-wrap: wrap;
-  font-size: 12.5px;
+  font-size: var(--text-sm);
+}
+.agent-list li > b,
+.target-list li > .mono {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.network-line {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  align-items: baseline;
+  gap: var(--space-2xs);
+  margin-block: var(--space-2xs);
+}
+.network-value {
+  min-width: 0;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+ul.interface-list li {
+  display: grid;
+  grid-template-columns: auto minmax(100px, max-content) auto minmax(0, 1fr);
+  align-items: start;
+}
+.interface-name,
+.interface-addrs {
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 .grp-status {
   list-style: none;
@@ -254,50 +299,87 @@ ul.plain li {
   padding: 0;
   display: flex;
   flex-wrap: wrap;
-  gap: 8px 16px;
+  gap: var(--space-xs) var(--space-lg);
 }
 .grp-status li {
-  display: flex;
+  display: inline-flex;
   align-items: center;
-  gap: 8px;
-  font-size: 12.5px;
+  min-width: 0;
+  gap: var(--space-2xs);
+  font-size: var(--text-sm);
 }
 .grp-status .field {
-  min-width: 96px;
-  color: var(--text-dim);
+  min-width: 0;
+  color: var(--color-ink-2);
+}
+.table-scroll {
+  max-width: 100%;
+  overflow-x: auto;
+  overscroll-behavior-inline: contain;
 }
 .mini-table {
   width: 100%;
+  min-width: 760px;
   border-collapse: collapse;
-  font-size: 12px;
+  font-size: var(--text-sm);
 }
 .mini-table th,
 .mini-table td {
   text-align: left;
-  padding: 4px 8px;
-  border-bottom: 1px solid var(--border);
+  padding: var(--space-2xs) var(--space-xs);
+  border-bottom: var(--rule-hair) solid var(--color-rule);
   vertical-align: top;
 }
+.mini-table td.mono {
+  min-width: 180px;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
 .mini-table th {
-  color: var(--text-muted);
+  color: var(--color-muted);
   font-weight: 600;
 }
 .notice {
-  font-size: 12.5px;
-  color: var(--text-dim);
+  font-size: var(--text-sm);
+  color: var(--color-ink-2);
   background: var(--surface-2);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  padding: 7px 11px;
-  margin: 8px 0;
+  border: var(--rule-hair) solid var(--color-rule);
+  border-radius: var(--radius-input);
+  padding: var(--space-2xs) var(--space-xs);
+  margin: var(--space-xs) 0;
 }
 .notice.warn {
   color: var(--color-warning-text);
   background: var(--warning-soft);
-  border-color: rgba(251, 191, 36, 0.3);
+  border-color: color-mix(in oklch, var(--color-warning) 30%, transparent);
 }
 .notice.small {
-  padding: 5px 9px;
-  font-size: 12px;
+  padding: var(--space-2xs) var(--space-xs);
+  font-size: var(--text-xs);
+}
+@media (max-width: 800px) {
+  ul.interface-list li {
+    grid-template-columns: auto minmax(0, 1fr) auto;
+  }
+  .interface-addrs {
+    grid-column: 2 / -1;
+  }
+}
+@media (max-width: 520px) {
+  .facts {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .network-line {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  ul.interface-list li {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+  ul.interface-list li > .badge.neutral {
+    grid-column: 2;
+  }
+  .interface-addrs {
+    grid-column: 2;
+  }
 }
 </style>
