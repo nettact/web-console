@@ -16,13 +16,24 @@ import { theme } from '../../theme'
 import { escapeHtml } from '../../lib/escapeHtml'
 import { chartColor, oklchToRgb } from '../../lib/chartColor'
 import { ALIGNED_GRID_LEFT, ALIGNED_GRID_RIGHT } from '../../lib/chartGrid'
-import type { GameChartSeries, GamePoint } from '../../lib/gameRun'
+import { fmtByUnit, isByteUnit } from '../../lib/format'
+import type { GameChartMark, GameChartSeries, GamePoint } from '../../lib/gameRun'
 
 const props = defineProps<{
   title: string
-  // Axis suffix shown on tick labels and in the tooltip (e.g. 'FPS', 'ms').
+  // Axis suffix shown on tick labels and in the tooltip (e.g. 'FPS', 'ms'). The
+  // capacity units ('bytes') are scaled to KB/MB/GB instead, as elsewhere: a
+  // working set printed as 4831838208 is a number nobody reads as 4.5 GB.
   unit: string
   series: GameChartSeries[]
+  // Fixed y bounds, for an axis whose scale is part of the meaning. A process
+  // CPU chart pinned to 0-100 says "a quarter of the machine" at a glance; the
+  // same series auto-scaled to its own range says "busy" no matter the figure.
+  yMin?: number
+  yMax?: number
+  // Spans to shade behind the lines, each carrying the sentence its tooltip
+  // adds for the seconds it covers.
+  marks?: GameChartMark[]
   // The run's window (epoch ms). Pinning it keeps every chart on the page — these
   // frame charts and the network timeline below them — on one identical time
   // axis, so a spike at the same x really is the same moment. It also stops a run
@@ -52,11 +63,33 @@ const chartTheme = computed(() => {
     axisLine: chartColor('--color-chart-axis', isLight ? 'rgba(15, 23, 42, 0.22)' : 'rgba(255, 255, 255, 0.24)'),
     tooltipBg: isLight ? 'rgba(255, 255, 255, 0.97)' : 'rgba(15, 20, 30, 0.92)',
     tooltipText: isLight ? '#10192a' : '#e8eef8',
+    mark: chartColor('--color-warning', isLight ? '#b45309' : '#fbbf24'),
   }
 })
 
+const scaled = computed(() => isByteUnit(props.unit))
+
 const fmtTime = (ms: number) => new Date(ms).toLocaleString(toDateLocale(locale.value), { hour12: false })
-const fmtValue = (v: number) => (Number.isInteger(v) ? String(v) : v.toFixed(1))
+const fmtValue = (v: number) =>
+  scaled.value ? fmtByUnit(props.unit, v) : `${Number.isInteger(v) ? v : v.toFixed(1)} ${props.unit}`
+
+// The shaded span covering an instant, if any. Spans are half-open at the start
+// so two touching seconds do not both claim the boundary.
+const markAt = (ms: number) => props.marks?.find((m) => ms > m.from && ms <= m.to)
+
+// Touching or overlapping spans are merged before they are drawn. The tooltip
+// still reads from the unmerged list, so a run that stuttered through a whole
+// minute renders one band rather than sixty while each second keeps its own
+// figures.
+function mergedMarks(): [number, number][] {
+  const out: [number, number][] = []
+  for (const m of [...(props.marks ?? [])].sort((a, b) => a.from - b.from)) {
+    const last = out[out.length - 1]
+    if (last && m.from <= last[1]) last[1] = Math.max(last[1], m.to)
+    else out.push([m.from, m.to])
+  }
+  return out
+}
 
 // A tooltip row for a second with no measurement says so, because an omitted row
 // reads as "nothing happened" rather than "nothing was observed".
@@ -64,17 +97,21 @@ function tooltip(params: { axisValue: number; seriesName: string; marker: string
   const rows = params
     .map((p) => {
       const raw = p.value[1]
-      const disp = raw === null ? t('gameRuns.chartNoValue') : `${fmtValue(raw)} ${props.unit}`
+      const disp = raw === null ? t('gameRuns.chartNoValue') : fmtValue(raw)
       return `${p.marker}${escapeHtml(p.seriesName)}<span style="float:right;margin-left:20px;font-weight:600">${disp}</span>`
     })
     .join('<br/>')
-  return `${fmtTime(params[0].axisValue)}<br/>${rows}`
+  const hit = markAt(params[0].axisValue)
+  const note = hit ? `<br/><span style="opacity:0.85">${escapeHtml(hit.text)}</span>` : ''
+  return `${fmtTime(params[0].axisValue)}<br/>${rows}${note}`
 }
 
 function render() {
   if (!chart) return
   const ct = chartTheme.value
   const multi = props.series.length > 1
+  const bands = mergedMarks()
+  const markFill = echarts.color.modifyAlpha(ct.mark, 0.16) ?? ct.mark
   chart.setOption(
     {
       title: {
@@ -109,21 +146,41 @@ function render() {
       },
       yAxis: {
         type: 'value',
-        name: props.unit,
+        // A capacity axis carries its scaled suffix (MB/GB) on every tick, so
+        // naming it 'bytes' as well would only contradict the labels.
+        name: scaled.value ? '' : props.unit,
         nameLocation: 'middle',
         nameGap: 40,
         nameRotate: 90,
         nameTextStyle: { color: ct.label, fontSize: 11 },
-        axisLabel: { color: ct.label, fontSize: 11 },
+        axisLabel: {
+          color: ct.label,
+          fontSize: 11,
+          ...(scaled.value ? { formatter: (v: number) => fmtByUnit(props.unit, v) } : {}),
+        },
         axisLine: { show: false },
         splitLine: { lineStyle: { color: ct.split } },
+        ...(props.yMin === undefined ? {} : { min: props.yMin }),
+        ...(props.yMax === undefined ? {} : { max: props.yMax }),
       },
-      series: props.series.map((s) => {
+      series: props.series.map((s, i) => {
         const color = oklchToRgb(s.color) ?? s.color
         return {
           name: s.label,
           type: 'line' as const,
           showSymbol: false,
+          // The bands belong to the chart, not to a line, but ECharts hangs
+          // markArea off a series — so the first one carries them and they are
+          // silent, which keeps them out of the axis tooltip's own hit testing.
+          ...(i === 0 && bands.length
+            ? {
+                markArea: {
+                  silent: true,
+                  itemStyle: { color: markFill },
+                  data: bands.map(([from, to]) => [{ xAxis: from }, { xAxis: to }]),
+                },
+              }
+            : {}),
           // Frame data is one point per second and genuinely spiky; smoothing it
           // would round off the stutters the chart exists to show.
           smooth: false,
@@ -166,7 +223,18 @@ onBeforeUnmount(() => {
 })
 
 watch(
-  () => [props.series, props.title, props.unit, props.xMin, props.xMax, locale.value, theme.value],
+  () => [
+    props.series,
+    props.title,
+    props.unit,
+    props.xMin,
+    props.xMax,
+    props.yMin,
+    props.yMax,
+    props.marks,
+    locale.value,
+    theme.value,
+  ],
   render,
   { deep: true },
 )

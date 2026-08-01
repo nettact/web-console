@@ -25,7 +25,7 @@ import { pushToast } from '../toasts'
 const { t } = useI18n()
 const route = useRoute()
 const { fmtTime } = useMetricMeta()
-const { fmtFps, fmtRunDuration, missingText } = useGameMeta()
+const { fmtCount, fmtFps, fmtRunDuration, missingText } = useGameMeta()
 
 const SITE = 'site_default'
 
@@ -228,16 +228,19 @@ onMounted(async () => {
               <th class="num">{{ t('gameRuns.thDuration') }}</th>
               <th class="num">{{ t('gameRuns.thMeanFps') }}</th>
               <th class="num">{{ t('gameRuns.thLow1') }}</th>
+              <th class="num">
+                {{ t('gameRuns.thStutter') }}<InfoTip :text="t('gameRuns.thStutterHint')" />
+              </th>
               <th>{{ t('gameRuns.thState') }}</th>
               <th></th>
             </tr>
           </thead>
           <tbody>
             <tr v-if="loading && !runs.length">
-              <td colspan="9" class="hint">{{ t('common.loading') }}</td>
+              <td colspan="10" class="hint">{{ t('common.loading') }}</td>
             </tr>
             <tr v-else-if="!runs.length && loaded">
-              <td colspan="9" class="hint">
+              <td colspan="10" class="hint">
                 {{ hasProfiles && filter === 'profiled' ? t('gameRuns.emptyProfiled') : t('gameRuns.emptyRange') }}
               </td>
             </tr>
@@ -267,6 +270,15 @@ onMounted(async () => {
                 <GameValue
                   :value="r.summary.low_1pct_fps === null ? null : fmtFps(r.summary.low_1pct_fps)"
                   :reason="missingText(missingCause('fpsStat', r.caps))"
+                />
+              </td>
+              <!-- 0 here is a run the detector watched and found smooth — a
+                   result worth reading, and the reason this is not collapsed
+                   into the dash beside it. -->
+              <td class="num">
+                <GameValue
+                  :value="r.stutter_count === null ? null : fmtCount(r.stutter_count)"
+                  :reason="missingText(missingCause('stutter', r.caps))"
                 />
               </td>
               <td>
@@ -445,7 +457,7 @@ onMounted(async () => {
   outline-offset: calc(-1 * var(--rule-fine));
 }
 .data-table {
-  min-width: 1020px;
+  min-width: 1120px;
 }
 .data-table thead th {
   background: var(--color-glass-subtle);

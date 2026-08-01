@@ -1,13 +1,27 @@
 import { describe, it, expect } from 'vitest'
-import { CAP_DISPLAYED, CAP_FRAME_TYPE, CAP_PRESENT_META, type GameBucket, type GameRun } from '../api'
+import {
+  CAP_DISPLAYED,
+  CAP_FRAME_TYPE,
+  CAP_PRESENT_META,
+  CAP_PROC_CPU,
+  CAP_PROC_MEM,
+  CAP_STUTTER,
+  type GameBucket,
+  type GameRun,
+} from '../api'
 import {
   bucketsAbsence,
   bucketsTruncated,
+  chartFloor,
   isRunning,
   missingCause,
   observes,
   presentCause,
   qualityFlags,
+  seriesHasValue,
+  stutterMarkState,
+  stutterPerMinute,
+  stutterSeconds,
 } from './gameRun'
 
 function bucket(over: Partial<GameBucket> = {}): GameBucket {
@@ -32,6 +46,20 @@ describe('missingCause', () => {
     expect(missingCause('displayed', [CAP_DISPLAYED])).toEqual({ kind: 'notRecorded' })
   })
 
+  it('backs the stutter and process-resource fields with their own capabilities', () => {
+    expect(missingCause('stutter', [CAP_DISPLAYED])).toEqual({ kind: 'source', cap: CAP_STUTTER })
+    expect(missingCause('procCpu', [CAP_PROC_MEM])).toEqual({ kind: 'source', cap: CAP_PROC_CPU })
+    expect(missingCause('procWs', [CAP_PROC_CPU])).toEqual({ kind: 'source', cap: CAP_PROC_MEM })
+    expect(missingCause('procPriv', [CAP_PROC_CPU])).toEqual({ kind: 'source', cap: CAP_PROC_MEM })
+  })
+
+  // A source can read the game's memory without being able to read its CPU, so
+  // one capability must not stand in for the other.
+  it('does not let one process capability answer for the other', () => {
+    expect(missingCause('procCpu', [CAP_PROC_CPU])).toEqual({ kind: 'notRecorded' })
+    expect(missingCause('procWs', [CAP_PROC_MEM])).toEqual({ kind: 'notRecorded' })
+  })
+
   // A null 1% low says the run was too short to support the figure. Blaming a
   // capability for it would send the user off installing something that would not
   // have helped.
@@ -50,6 +78,13 @@ describe('observes', () => {
 
   it('treats an always-present field as observed', () => {
     expect(observes('fpsStat', [])).toBe(true)
+  })
+
+  it('gates the stutter markers and the two process charts separately', () => {
+    expect(observes('stutter', [CAP_STUTTER])).toBe(true)
+    expect(observes('stutter', [CAP_PROC_CPU, CAP_PROC_MEM])).toBe(false)
+    expect(observes('procCpu', [CAP_PROC_MEM])).toBe(false)
+    expect(observes('procWs', [CAP_PROC_MEM])).toBe(true)
   })
 })
 
@@ -120,6 +155,157 @@ describe('presentCause', () => {
   it('leaves a run whose seconds are loaded to the ordinary reasons', () => {
     expect(presentCause(summarized(842_000), [bucket()], [CAP_PRESENT_META])).toEqual({ kind: 'notRecorded' })
     expect(presentCause(summarized(0), [], [CAP_PRESENT_META])).toEqual({ kind: 'notRecorded' })
+  })
+})
+
+describe('stutterSeconds', () => {
+  const at = (iso: string, over: Partial<GameBucket> = {}) => bucket({ ts: iso, ...over })
+
+  it('marks only the seconds that actually hitched', () => {
+    const marks = stutterSeconds([
+      at('2026-08-01T10:00:01Z', { stutter: { count: 2, excess_ms: 180.4 } }),
+      at('2026-08-01T10:00:02Z', { stutter: { count: 0, excess_ms: 0 } }),
+      at('2026-08-01T10:00:03Z'),
+      at('2026-08-01T10:00:04Z', { stutter: { count: 1, excess_ms: 62 } }),
+    ])
+    expect(marks.map((m) => m.count)).toEqual([2, 1])
+    expect(marks[0].excessMs).toBe(180.4)
+  })
+
+  // A watched second that held nothing is the good news the block exists to
+  // carry, and shading it would say the opposite. Only 0/0 qualifies.
+  it('leaves a watched but smooth second unmarked', () => {
+    expect(stutterSeconds([at('2026-08-01T10:00:01Z', { stutter: { count: 0, excess_ms: 0 } })])).toEqual([])
+  })
+
+  // A merged event is counted in the second it STARTED in, while the time it
+  // cost is booked to every second it spanned. A freeze crossing a boundary
+  // therefore leaves count 0 with a positive excess behind it — a second the
+  // screen was still frozen through, which must be shaded like any other.
+  it('marks the continuation second of a freeze that spans a boundary', () => {
+    const marks = stutterSeconds([
+      at('2026-08-01T10:00:01Z', { stutter: { count: 1, excess_ms: 420 } }),
+      at('2026-08-01T10:00:02Z', { stutter: { count: 0, excess_ms: 180 } }),
+      at('2026-08-01T10:00:03Z', { stutter: { count: 0, excess_ms: 0 } }),
+    ])
+    expect(marks.map((m) => m.kind)).toEqual(['start', 'continuation'])
+    expect(marks.map((m) => m.excessMs)).toEqual([420, 180])
+  })
+
+  // The kind is what picks the tooltip wording: a continuation second must not
+  // be described as "0 stutters" underneath a band that says otherwise.
+  it('calls a second holding an event a start even with no measured excess', () => {
+    const [m] = stutterSeconds([at('2026-08-01T10:00:01Z', { stutter: { count: 1, excess_ms: 0 } })])
+    expect(m.kind).toBe('start')
+  })
+
+  // The bucket timestamp is the moment the second CLOSED, so the span it
+  // describes ends there. Shading forward would mark the second after the hitch.
+  it('spans the second ending at the bucket timestamp', () => {
+    const [m] = stutterSeconds([at('2026-08-01T10:00:05Z', { stutter: { count: 1, excess_ms: 90 } })])
+    const ts = Date.parse('2026-08-01T10:00:05Z')
+    expect(m).toMatchObject({ from: ts - 1000, to: ts })
+  })
+})
+
+describe('chartFloor', () => {
+  const bucketAt = (iso: string) => bucket({ ts: iso })
+
+  // The boundary that motivates this: a run whose first bucket CLOSES at
+  // started_at. That second began a second earlier, so a band drawn for it lands
+  // entirely left of an axis pinned at started_at and gets clipped to nothing —
+  // the single hitch in a single-second run vanishing off the chart while the
+  // card above still counts it.
+  it('reaches back to where the first loaded second began', () => {
+    const start = Date.parse('2026-08-01T10:00:00Z')
+    expect(chartFloor(start, [bucketAt('2026-08-01T10:00:00Z')])).toBe(start - 1000)
+  })
+
+  it('keeps a stutter band inside the window it will be drawn in', () => {
+    const start = Date.parse('2026-08-01T10:00:00Z')
+    const buckets = [bucket({ ts: '2026-08-01T10:00:00Z', stutter: { count: 1, excess_ms: 120 } })]
+    const [mark] = stutterSeconds(buckets)
+    expect(mark.from).toBeGreaterThanOrEqual(chartFloor(start, buckets))
+    expect(mark.to).toBeGreaterThan(chartFloor(start, buckets))
+  })
+
+  // The ordinary run, whose first second closes after it started: the run's own
+  // start is already early enough and must not be pushed back for no reason.
+  it('leaves a run whose first second closes after it started alone', () => {
+    const start = Date.parse('2026-08-01T10:00:00Z')
+    expect(chartFloor(start, [bucketAt('2026-08-01T10:00:05Z')])).toBe(start)
+  })
+
+  it('has nothing to widen for when no second was loaded', () => {
+    const start = Date.parse('2026-08-01T10:00:00Z')
+    expect(chartFloor(start, [])).toBe(start)
+  })
+})
+
+describe('stutterMarkState', () => {
+  const run = (stutter_count: number | null) => ({ stutter_count })
+
+  it('says nothing about stutter when the source cannot detect it', () => {
+    expect(stutterMarkState(run(null), 0, [])).toBe('unwatched')
+    expect(stutterMarkState(run(4), 2, [CAP_DISPLAYED])).toBe('unwatched')
+  })
+
+  it('reports shaded seconds as marked', () => {
+    expect(stutterMarkState(run(4), 2, [CAP_STUTTER])).toBe('marked')
+  })
+
+  // The whole point: a clipped run whose hitches fell past the last loaded
+  // second must not be called smooth, because the card above it says otherwise.
+  it('refuses to call a run smooth when its own count disagrees', () => {
+    expect(stutterMarkState(run(37), 0, [CAP_STUTTER])).toBe('elsewhere')
+  })
+
+  // A segment holding only the tail of a freeze that began before it is shaded,
+  // so it is 'marked' — saying the hitches lie outside the displayed detail
+  // would contradict the bands the reader can see.
+  it('treats a segment of continuation-only bands as marked', () => {
+    const marks = stutterSeconds([
+      bucket({ ts: '2026-08-01T10:00:02Z', stutter: { count: 0, excess_ms: 180 } }),
+    ])
+    expect(marks).toHaveLength(1)
+    expect(stutterMarkState(run(1), marks.length, [CAP_STUTTER])).toBe('marked')
+  })
+
+  it('reads a whole-run zero as genuinely smooth', () => {
+    expect(stutterMarkState(run(0), 0, [CAP_STUTTER])).toBe('smooth')
+  })
+
+  it('separates a declared detector that produced no figure from a quiet one', () => {
+    expect(stutterMarkState(run(null), 0, [CAP_STUTTER])).toBe('notRecorded')
+  })
+})
+
+describe('stutterPerMinute', () => {
+  it('scales the count by the run length', () => {
+    expect(stutterPerMinute(30, 600)).toBe(3)
+  })
+
+  // Dividing an unmeasured count would manufacture a rate of 0 for a run nobody
+  // watched — the one statement this module exists to prevent.
+  it('declines a rate for a count that was never measured', () => {
+    expect(stutterPerMinute(null, 600)).toBeNull()
+  })
+
+  it('declines a rate rather than dividing by a zero duration', () => {
+    expect(stutterPerMinute(4, 0)).toBeNull()
+  })
+
+  // Zero stutters over a real duration is a measurement, not an absence.
+  it('reports a measured zero as a zero rate', () => {
+    expect(stutterPerMinute(0, 600)).toBe(0)
+  })
+})
+
+describe('seriesHasValue', () => {
+  it('separates an all-null series from one with a reading', () => {
+    expect(seriesHasValue([[1, null], [2, null]])).toBe(false)
+    expect(seriesHasValue([[1, null], [2, 0]])).toBe(true)
+    expect(seriesHasValue([])).toBe(false)
   })
 })
 

@@ -1852,6 +1852,9 @@ export default {
     thDuration: 'Duration',
     thMeanFps: 'Mean FPS',
     thLow1: '1% low',
+    thStutter: 'Stutters',
+    thStutterHint:
+      'Stutters detected across the whole run. A 0 means the detector ran and this session held none; a dash means the run was never watched for stutter at all.',
     thState: 'State',
     stateRunning: 'Running',
     stateFinished: 'Finished',
@@ -1881,6 +1884,7 @@ export default {
     missingExpired: 'This reading lived on the run’s per-second detail, which has passed its retention window and been deleted. It was measured — it is unknown now, not 0.',
     chartNoValue: 'not measured',
     seriesUnavailable: 'This run’s capture source cannot observe {series}, so the line is absent from the chart rather than sitting flat at 0.',
+    chartUnavailable: 'This run’s capture source cannot observe {series}, so there is no chart for it — rather than a line sitting flat at 0.',
     listSep: ', ',
 
     duration: 'Duration',
@@ -1903,6 +1907,18 @@ export default {
     droppedFoot: 'Frames presented but never shown',
     droppedRateFoot: '{rate} of presented frames',
 
+    stutterTitle: 'Stutter',
+    stutterHint:
+      'A long frame is one exceeding max(50 ms, 2.5× the baseline), where the baseline is a rolling 30-second median of application frame intervals; consecutive long frames merge into one event. The threshold adapts to the frame rate because a fixed one measures the wrong thing — 20 ms is a severe hitch at 240 fps and an ordinary frame at 45.',
+    stutterCount: 'Stutters',
+    stutterCountFoot: 'Merged long-frame events over the whole run',
+    stutterExcess: 'Time lost to stutter',
+    stutterExcessFoot: 'Total time the long frames ran over the baseline',
+    stutterRate: 'Stutters per minute',
+    stutterRateUnit: '/min',
+    stutterRateFoot: 'Scaled by run length, so runs of different durations compare',
+    stutterRateNoDuration: 'This run has no measured duration to scale by, so the rate is unknown rather than 0.',
+
     captureSource: 'Capture source',
     captureSourceHint: 'The source decides which data exists at all. Anything marked “not captured” is permanently unknown for this run — never 0.',
     sourceUnknown: 'Unknown',
@@ -1913,12 +1929,18 @@ export default {
       frame_type: 'Frame origin',
       present_meta: 'Presentation details',
       per_frame_complete: 'Complete per-frame capture',
+      stutter: 'Stutter detection',
+      proc_cpu: 'Process CPU',
+      proc_mem: 'Process memory',
     },
     capDesc: {
       displayed: 'Follows each frame through to the screen, so displayed and dropped counts and the real on-screen rhythm are known.',
       frame_type: 'Tells frames the game rendered apart from ones the driver generated. Without it, a game using frame generation reports roughly twice the rate its engine actually produced.',
       present_meta: 'Reads the presentation mode, vsync interval, tearing and graphics API.',
       per_frame_complete: 'Every presented frame is observed rather than sampled. Statistics from a sampled source describe the samples, not the second.',
+      stutter: 'Detects long frames against a rolling baseline, so each second carries how many hitches it held and how much time they cost. Without it the percentiles are all there is, and a P99 cannot say whether a second held one bad frame or ten.',
+      proc_cpu: 'Samples the game process’s own CPU usage once a second. Scoped to that process rather than the machine — “the box is busy” and “the game is busy” lead to different fixes.',
+      proc_mem: 'Samples the game process’s own memory footprint once a second. Listed apart from process CPU because the two come from different queries and one can be readable while the other is not.',
     },
     source: {
       presentmon_service: 'Intel PresentMon service',
@@ -1966,12 +1988,39 @@ export default {
     fpsChart: 'Frame rate (one point per second)',
     frameTimeChart: 'Frame time (one point per second)',
     frameTimeCaption: 'An average hugging the bottom while P95 and P99 spike above it is exactly the stutter the mean frame rate hides.',
+    stutterMarkCaption: 'The shaded spans are the seconds a stutter was detected in; hover one for its count and how far it ran over the baseline.',
+    stutterMarkNone: 'This run was watched for stutter and no long frame met the threshold anywhere in it, so nothing is marked.',
+    stutterMarkOutsideSegment:
+      'This run did stutter (see the count above), but not within the seconds this chart covers. The run is long enough that only its earliest stretch was loaded, so the later hitches have no per-second detail here to shade.',
+    stutterMarkNoDetail:
+      'This run did stutter (see the count above), but none of the loaded seconds carry the per-second detail — so the absence of shading is a gap in what was fetched, not a smooth stretch of play.',
+    stutterMarkNotRecorded:
+      'The source declares stutter detection but no stutter figure was ever folded onto this run, so nothing is marked and whether it stuttered is unknown.',
+    stutterMarkTip: 'Stutter ×{count}, {ms} ms over baseline',
+    stutterMarkTipCont: 'Stutter continuing (it began in an earlier second), {ms} ms over baseline here',
+    procCpuChart: 'Game process CPU (one point per second)',
+    procCpuCaption:
+      'A share of the machine’s total CPU capacity, not of one core. The axis is pinned to 0–100 so the figure reads as how much of this machine the game is taking.',
+    procMemChart: 'Game process memory (one point per second)',
+    procMemCaption:
+      'Working set is the part currently resident in physical memory; private bytes is the committed memory this process alone owns. The system can trim the first under pressure and cannot trim the second.',
     seriesPresented: 'Presented',
     seriesDisplayed: 'Displayed',
     seriesApp: 'Game-rendered',
     seriesFtAvg: 'Average',
     seriesFtP95: 'P95',
     seriesFtP99: 'P99',
+    seriesProcCpu: 'Process CPU',
+    seriesWorkingSet: 'Working set',
+    seriesPrivBytes: 'Private bytes',
+    seriesNotRecorded:
+      'The source declares {series} but no second of this run carried it, so the line is absent from the chart rather than sitting flat at 0.',
+    seriesNotRecordedSegment:
+      'The source declares {series} but no second in the loaded segment carried it, so the line is absent from the chart. The rest of this run was not loaded, so whether it was recorded there is unknown.',
+    chartNotRecorded:
+      'The source declares this capability but no second of this run carried the value, so the chart is empty rather than showing a line flat at 0.',
+    chartNotRecordedSegment:
+      'The source declares this capability but no second in the loaded segment carried the value, so the chart is empty. The rest of this run was not loaded, so whether it was recorded there is unknown.',
 
     // ---- game profiles ----
     profilesLink: 'Game profiles',

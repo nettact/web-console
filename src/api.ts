@@ -1394,6 +1394,11 @@ export const CAP_DISPLAYED = 'displayed'
 export const CAP_FRAME_TYPE = 'frame_type'
 export const CAP_PRESENT_META = 'present_meta'
 export const CAP_PER_FRAME_COMPLETE = 'per_frame_complete'
+export const CAP_STUTTER = 'stutter'
+// The process's own CPU and memory are separate capabilities because they come
+// from different queries and one can be readable while the other is not.
+export const CAP_PROC_CPU = 'proc_cpu'
+export const CAP_PROC_MEM = 'proc_mem'
 
 // Whole-run figures, derived server-side by summing the run's frame-time
 // histograms. The FPS figures are null when the run held too few frames for them
@@ -1431,6 +1436,13 @@ export interface GameRun {
   profile_id: string | null
   profile_name: string | null
   summary: GameRunSummary
+  // Whole-run stutter, folded in as the seconds landed, so these outlive the
+  // per-second detail exactly as the summary totals do. Null is "no second was
+  // ever watched for stutter" — a run whose detector was running and found
+  // nothing reports 0, and the two must not be collapsed: one says the run was
+  // smooth, the other says nobody looked.
+  stutter_count: number | null
+  stutter_excess_ms: number | null
 }
 // Which runs a listing asks for: everything, only the ones matched to a profile,
 // or only the ones that matched none.
@@ -1477,6 +1489,29 @@ export interface GamePresent {
   api?: string
   changed?: boolean
 }
+// The second's long-frame events, from the sensor's adaptive detector (a
+// candidate frame exceeds max(50ms, 2.5x the rolling baseline); consecutive
+// candidates merge into one event). Neither field is optional: a block with
+// count 0 is a watched second that held no hitch, and that zero has to survive
+// the trip. The BLOCK's presence is the whole distinction — an absent block
+// means the second was not watched.
+export interface GameStutter {
+  count: number
+  excess_ms: number
+}
+// The tracked game process's own resource usage, sampled at the second boundary
+// rather than derived from the frame stream: it answers whether a bad second was
+// the game running out of room or something else on the machine taking it.
+//
+// Each field is independently optional because the readings fail independently —
+// CPU is a delta and needs two samples, so a run's first second has none, while
+// memory is a level readable at once. `cpu_pct` is a share of TOTAL capacity
+// across all cores (0-100), not of one core.
+export interface GameProcRes {
+  cpu_pct?: number | null
+  ws_bytes?: number | null
+  priv_bytes?: number | null
+}
 export interface GameBucket {
   run_id: string
   ts: string
@@ -1485,6 +1520,8 @@ export interface GameBucket {
   ft_hist: GameHistogram
   disp_ft?: GameDispFT
   present?: GamePresent
+  stutter?: GameStutter | null
+  proc_res?: GameProcRes | null
   quality?: string[]
 }
 

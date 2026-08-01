@@ -19,6 +19,9 @@ import {
   CAP_FRAME_TYPE,
   CAP_PER_FRAME_COMPLETE,
   CAP_PRESENT_META,
+  CAP_PROC_CPU,
+  CAP_PROC_MEM,
+  CAP_STUTTER,
   type GameBucket,
   type GameRun,
 } from '../api'
@@ -33,12 +36,18 @@ import { useMetricMeta } from '../composables/useMetricMeta'
 import {
   bucketsAbsence,
   bucketsTruncated,
+  chartFloor,
   isRunning,
   missingCause,
   observes,
   presentCause,
   qualityFlags,
+  seriesHasValue,
+  stutterMarkState,
+  stutterPerMinute,
+  stutterSeconds,
   type GameCard,
+  type GameChartMark,
   type GameChartSeries,
   type GameField,
   type GamePoint,
@@ -152,9 +161,12 @@ const profileDeleted = computed(() => !!run.value?.profile_id && run.value.profi
 // run long enough to come back clipped: then the charts cover the loaded segment,
 // and stretching the axis to the run's full length would draw hours of blank as
 // though nothing had been measured there.
+//
+// The floor reaches back to where the first loaded second BEGAN rather than to
+// where it closed, so a hitch in that second still has an axis to be shaded on.
 const chartWindow = computed<[number, number]>(() => {
   const r = run.value
-  const start = r ? new Date(r.started_at).getTime() : 0
+  const start = r ? chartFloor(new Date(r.started_at).getTime(), buckets.value) : 0
   const end = r ? (r.ended_at ? new Date(r.ended_at).getTime() : Date.now()) : 0
   if (truncated.value && buckets.value.length) {
     return [start, new Date(buckets.value[buckets.value.length - 1].ts).getTime()]
@@ -211,8 +223,57 @@ const frameCards = computed<GameCard[]>(() => {
   ]
 })
 
+// ---- stutter ----
+// Whole-run figures, folded in as the seconds landed, so they survive bucket
+// retention exactly as the frame totals do. A null count is "nothing watched for
+// stutter"; a 0 is a detector that ran and found nothing, which is the good news
+// this page must be able to deliver.
+const stutterCards = computed<GameCard[]>(() => {
+  const r = run.value
+  if (!r) return []
+  const why = reason('stutter')
+  const rate = stutterPerMinute(r.stutter_count, r.summary.duration_seconds)
+  return [
+    {
+      key: 'stutterCount',
+      label: t('gameRuns.stutterCount'),
+      value: r.stutter_count === null ? null : fmtCount(r.stutter_count),
+      reason: why,
+      foot: t('gameRuns.stutterCountFoot'),
+    },
+    {
+      key: 'stutterExcess',
+      label: t('gameRuns.stutterExcess'),
+      // Rounded to the millisecond: the sub-millisecond digit of a sum over
+      // hundreds of frames is noise dressed as precision.
+      value: r.stutter_excess_ms === null ? null : fmtCount(Math.round(r.stutter_excess_ms)),
+      unit: 'ms',
+      reason: why,
+      foot: t('gameRuns.stutterExcessFoot'),
+    },
+    {
+      key: 'stutterRate',
+      label: t('gameRuns.stutterRate'),
+      value: rate === null ? null : rate.toFixed(1),
+      unit: t('gameRuns.stutterRateUnit'),
+      // A count that exists but has no rate is a run with no measured duration,
+      // which the capability tooltip would misdescribe as an absent detector.
+      reason: r.stutter_count === null ? why : t('gameRuns.stutterRateNoDuration'),
+      foot: t('gameRuns.stutterRateFoot'),
+    },
+  ]
+})
+
 // ---- capture source ----
-const CAPS = [CAP_DISPLAYED, CAP_FRAME_TYPE, CAP_PRESENT_META, CAP_PER_FRAME_COMPLETE]
+const CAPS = [
+  CAP_DISPLAYED,
+  CAP_FRAME_TYPE,
+  CAP_PRESENT_META,
+  CAP_PER_FRAME_COMPLETE,
+  CAP_STUTTER,
+  CAP_PROC_CPU,
+  CAP_PROC_MEM,
+]
 const capRows = computed(() => CAPS.map((cap) => ({ cap, label: capLabel(cap), desc: capDesc(cap), on: caps.value.includes(cap) })))
 
 // The newest second that carried presentation settings — a run may start windowed
@@ -305,6 +366,102 @@ const fpsCaption = computed(() => {
   return t('gameRuns.seriesUnavailable', { series: missing.join(t('gameRuns.listSep')) })
 })
 
+// The seconds that hitched, shaded behind the frame-time lines. They belong on
+// THAT chart because a stutter is a long frame: the band and the P99 spike under
+// it are the same event, and seeing them together is what tells a reader whether
+// a tall p99 was one bad frame or a second of them.
+const stutterMarks = computed<GameChartMark[]>(() => {
+  if (!observes('stutter', caps.value)) return []
+  return stutterSeconds(buckets.value).map((s) => ({
+    from: s.from,
+    to: s.to,
+    // A continuation second carries cost but no event of its own — the freeze
+    // began before it. Printing "0 stutters" over a shaded band would have the
+    // tooltip contradict the shading.
+    text:
+      s.kind === 'start'
+        ? t('gameRuns.stutterMarkTip', { count: s.count, ms: Math.round(s.excessMs) })
+        : t('gameRuns.stutterMarkTipCont', { ms: Math.round(s.excessMs) }),
+  }))
+})
+
+// An unshaded chart has several meanings and only one of them is "the run was
+// smooth". Reading the loaded buckets alone would declare a clipped run smooth
+// while the cards above it count hundreds of hitches that happened past the last
+// second on screen, so the state comes off the whole-run count instead.
+const frameTimeCaption = computed(() => {
+  const base = t('gameRuns.frameTimeCaption')
+  const r = run.value
+  if (!r) return base
+  switch (stutterMarkState(r, stutterMarks.value.length, caps.value)) {
+    case 'unwatched':
+      return base
+    case 'marked':
+      return `${base} ${t('gameRuns.stutterMarkCaption')}`
+    case 'smooth':
+      return `${base} ${t('gameRuns.stutterMarkNone')}`
+    case 'elsewhere':
+      // Clipping is the ordinary cause and the actionable one — the rest of the
+      // run is a fetch away. Without it, the seconds are simply gone.
+      return `${base} ${truncated.value ? t('gameRuns.stutterMarkOutsideSegment') : t('gameRuns.stutterMarkNoDetail')}`
+    default:
+      return `${base} ${t('gameRuns.stutterMarkNotRecorded')}`
+  }
+})
+
+// ---- process resources ----
+// What the frame data cannot answer: whether a bad second was the game running
+// out of room, or something else on the machine taking it.
+const procCpuSeries = computed<GameChartSeries[]>(() => [
+  { key: 'cpu', label: t('gameRuns.seriesProcCpu'), color: '#f472b6', data: points((b) => b.proc_res?.cpu_pct) },
+])
+const procMemSeries = computed<GameChartSeries[]>(() => [
+  { key: 'ws', label: t('gameRuns.seriesWorkingSet'), color: '#38bdf8', data: points((b) => b.proc_res?.ws_bytes) },
+  { key: 'priv', label: t('gameRuns.seriesPrivBytes'), color: '#a78bfa', data: points((b) => b.proc_res?.priv_bytes) },
+])
+const showProcCpu = computed(() => observes('procCpu', caps.value))
+const showProcMem = computed(() => observes('procWs', caps.value))
+
+// A declared capability that no second filled still gets a chart — the axis is
+// the evidence that it was asked for — but the caption says why it is empty
+// rather than leaving a blank plot to be read as a flat zero.
+//
+// seriesHasValue can only see the seconds this page fetched, so on a clipped run
+// "no second of this run carried it" is a claim the page is not entitled to
+// make: the hours it did not load may be full of readings. The wording narrows
+// to the loaded segment exactly when the coverage does.
+const chartEmptyText = () =>
+  truncated.value ? t('gameRuns.chartNotRecordedSegment') : t('gameRuns.chartNotRecorded')
+
+const procCpuCaption = computed(() =>
+  seriesHasValue(procCpuSeries.value[0].data) ? t('gameRuns.procCpuCaption') : chartEmptyText(),
+)
+const procMemCaption = computed(() => {
+  const [ws, priv] = procMemSeries.value
+  const gone = [
+    ...(seriesHasValue(ws.data) ? [] : [ws.label]),
+    ...(seriesHasValue(priv.data) ? [] : [priv.label]),
+  ]
+  if (!gone.length) return t('gameRuns.procMemCaption')
+  if (gone.length === 2) return chartEmptyText()
+  const series = gone.join(t('gameRuns.listSep'))
+  return truncated.value
+    ? t('gameRuns.seriesNotRecordedSegment', { series })
+    : t('gameRuns.seriesNotRecorded', { series })
+})
+
+// With neither capability there is no chart at all, and an unexplained gap
+// between the frame charts and the network timeline reads as a page that forgot
+// something. The capture-source panel above lists them; this says it where the
+// charts would have been.
+const procUnavailable = computed(() => {
+  const missing: string[] = []
+  if (!showProcCpu.value) missing.push(capLabel(CAP_PROC_CPU))
+  if (!showProcMem.value) missing.push(capLabel(CAP_PROC_MEM))
+  if (!missing.length) return ''
+  return t('gameRuns.chartUnavailable', { series: missing.join(t('gameRuns.listSep')) })
+})
+
 // ---- delete ----
 const askDelete = ref(false)
 async function confirmDelete() {
@@ -392,6 +549,14 @@ watch(runId, load)
         <GameStatCards :cards="frameCards" />
       </section>
 
+      <section class="panel counts-panel" aria-labelledby="game-stutter-title">
+        <div class="panel-head">
+          <h3 id="game-stutter-title">{{ t('gameRuns.stutterTitle') }}</h3>
+        </div>
+        <p class="hint panel-hint">{{ t('gameRuns.stutterHint') }}</p>
+        <GameStatCards :cards="stutterCards" />
+      </section>
+
       <section class="panel source-panel" aria-labelledby="game-source-title">
         <div class="panel-head">
           <h3 id="game-source-title">{{ t('gameRuns.captureSource') }}</h3>
@@ -442,11 +607,41 @@ watch(runId, load)
             :title="t('gameRuns.frameTimeChart')"
             unit="ms"
             :series="frameTimeSeries"
+            :marks="stutterMarks"
             :x-min="chartWindow[0]"
             :x-max="chartWindow[1]"
           />
-          <p class="chart-caption">{{ t('gameRuns.frameTimeCaption') }}</p>
+          <p class="chart-caption">{{ frameTimeCaption }}</p>
         </div>
+
+        <div v-if="showProcCpu" class="card chart-card">
+          <!-- Pinned to 0-100 because the figure is a share of the whole
+               machine: auto-scaling a game using 12% of it to fill the plot
+               would draw the same picture as one using 90%. -->
+          <GameRunChart
+            :title="t('gameRuns.procCpuChart')"
+            unit="%"
+            :series="procCpuSeries"
+            :y-min="0"
+            :y-max="100"
+            :x-min="chartWindow[0]"
+            :x-max="chartWindow[1]"
+          />
+          <p class="chart-caption">{{ procCpuCaption }}</p>
+        </div>
+
+        <div v-if="showProcMem" class="card chart-card">
+          <GameRunChart
+            :title="t('gameRuns.procMemChart')"
+            unit="bytes"
+            :series="procMemSeries"
+            :x-min="chartWindow[0]"
+            :x-max="chartWindow[1]"
+          />
+          <p class="chart-caption">{{ procMemCaption }}</p>
+        </div>
+
+        <p v-if="procUnavailable" class="hint notice">{{ procUnavailable }}</p>
       </template>
       <p v-else class="hint notice">{{ bucketsNote }}</p>
 
