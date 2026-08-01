@@ -16,7 +16,7 @@ const props = defineProps<{ report: TraceReportView }>()
 const { t, locale } = useI18n()
 const {
   traceStatusLabel, traceReasonLabel, traceReasonDetail, fallbackReasonDetail, modeLabel,
-  traceSubjectLabel, traceSubjectDetail,
+  traceSubjectLabel, traceSubjectDetail, tracePathScopeLabel, tracePathScopeDetail,
 } = useIncidentLabels()
 
 // Long-form "why it couldn't trace" text, shown when the run ended on a terminal
@@ -57,6 +57,18 @@ const subjectDetail = computed(() =>
   subjectResolved.value
     ? traceSubjectDetail(props.report.subject_kind || '', props.report.subject_reason || '')
     : '',
+)
+
+// Path scope (DIAG-004): which PATH the trace ran over, orthogonal to the
+// subject. An in-tunnel trace examines the monitored target itself
+// (subject_kind 'target', so the subject badge above stays silent) and this
+// badge+note carry the story instead: it ran INSIDE the WireGuard tunnel, with
+// its own interpretation rules. 'direct' is the unremarkable default — no badge.
+const pathScoped = computed(
+  () => !!props.report.path_scope && props.report.path_scope !== 'direct',
+)
+const pathScopeDetail = computed(() =>
+  pathScoped.value ? tracePathScopeDetail(props.report.path_scope) : '',
 )
 
 const fmtDateTime = (s: string | null) =>
@@ -109,6 +121,9 @@ function attemptAt(hop: TraceReportView['hops'][number], idx: number) {
         <span v-if="!isSubjectTarget" class="badge neutral" :title="subjectDetail || undefined">
           {{ traceSubjectLabel(report.subject_kind) }}
         </span>
+        <span v-if="pathScoped" class="badge neutral" :title="pathScopeDetail || undefined">
+          {{ tracePathScopeLabel(report.path_scope) }}
+        </span>
         <span v-if="report.reason" class="hint reason">{{ traceReasonLabel(report.reason) }}</span>
       </div>
       <code class="rid" :title="report.report_id">{{ report.report_id }}</code>
@@ -116,6 +131,7 @@ function attemptAt(hop: TraceReportView['hops'][number], idx: number) {
 
     <p v-if="fallbackDetail" class="fallback-detail" role="note">{{ fallbackDetail }}</p>
     <p v-if="subjectDetail" class="reason-detail" role="note">{{ subjectDetail }}</p>
+    <p v-if="pathScopeDetail" class="reason-detail" role="note">{{ pathScopeDetail }}</p>
     <p v-if="reasonDetail" class="reason-detail" role="note">{{ reasonDetail }}</p>
 
     <dl class="facts">

@@ -677,6 +677,9 @@ export default {
         resolver_loopback: 'DNS server is local',
         proxy_unknown: 'Proxy address unknown',
         no_stun_server: 'No STUN server address',
+        egress_generation_mismatch: 'Tunnel config changed',
+        egress_not_available: 'Tunnel unavailable',
+        attestation_mismatch: 'Path attestation mismatch',
       },
       reasonDetail: {
         permission_denied: 'This Agent’s permission policy does not grant path diagnostics. There is no permission settings page in this product: add diagnostic.traceroute.* to NETTACT_AGENT_PERMISSIONS (or the YAML config permissions key) on the Agent and restart it.',
@@ -699,6 +702,9 @@ export default {
         resolver_loopback: 'This monitor’s DNS server is a local address (systemd-resolved’s 127.0.0.53, a container-local forwarder, and so on). Its link to the upstream is invisible from outside this host, so a hop-by-hop diagnostic would say nothing. Monitor the upstream DNS server directly instead.',
         proxy_unknown: 'This monitor probes through a proxy whose address can no longer be determined (the proxy config was likely deleted or is incomplete). The probe traffic does not go directly to the target, so no diagnostic was aimed at the target — that path is unrelated to this fault.',
         no_stun_server: 'This fault’s frozen evidence does not record which STUN server was used, so the diagnosis subject could not be determined.',
+        egress_generation_mismatch: 'The WireGuard tunnel’s configuration changed between the fault and this diagnostic (a key rotation, for example). The Agent refuses to trace over a different configuration generation and never falls back to another path — by design: a result measured on the new configuration says nothing about a fault under the old one.',
+        egress_not_available: 'This diagnostic was pinned to the WireGuard tunnel the fault occurred on, but that tunnel is no longer present on the Agent (deleted or disabled) or failed to initialize. The trace refused to run rather than measure a different path — a result from another path would be unrelated to this fault.',
+        attestation_mismatch: 'The Agent’s result did not attest to the planned path (its path scope or tunnel reference disagrees with the plan), so the server rejected it rather than display a path of unknown provenance as a normal diagnostic.',
       },
       // Auto-fallback: the requested mode couldn't run and the Agent transparently
       // re-ran the diagnostic in another mode (currently TCP -> ICMP only).
@@ -727,11 +733,23 @@ export default {
         proxy: 'This monitor probes through a proxy, so the traffic path is Agent → proxy → target and the diagnosis subject is the proxy server. A direct trace from this host would measure a path this probe never used, so none was run.',
         stun_server: 'The diagnosis subject is the STUN server this monitor exchanges with; its address comes from this fault’s frozen evidence. The path itself is measured in the mode shown above — ICMP for UDP/DTLS monitors, TCP for TCP/TLS ones.',
         tunnel_unreachable: 'This monitor probes through a WireGuard tunnel, and the fault is in the tunnel itself (the probe traffic never crossed it). The diagnosis subject is therefore the physical path to the WireGuard peer endpoint — which is exactly the link to investigate.',
-        tunnel_target_unreachable: 'This monitor probes through a WireGuard tunnel. The tunnel itself is working and the fault is on the target inside it. Hop-by-hop diagnostics inside the userspace tunnel are not possible, so the diagnosis subject is the physical path to the WireGuard peer endpoint — context, not the segment the fault is on.',
+        tunnel_target_unreachable: 'This monitor probes through a WireGuard tunnel. The tunnel itself is working and the fault is on the target inside it. An in-tunnel hop-by-hop trace would normally run here, but the in-tunnel destination could not be derived from this fault’s frozen evidence, so what is shown is the physical path to the WireGuard peer endpoint — reference only, not the segment the fault is on.',
         tunnel_not_attempted: 'This monitor’s pinned WireGuard proxy is missing, disabled or failed to initialize, so no probe traffic was ever sent — neither the tunnel nor the target was actually tested. This is a configuration problem rather than a network fault; what is shown here is only the physical reachability of the WireGuard peer endpoint, for context.',
         // Fallback when the fault carries no classified cause (a NAT monitor never
         // does), so neither tunnel verdict can be asserted.
         wg_endpoint: 'This monitor probes through a WireGuard tunnel. This fault’s evidence cannot establish whether the tunnel itself is healthy, so no claim is made either way; the diagnosis subject is the physical path to the WireGuard peer endpoint.',
+      },
+      // Which PATH the trace executed over — orthogonal to subject: an in-tunnel
+      // trace examines the monitored target itself (subject stays silent) and
+      // this badge speaks instead. 'direct' has no key on purpose: the host
+      // stack is the unremarkable default and gets no badge.
+      pathScope: {
+        wireguard_inner: 'In-tunnel path',
+        wireguard_physical: 'Tunnel endpoint path',
+      },
+      pathScopeDetail: {
+        wireguard_inner: 'This trace ran hop by hop inside the WireGuard tunnel, toward the monitored target. Read it by the last hop that responded and by whether the target itself replied; if every hop is silent the result is indeterminate — routers may not send Time-Exceeded and hosts may drop Echo, so a broken route on the peer side cannot be told apart from a down host. Note also that WireGuard drops replies whose source address is outside the peer’s AllowedIPs, so such hops show “*” by protocol design.',
+        wireguard_physical: 'This trace measures the host-stack path to the WireGuard peer’s physical endpoint — the tunnel’s outer leg.',
       },
     },
   },

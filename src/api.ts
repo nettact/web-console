@@ -1059,6 +1059,16 @@ export interface TraceSummary {
   // tunnel_target_unreachable = it did cross and the target failed beyond it, so
   // this path is context rather than the fault's own path.
   subject_reason?: string
+  // Which PATH the trace executed over — orthogonal to subject_kind (what was
+  // examined). direct = the host network stack; wireguard_physical = the host-
+  // stack path to the tunnel's outer endpoint; wireguard_inner = hop-by-hop
+  // inside the WireGuard tunnel. Attested by the Agent and verified server-side.
+  path_scope: string // direct | wireguard_physical | wireguard_inner
+  // The exact tunnel generation an in-tunnel trace was pinned to (empty for
+  // host-stack paths). A rotated config is a different path, so the Agent fails
+  // closed on a mismatch instead of measuring something else.
+  egress_id?: string
+  egress_config_serial?: number
 }
 // GET /trace-reports/{id}: a full shared report with its per-attempt hops.
 export interface TraceReportView extends TraceSummary {

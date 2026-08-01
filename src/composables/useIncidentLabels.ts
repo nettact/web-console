@@ -56,6 +56,17 @@ export function useIncidentLabels() {
       return kind && kind !== 'target' && te(key) ? t(key) : ''
     },
 
+    // Which PATH a trace executed over, when it is not the plain host stack:
+    // inside the WireGuard tunnel, or the tunnel's outer (physical) leg.
+    // Orthogonal to the subject helpers above — an in-tunnel trace examines the
+    // target itself, so the subject badge stays silent and this one speaks.
+    tracePathScopeLabel: (s: string) => tr(`incidents.trace.pathScope.${s}`, s),
+    // Long-form "how to read a trace over this path" note (an in-tunnel trace
+    // has its own honest-interpretation rules). Empty when nothing is defined,
+    // so callers hide the note instead of showing a bare code.
+    tracePathScopeDetail: (s: string) =>
+      s && te(`incidents.trace.pathScopeDetail.${s}`) ? t(`incidents.trace.pathScopeDetail.${s}`) : '',
+
     // Evidence comparator, as symbol (compact) and as words (accessible).
     comparatorSymbol: (c: string) => CMP_SYMBOL[c] ?? c,
     comparatorLabel: (c: string) => tr(`incidents.cmp.${c}`, c),
