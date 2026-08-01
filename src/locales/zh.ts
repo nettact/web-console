@@ -701,7 +701,7 @@ export default {
         deadline: '在截止时间内未能确认到达目标：目标或中间设备可能过滤了探测包（并不代表目标真的不可达）；若网络较慢，可适当调大诊断总超时。',
         deadline_exceeded: '在截止时间内未能确认到达目标：目标或中间设备可能过滤了探测包（并不代表目标真的不可达）；若网络较慢，可适当调大诊断总超时。',
         canceled: '诊断被中断（Agent 重连或关闭），未能完成。',
-        resolver_unknown: '该监控使用系统解析器，而 Agent 未提供实际使用的 DNS 服务器地址，因此没有可诊断的对象。可能是所在平台尚不支持读取（如 macOS），也可能是该 Agent 的本地权限策略未授予 network.interface.address.read（读取本机网络配置）。为该监控显式配置 DNS 服务器可绕开这两种情况，直接获得解析路径诊断。',
+        resolver_unknown: '该监控使用系统解析器，而 Agent 未提供实际使用的 DNS 服务器地址，因此没有可诊断的对象。常见原因有三：本机配置了多个 DNS 服务器（解析失败时系统会依次尝试，无法确定是哪一个出的问题，此时宁可不报也不猜）；所在平台尚不支持读取（如 macOS）；该 Agent 的本地权限策略未授予 network.interface.address.read（读取本机网络配置）。为该监控显式配置 DNS 服务器可绕开这三种情况，直接获得解析路径诊断。',
         resolver_loopback: '该监控使用的 DNS 服务器是本机地址（例如 systemd-resolved 的 127.0.0.53 或容器内的本地转发器），它到上游的链路在本机之外不可见，逐跳诊断没有意义。请改为直接监控上游 DNS 服务器。',
         proxy_unknown: '该监控通过代理探测，但代理的地址已无法确定（代理配置可能已被删除或不完整）。探测流量并不直发目标，因此没有对目标发起诊断——那条路径与本次故障无关。',
         no_stun_server: '本次故障的证据中没有记录实际使用的 STUN 服务器地址，无法确定诊断对象。',
@@ -733,6 +733,7 @@ export default {
         stun_server: '诊断对象为该监控实际交互的 STUN 服务器，其地址取自本次故障冻结的证据。路径本身按上方标注的模式测量：UDP/DTLS 类监控用 ICMP，TCP/TLS 类监控用 TCP。',
         tunnel_unreachable: '该监控经 WireGuard 隧道探测，而本次故障发生在隧道本身（探测流量未能穿过隧道）。因此诊断对象为 WireGuard 对端 Endpoint 的物理路径——这正是当前需要排查的链路。',
         tunnel_target_unreachable: '该监控经 WireGuard 隧道探测，隧道本身工作正常，故障发生在隧道内的目标上。当前的用户态隧道无法进行隧道内逐跳诊断，因此诊断对象为到 WireGuard 对端 Endpoint 的物理路径，作为参考链路，并非故障本身所在的那一段。',
+        tunnel_not_attempted: '该监控绑定的 WireGuard 代理缺失、已禁用或初始化失败，探测流量根本没有发出，因此隧道与目标都未被实际测试过——这是一个配置问题，不是网络故障。此处诊断的只是到 WireGuard 对端 Endpoint 的物理可达性，供排查参考。',
         // Fallback when the fault carries no classified cause (a NAT monitor never
         // does), so neither tunnel verdict can be asserted.
         wg_endpoint: '该监控经 WireGuard 隧道探测。本次故障的证据无法判定隧道本身是否正常，因此不作断言；诊断对象为到 WireGuard 对端 Endpoint 的物理路径。',

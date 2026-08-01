@@ -46,8 +46,17 @@ const isSubjectTarget = computed(() => {
   const k = props.report.subject_kind
   return !k || k === 'target'
 })
+// A report that terminalized before dispatch (resolver_unknown, proxy_unknown, …)
+// names its subject KIND but has no destination, because the subject could not be
+// resolved. Its subject note would describe examining an endpoint that was never
+// identified, directly above the reason note explaining that none was — so the
+// note is suppressed there and the reason speaks alone. The badge stays: which
+// KIND of subject went undiagnosed is still worth saying.
+const subjectResolved = computed(() => !!(props.report.dest_host || props.report.dest_ip))
 const subjectDetail = computed(() =>
-  traceSubjectDetail(props.report.subject_kind || '', props.report.subject_reason || ''),
+  subjectResolved.value
+    ? traceSubjectDetail(props.report.subject_kind || '', props.report.subject_reason || '')
+    : '',
 )
 
 const fmtDateTime = (s: string | null) =>
