@@ -1379,6 +1379,103 @@ export interface AgentInterfaces {
   }
 }
 
+// ---- game presentation history ----
+//
+// Mirrors protocol/gamesense and server-core/gamedata. Read those before touching
+// these types: every optional field here is optional because a capture source may
+// be unable to observe it, and `undefined`/`null` therefore means NOT MEASURED.
+// Substituting 0 anywhere below turns "we cannot see dropped frames" into "this
+// game dropped none", which is a different — and false — statement.
+
+// What a run's capture source could observe. A capability that is absent
+// guarantees the matching fields are absent for the whole run, which is how the
+// UI can explain a blank instead of just showing one.
+export const CAP_DISPLAYED = 'displayed'
+export const CAP_FRAME_TYPE = 'frame_type'
+export const CAP_PRESENT_META = 'present_meta'
+export const CAP_PER_FRAME_COMPLETE = 'per_frame_complete'
+
+// Whole-run figures, derived server-side by summing the run's frame-time
+// histograms. The FPS figures are null when the run held too few frames for them
+// to mean anything; displayed/dropped are null when no second carried the count.
+export interface GameRunSummary {
+  duration_seconds: number
+  mean_fps: number | null
+  low_1pct_fps: number | null
+  low_0_1pct_fps: number | null
+  presented: number
+  displayed: number | null
+  dropped: number | null
+}
+// One continuous stretch of a game presenting frames. `ended_at` is null while it
+// is still going, which is the only difference between a live run and a finished
+// one — `last_seen_at` advances either way.
+export interface GameRun {
+  id: string
+  agent_id: string
+  site_id: string
+  proc: string
+  title?: string
+  started_at: string
+  last_seen_at: string
+  ended_at: string | null
+  source?: string
+  caps: string[]
+  summary: GameRunSummary
+}
+export interface GameRunPage {
+  items: GameRun[]
+  total: number
+}
+// Only `presented` is universal: the rest describe what became of those frames
+// and are omitted when the source could not see that far.
+export interface GameFrames {
+  presented: number
+  displayed?: number
+  dropped?: number
+  app?: number
+  generated?: number
+}
+// Within-second frame-interval statistics, in milliseconds. They describe THIS
+// second and must not be averaged across seconds to describe a run.
+export interface GameFrameTimes {
+  avg: number
+  p50: number
+  p95: number
+  p99: number
+  max: number
+  sd: number
+}
+export interface GameHistogram {
+  layout: string
+  counts: number[]
+}
+// Intervals between frames reaching the SCREEN rather than being produced. Only
+// under CAP_DISPLAYED.
+export interface GameDispFT {
+  avg: number
+  p95: number
+}
+// The second's dominant presentation settings; `changed` marks a second that was
+// not uniform, so the single value is a summary of a transition.
+export interface GamePresent {
+  mode?: string
+  sync?: number
+  tearing?: boolean
+  api?: string
+  changed?: boolean
+}
+export interface GameBucket {
+  run_id: string
+  ts: string
+  frames: GameFrames
+  ft: GameFrameTimes
+  ft_hist: GameHistogram
+  disp_ft?: GameDispFT
+  present?: GamePresent
+  quality?: string[]
+}
+
 export class AuthError extends Error {}
 
 // Non-2xx responses other than 401 throw ApiError, which carries the HTTP status
@@ -1517,6 +1614,30 @@ export const api = {
   },
   // All series recorded for an agent — populates the history browser selector.
   listSeries: (id: string) => req<SeriesInfo[]>('GET', `/api/v1/agents/${encodeURIComponent(id)}/series`),
+  // Game runs for one agent, newest first. `since`/`until` are unix seconds and
+  // select runs OVERLAPPING that window, so a session already under way when the
+  // window opened is included rather than hidden.
+  gameRuns: (id: string, opts: { since?: number; until?: number; limit?: number } = {}) => {
+    const p = new URLSearchParams()
+    if (opts.since) p.set('since', String(opts.since))
+    if (opts.until) p.set('until', String(opts.until))
+    if (opts.limit) p.set('limit', String(opts.limit))
+    const qs = p.toString()
+    return req<GameRunPage>('GET', `/api/v1/agents/${encodeURIComponent(id)}/game-runs${qs ? '?' + qs : ''}`)
+  },
+  gameRun: (id: string) => req<GameRun>('GET', `/api/v1/game-runs/${encodeURIComponent(id)}`),
+  // One run's seconds in time order. The default limit (3600) is an hour of play;
+  // a longer run needs it raised explicitly rather than being silently truncated
+  // into a chart that looks complete.
+  gameRunBuckets: (id: string, opts: { since?: number; until?: number; limit?: number } = {}) => {
+    const p = new URLSearchParams()
+    if (opts.since) p.set('since', String(opts.since))
+    if (opts.until) p.set('until', String(opts.until))
+    if (opts.limit) p.set('limit', String(opts.limit))
+    const qs = p.toString()
+    return req<GameBucket[]>('GET', `/api/v1/game-runs/${encodeURIComponent(id)}/buckets${qs ? '?' + qs : ''}`)
+  },
+  deleteGameRun: (id: string) => req<unknown>('DELETE', `/api/v1/game-runs/${encodeURIComponent(id)}`),
   // Current interface set + collection-level Wi-Fi verdict (with server-computed
   // freshness). Agent-scoped, session-protected.
   agentInterfaces: (id: string) =>

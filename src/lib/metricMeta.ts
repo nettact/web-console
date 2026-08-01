@@ -109,12 +109,6 @@ const METRIC_ORDER = [
   'wifi.quality_pct',
   'wifi.link_rx_mbps',
   'wifi.link_tx_mbps',
-  // Frame rate first: it is the number a player recognizes. The frame times
-  // follow because they are what explains it — a good average with a bad P95 is
-  // the stutter the average hides.
-  'game.fps.current',
-  'game.frame_time.avg_ms',
-  'game.frame_time.p95_ms',
 ]
 export const orderOf = (kind: string) => {
   const i = METRIC_ORDER.indexOf(kind)
@@ -160,11 +154,6 @@ const KIND_COLORS: Record<string, string> = {
   'host.net.rx_bps': '#38bdf8',
   'host.net.tx_bps': '#f472b6',
   'host.temp.c': '#fb923c',
-  'game.fps.current': '#34d399',
-  // The two frame-time series share a chart, so they need to stay apart at a
-  // glance: the average sits low and steady, the P95 spikes above it.
-  'game.frame_time.avg_ms': '#38bdf8',
-  'game.frame_time.p95_ms': '#f472b6',
 }
 export const FALLBACK = ['#38bdf8', '#fbbf24', '#a78bfa', '#f472b6', '#818cf8', '#34d399']
 export const kindColor = (k: string) => KIND_COLORS[k] || FALLBACK[Math.abs(hash(k)) % FALLBACK.length]
