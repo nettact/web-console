@@ -747,9 +747,15 @@ export default {
         wireguard_inner: 'In-tunnel path',
         wireguard_physical: 'Tunnel endpoint path',
       },
+      // States which path the report is PINNED to — true whether or not a probe
+      // was ever sent (queued reports and refusals included). How to read the
+      // hops lives in pathScopeReading, shown only once hops exist.
       pathScopeDetail: {
-        wireguard_inner: 'This trace ran hop by hop inside the WireGuard tunnel, toward the monitored target. Read it by the last hop that responded and by whether the target itself replied; if every hop is silent the result is indeterminate — routers may not send Time-Exceeded and hosts may drop Echo, so a broken route on the peer side cannot be told apart from a down host. Note also that WireGuard drops replies whose source address is outside the peer’s AllowedIPs, so such hops show “*” by protocol design.',
-        wireguard_physical: 'This trace measures the host-stack path to the WireGuard peer’s physical endpoint — the tunnel’s outer leg.',
+        wireguard_inner: 'This trace is pinned to run inside the WireGuard tunnel, hop by hop toward the monitored target rather than direct from this host.',
+        wireguard_physical: 'This trace is pinned to the host-stack path toward the WireGuard peer’s physical endpoint — the tunnel’s outer leg.',
+      },
+      pathScopeReading: {
+        wireguard_inner: 'Read it by the last hop that responded and by whether the target itself replied; if every hop is silent the result is indeterminate — routers may not send Time-Exceeded and hosts may drop Echo, so a broken route on the peer side cannot be told apart from a down host. Note also that WireGuard drops replies whose source address is outside the peer’s AllowedIPs, so such hops show “*” by protocol design.',
       },
     },
   },
@@ -1498,7 +1504,7 @@ export default {
       enable: 'Enable path diagnostics',
       enableHelp: 'When off, no automatic traceroute runs.',
       totalTimeout: 'Total timeout',
-      totalTimeoutHelp: 'Overall time budget for one diagnostic (5–120s).',
+      totalTimeoutHelp: 'Overall time budget for one diagnostic (5–600s).',
       maxHops: 'Max hops',
       maxHopsHelp: 'Maximum TTL probed (1–64).',
       attempts: 'Attempts per hop',

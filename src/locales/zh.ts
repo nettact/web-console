@@ -752,9 +752,14 @@ export default {
         wireguard_inner: '隧道内路径',
         wireguard_physical: '隧道物理路径',
       },
+      // 说明本报告「固定使用哪条路径」——无论探测是否真的发出（排队中、被拒绝执行
+      // 时同样成立）。跳的解读规则见 pathScopeReading，仅在确有跳数据时展示。
       pathScopeDetail: {
-        wireguard_inner: '本条诊断在 WireGuard 隧道内部逐跳执行，方向为隧道内的受监控目标。解读时以最后一个有响应的跳为准，并结合目标本身是否响应；若全程无响应则结果不作判定——路由器可以不回 Time-Exceeded、主机可以不应答 Echo，无法据此区分对端内网路由中断与目标主机宕机。另外，WireGuard 会丢弃源地址不在对端 AllowedIPs 内的回包，这类跳按协议特性显示为「*」。',
-        wireguard_physical: '本条诊断测量的是从本机经主机网络栈到 WireGuard 对端物理 Endpoint 的路径，即隧道的外层链路。',
+        wireguard_inner: '本条诊断固定在该 WireGuard 隧道内部执行，逐跳方向为隧道内的受监控目标，而非从本机直发。',
+        wireguard_physical: '本条诊断固定测量从本机经主机网络栈到 WireGuard 对端物理 Endpoint 的路径，即隧道的外层链路。',
+      },
+      pathScopeReading: {
+        wireguard_inner: '解读时以最后一个有响应的跳为准，并结合目标本身是否响应；若全程无响应则结果不作判定——路由器可以不回 Time-Exceeded、主机可以不应答 Echo，无法据此区分对端内网路由中断与目标主机宕机。另外，WireGuard 会丢弃源地址不在对端 AllowedIPs 内的回包，这类跳按协议特性显示为「*」。',
       },
     },
   },
@@ -1507,7 +1512,7 @@ export default {
       enable: '启用路径诊断',
       enableHelp: '关闭后不再自动执行 Traceroute。',
       totalTimeout: '总超时',
-      totalTimeoutHelp: '单次诊断的总时长上限（5–120 秒）。',
+      totalTimeoutHelp: '单次诊断的总时长上限（5–600 秒）。',
       maxHops: '最大跳数',
       maxHopsHelp: '探测的最大 TTL（1–64）。',
       attempts: '每跳尝试次数',
