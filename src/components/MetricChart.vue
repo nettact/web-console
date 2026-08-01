@@ -10,6 +10,7 @@ import { fmtByUnit, isByteUnit } from '../lib/format'
 import { escapeHtml } from '../lib/escapeHtml'
 import { lineDataWithGaps } from '../lib/chartSeries'
 import { chartColor, oklchToRgb } from '../lib/chartColor'
+import { ALIGNED_GRID_LEFT, ALIGNED_GRID_RIGHT } from '../lib/chartGrid'
 
 const { t, locale } = useI18n()
 
@@ -50,7 +51,18 @@ const props = defineProps<{
   title: string
   metrics: ChartMetric[]
   rangeSec?: number
+  // Pin the time axis to an explicit window (epoch ms). Without it ECharts fits
+  // the axis to the data, which is right for a "last N hours" chart but wrong
+  // when this chart has to line up tick-for-tick with another one beside it —
+  // the game run's network timeline reads against the frame charts above it, and
+  // two axes fitted to their own data would put the same moment in two places.
+  // Pinning also switches the grid to the shared aligned geometry, because equal
+  // axis bounds inside unequal plot rectangles still misplace the same instant.
+  xMin?: number
+  xMax?: number
 }>()
+
+const aligned = computed(() => props.xMin !== undefined || props.xMax !== undefined)
 
 const el = ref<HTMLDivElement>()
 let chart: echarts.ECharts | null = null
@@ -221,9 +233,16 @@ function renderLines(ms: ChartMetric[]) {
       // Title sits top-left; the legend is top-right for a few series, or wraps
       // into centered rows below the title when there are many (see above).
       legend,
-      grid: { left: 58, right: axisUnits.length > 1 ? 72 : 22, top: gridTop, bottom: 30 },
+      grid: {
+        left: aligned.value ? ALIGNED_GRID_LEFT : 58,
+        right: aligned.value ? ALIGNED_GRID_RIGHT : axisUnits.length > 1 ? 72 : 22,
+        top: gridTop,
+        bottom: 30,
+      },
       xAxis: {
         type: 'time',
+        ...(props.xMin === undefined ? {} : { min: props.xMin }),
+        ...(props.xMax === undefined ? {} : { max: props.xMax }),
         axisLine: { lineStyle: { color: ct.axisLine } },
         axisLabel: { color: ct.label, fontSize: 11 },
         splitLine: { show: false },
@@ -412,7 +431,7 @@ onBeforeUnmount(() => {
 // `locale` re-renders axis labels/legends/tooltips on language switch; `theme`
 // re-renders the chart chrome palette on light/dark switch.
 watch(
-  () => [props.metrics, props.rangeSec, locale.value, theme.value],
+  () => [props.metrics, props.rangeSec, props.xMin, props.xMax, locale.value, theme.value],
   render,
   { deep: true },
 )

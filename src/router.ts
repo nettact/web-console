@@ -9,6 +9,7 @@ import TargetStatus from './views/TargetStatus.vue'
 import TargetStatusHistory from './views/TargetStatusHistory.vue'
 import HostMetrics from './views/HostMetrics.vue'
 import GamePerformance from './views/GamePerformance.vue'
+import GameProfiles from './views/GameProfiles.vue'
 import GameRunDetail from './views/GameRunDetail.vue'
 import Monitoring from './views/Monitoring.vue'
 import MonitorForm from './views/MonitorForm.vue'
@@ -33,6 +34,9 @@ const router = createRouter({
     // Game runs are not time series (a second of rendering is a distribution, not
     // a scalar), so they get their own pages rather than a Host Metrics section.
     { path: '/game-performance', component: GamePerformance },
+    // Profiles are capture configuration for the game pages, so they hang off the
+    // same route rather than claiming a nav entry of their own.
+    { path: '/game-performance/profiles', component: GameProfiles },
     { path: '/game-performance/runs/:id', component: GameRunDetail },
     { path: '/monitoring', component: Monitoring },
     { path: '/monitoring/groups/new', component: MonitorGroupForm },

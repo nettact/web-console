@@ -1410,6 +1410,13 @@ export interface GameRunSummary {
 // One continuous stretch of a game presenting frames. `ended_at` is null while it
 // is still going, which is the only difference between a live run and a finished
 // one — `last_seen_at` advances either way.
+//
+// `profile_id` is the game profile the run was matched against when it was
+// recorded; null means the process matched nothing (an "other process" run).
+// `profile_name` is resolved at read time, so a set `profile_id` with a null
+// `profile_name` is a profile that has since been DELETED — the run stays stamped
+// with the profile it was captured under, and saying "no profile" instead would
+// rewrite what was recorded.
 export interface GameRun {
   id: string
   agent_id: string
@@ -1421,8 +1428,13 @@ export interface GameRun {
   ended_at: string | null
   source?: string
   caps: string[]
+  profile_id: string | null
+  profile_name: string | null
   summary: GameRunSummary
 }
+// Which runs a listing asks for: everything, only the ones matched to a profile,
+// or only the ones that matched none.
+export type GameRunFilter = 'all' | 'profiled' | 'other'
 export interface GameRunPage {
   items: GameRun[]
   total: number
@@ -1474,6 +1486,38 @@ export interface GameBucket {
   disp_ft?: GameDispFT
   present?: GamePresent
   quality?: string[]
+}
+
+// ---- game profiles ----
+//
+// A profile is the site's declaration that a set of executables is a game worth
+// recording: what to call it, what frame rate it is aiming for, how deeply to
+// instrument it, and which monitors describe the network it plays over.
+
+// How deeply the capture source instruments a matched process. 'base' is the
+// frame-time record every source can produce; 'diag' additionally asks for the
+// CPU/GPU breakdown, which costs measurably more per second.
+export type GameProfileTier = 'base' | 'diag'
+
+// `target_fps` is null when no frame-rate goal was declared — NOT 0, which would
+// claim the player is aiming at a still image. Timestamps are unix seconds.
+export interface GameProfile {
+  id: string
+  site_id: string
+  name: string
+  exe: string[]
+  target_fps: number | null
+  tier: GameProfileTier
+  monitor_ids: string[]
+  created_at: number
+  updated_at: number
+}
+export type GameProfileInput = Omit<GameProfile, 'id' | 'site_id' | 'created_at' | 'updated_at'>
+
+// Site-wide capture policy. `record_unmatched` false is strict mode: processes no
+// profile claims are never tracked and never reported.
+export interface GameCollectionSettings {
+  record_unmatched: boolean
 }
 
 export class AuthError extends Error {}
@@ -1576,15 +1620,25 @@ export const api = {
   // Samples for one kind, scoped by monitor (user-created monitors) or by
   // target string (system series). When `monitor` is set the server filters on
   // the series' monitor_id, so two monitors sharing a target never mix.
+  //
+  // `until` is an ABSOLUTE unix-seconds upper bound; the effective window is
+  // [now − sinceSeconds, min(now, until)] and the server picks its rollup
+  // resolution from THAT window. It exists for windows that ended in the past: a
+  // two-day-old half-hour run asked for as "the last two days" would be served
+  // hourly buckets, which describe the wrong thing entirely. The server orders
+  // ascending and cuts at `limit`, so a caller must size the limit for the window
+  // and the resolution it will get back — an undersized one silently drops the
+  // NEWEST end of the window rather than erroring.
   metrics: (
     id: string,
     kind: string,
-    opts: { target?: string; monitor?: string; limit?: number; sinceSeconds?: number } = {},
+    opts: { target?: string; monitor?: string; limit?: number; sinceSeconds?: number; until?: number } = {},
   ) => {
     const p = new URLSearchParams({ kind, limit: String(opts.limit ?? 200) })
     if (opts.target) p.set('target', opts.target)
     if (opts.monitor) p.set('monitor', opts.monitor)
     if (opts.sinceSeconds) p.set('since_seconds', String(opts.sinceSeconds))
+    if (opts.until) p.set('until', String(opts.until))
     return req<Sample[]>('GET', `/api/v1/agents/${encodeURIComponent(id)}/metrics?${p.toString()}`)
   },
   // Per-kind latest/P95/avg aggregated server-side from raw samples (default
@@ -1616,12 +1670,17 @@ export const api = {
   listSeries: (id: string) => req<SeriesInfo[]>('GET', `/api/v1/agents/${encodeURIComponent(id)}/series`),
   // Game runs for one agent, newest first. `since`/`until` are unix seconds and
   // select runs OVERLAPPING that window, so a session already under way when the
-  // window opened is included rather than hidden.
-  gameRuns: (id: string, opts: { since?: number; until?: number; limit?: number } = {}) => {
+  // window opened is included rather than hidden. `runs` narrows to the profiled
+  // sessions or to the processes no profile claimed (server default: all).
+  gameRuns: (
+    id: string,
+    opts: { since?: number; until?: number; limit?: number; runs?: GameRunFilter } = {},
+  ) => {
     const p = new URLSearchParams()
     if (opts.since) p.set('since', String(opts.since))
     if (opts.until) p.set('until', String(opts.until))
     if (opts.limit) p.set('limit', String(opts.limit))
+    if (opts.runs) p.set('runs', opts.runs)
     const qs = p.toString()
     return req<GameRunPage>('GET', `/api/v1/agents/${encodeURIComponent(id)}/game-runs${qs ? '?' + qs : ''}`)
   },
@@ -1638,6 +1697,21 @@ export const api = {
     return req<GameBucket[]>('GET', `/api/v1/game-runs/${encodeURIComponent(id)}/buckets${qs ? '?' + qs : ''}`)
   },
   deleteGameRun: (id: string) => req<unknown>('DELETE', `/api/v1/game-runs/${encodeURIComponent(id)}`),
+  // Game profiles are site-scoped; editing one re-pushes the site's game config to
+  // every agent, so a save here changes what the agents capture from then on —
+  // runs already recorded keep the profile they were captured under.
+  gameProfiles: (siteID: string) =>
+    req<{ items: GameProfile[] }>('GET', `/api/v1/sites/${encodeURIComponent(siteID)}/game-profiles`),
+  createGameProfile: (siteID: string, body: GameProfileInput) =>
+    req<GameProfile>('POST', `/api/v1/sites/${encodeURIComponent(siteID)}/game-profiles`, body),
+  updateGameProfile: (id: string, body: GameProfileInput) =>
+    req<GameProfile>('PUT', `/api/v1/game-profiles/${encodeURIComponent(id)}`, body),
+  deleteGameProfile: (id: string) => req<unknown>('DELETE', `/api/v1/game-profiles/${encodeURIComponent(id)}`),
+  // Site-wide game capture policy (currently just the unmatched-process switch).
+  gameCollection: (siteID: string) =>
+    req<GameCollectionSettings>('GET', `/api/v1/sites/${encodeURIComponent(siteID)}/game-collection`),
+  setGameCollection: (siteID: string, body: GameCollectionSettings) =>
+    req<GameCollectionSettings>('PUT', `/api/v1/sites/${encodeURIComponent(siteID)}/game-collection`, body),
   // Current interface set + collection-level Wi-Fi verdict (with server-computed
   // freshness). Agent-scoped, session-protected.
   agentInterfaces: (id: string) =>

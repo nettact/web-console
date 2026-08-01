@@ -1973,9 +1973,122 @@ export default {
     seriesFtP95: 'P95',
     seriesFtP99: 'P99',
 
+    // ---- game profiles ----
+    profilesLink: 'Game profiles',
+    filterLabel: 'Which runs to show',
+    filterProfiled: 'Profiled games',
+    filterOther: 'Other processes',
+    filterAll: 'All',
+    listHintFiltered:
+      'Only runs matched to a game profile are listed by default. Switch to “Other processes” for the ones no profile claimed — they are still recorded, they just were not treated as games.',
+    emptyProfiled:
+      'No runs matched a game profile in this range. Check “Other processes” for something that has yet to be profiled.',
+    thProfile: 'Profile',
+    createProfile: 'Create profile',
+    profileLabel: 'Profile',
+    profileDeleted: 'Profile deleted',
+    profileDeletedHint:
+      'This run was captured under a game profile that has since been deleted. The run keeps the profile it was recorded under — calling it “no profile” would rewrite what was actually recorded.',
+    profileNone: 'No profile matched',
+    profileNoneHint:
+      'No game profile claimed this process when the run was recorded. Create one on the Game profiles page and later runs will be filed under it.',
+
+    net: {
+      title: 'Joint diagnosis · network',
+      hint: 'The same machine and the same seconds as the frame charts above. Both time axes are pinned to the identical window, so the x position lines up between them.',
+      sourceProfile: 'Charted from the monitors this game profile links.',
+      sourceFallback: 'This run links no monitors, so the machine’s own gateway / ICMP monitors are charted instead.',
+      sourceLinkedMissing:
+        'The monitors this game profile links have no data on this agent, so its own gateway / ICMP monitors are charted instead.',
+      probeChart: 'Latency and loss',
+      wifiChart: 'Wi-Fi signal',
+      throughputChart: 'Host network throughput',
+      absentNote:
+        'This agent recorded no {series}, so there is no chart for it — rather than a line sitting at zero.',
+      absentProbe: 'usable ICMP monitor',
+      absentWifi: 'Wi-Fi',
+      absentThroughput: 'network throughput',
+      nothing: 'This agent has no network data to chart for this stretch of time.',
+    },
+
     durHM: '{h}h {m}m',
     durMS: '{m}m {s}s',
     durS: '{s}s',
+  },
+
+  gameProfiles: {
+    title: 'Game profiles',
+    sub: 'Declare which executables count as a game: what to call it, what frame rate it is aiming at, how deeply to instrument it, and which network it is played over.',
+    back: 'Back to game performance',
+    collectionTitle: 'Unmatched processes',
+    recordUnmatched: 'Record processes that match no profile',
+    recordUnmatchedOnHint:
+      'Every process presenting frames is recorded, browsers and video players included. They appear under “Other processes”, where a profile can be created for them at any time.',
+    recordUnmatchedOffHint:
+      'Only processes matching a game profile are recorded. Everything else is never tracked and leaves no data behind — including the sessions you might want to look back at.',
+    listTitle: 'Profiles',
+    listHint:
+      'A profile is capture configuration: saving one pushes it to every agent and takes effect from that moment. Runs already recorded keep the profile they were captured under.',
+    empty: 'No game profiles yet.',
+    newProfile: 'New profile',
+    newTitle: 'New game profile',
+    editTitle: 'Edit game profile',
+    thName: 'Name',
+    thExe: 'Executables',
+    thFps: 'Target FPS',
+    thTier: 'Capture depth',
+    thMonitors: 'Monitors',
+    thUpdated: 'Updated',
+    edit: 'Edit',
+    name: 'Name',
+    namePlaceholder: 'e.g. Counter-Strike 2',
+    exe: 'Executables',
+    exeHint:
+      'The process name — the only thing that tells one game from another. Several are allowed: the same game often runs under a different process name per launcher or version.',
+    exePlaceholder: 'cs2.exe',
+    exeAdd: 'Add',
+    exeRemove: 'Remove {name}',
+    exeEmpty: 'No executables added yet.',
+    fps: 'Target FPS',
+    fpsUnset: 'Not set',
+    fpsCustom: 'Custom',
+    fpsCustomPlaceholder: 'e.g. 175',
+    fpsHint:
+      'Used only to judge whether the frame rate met expectations. Leave it unset for no goal — nothing here will guess one from your refresh rate.',
+    tier: 'Capture depth',
+    tierBase: 'Base',
+    tierBaseDesc: 'Frame rate and frame times. Every capture source can do it, at negligible cost.',
+    tierDiag: 'Diagnostic',
+    // The description says what it collects TODAY, not what it is meant to.
+    tierDiagDesc:
+      'Reserved for the deeper CPU / GPU time breakdown. What it actually collects today is identical to Base.',
+    tierDiagUnavailable: 'Not implemented yet',
+    tierDiagUnavailableHint:
+      'Diagnostic capture has not been built: the sensor collects nothing extra for this option and GPU telemetry is still switched off agent-side. The choice opens up once it ships — until then it would give you exactly the same data as Base.',
+    tierDiagStored:
+      'This profile is already stored as Diagnostic and is kept that way; nothing here rewrites it, only an edit you make yourself.',
+    monitors: 'Linked monitors',
+    monitorsHint:
+      'A run’s network timeline charts these monitors first. Linking none is fine — it falls back to the machine’s own gateway / ICMP monitors. Only gateway and ICMP monitors are listed: the timeline plots round-trip time and packet loss, which a TCP / DNS / HTTP / NAT monitor does not measure, so linking one would chart nothing.',
+    monitorsNone: 'None',
+    monitorsCount: '{n}',
+    noMonitors: 'This site has no gateway or ICMP monitors to link yet.',
+    manageMonitors: 'Configure monitors',
+    listSep: ', ',
+    save: 'Save',
+    saving: 'Saving…',
+    create: 'Create',
+    cancel: 'Cancel',
+    createdToast: 'Created game profile “{name}”',
+    savedToast: 'Saved game profile “{name}”',
+    deletedToast: 'Deleted game profile “{name}”',
+    deleteTitle: 'Delete game profile',
+    deleteBody: 'Deletes the profile “{name}”; these processes will no longer be captured under it.',
+    deleteRunsKept:
+      'Runs already recorded are not deleted, but they lose the profile name — they still keep the profile they were captured under.',
+    errNameRequired: 'Give the profile a name.',
+    errExeRequired: 'Add at least one executable, or this profile will never match a process.',
+    errFpsInvalid: 'Target FPS must be a number greater than 0.',
   },
 
   targetStatus: {

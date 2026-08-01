@@ -11,7 +11,7 @@
 import { computed, onMounted, ref } from 'vue'
 import { useRoute, RouterLink } from 'vue-router'
 import { useI18n } from 'vue-i18n'
-import { api, type Agent, type GameRun } from '../api'
+import { api, type Agent, type GameProfile, type GameRun, type GameRunFilter } from '../api'
 import ConfirmDialog from '../components/ConfirmDialog.vue'
 import InfoTip from '../components/InfoTip.vue'
 import RangePicker from '../components/RangePicker.vue'
@@ -26,6 +26,8 @@ const { t } = useI18n()
 const route = useRoute()
 const { fmtTime } = useMetricMeta()
 const { fmtFps, fmtRunDuration, missingText } = useGameMeta()
+
+const SITE = 'site_default'
 
 const agents = ref<Agent[]>([])
 const agentId = ref('')
@@ -42,6 +44,19 @@ let seq = 0
 
 const LIMIT = 200
 
+// Profiles are site-scoped, so they are fetched once and are independent of the
+// agent/range selection. They exist here only to decide what the list defaults to
+// and how a run's profile column reads.
+const profiles = ref<GameProfile[]>([])
+const hasProfiles = computed(() => profiles.value.length > 0)
+// With no profiles configured the list has nothing to filter by, and a filter
+// offering "profiled" (always empty) and "other" (always everything) would be
+// noise. The out-of-box page therefore stays exactly as it was.
+const filter = ref<GameRunFilter>('all')
+const FILTERS: GameRunFilter[] = ['profiled', 'other', 'all']
+const filterLabel = (f: GameRunFilter) =>
+  f === 'profiled' ? t('gameRuns.filterProfiled') : f === 'other' ? t('gameRuns.filterOther') : t('gameRuns.filterAll')
+
 async function loadAgents() {
   try {
     agents.value = await api.agents()
@@ -50,6 +65,18 @@ async function loadAgents() {
     else if (!agentId.value && agents.value.length) agentId.value = agents.value[0].id
   } catch (e) {
     error.value = String((e as Error).message || e)
+  }
+}
+
+// Profiles decide the default filter, so a failure to read them must not hide the
+// runs — it just leaves the page on its unfiltered, no-profiles behavior.
+async function loadProfiles() {
+  try {
+    const list = await api.gameProfiles(SITE)
+    profiles.value = list.items
+    if (profiles.value.length) filter.value = 'profiled'
+  } catch {
+    profiles.value = []
   }
 }
 
@@ -63,7 +90,7 @@ async function loadRuns() {
   loading.value = true
   try {
     const since = Math.floor(Date.now() / 1000) - rangeSec.value
-    const page = await api.gameRuns(agentId.value, { since, limit: LIMIT })
+    const page = await api.gameRuns(agentId.value, { since, limit: LIMIT, runs: filter.value })
     if (mine !== seq) return
     runs.value = page.items
     total.value = page.total
@@ -83,7 +110,27 @@ function onAgentChange() {
   loadRuns()
 }
 
+function selectFilter(f: GameRunFilter) {
+  if (filter.value === f) return
+  filter.value = f
+  runs.value = []
+  total.value = 0
+  loaded.value = false
+  loadRuns()
+}
+
 const runTitle = (r: GameRun) => r.title?.trim() || ''
+
+// What the profile column says. A run stamped with a profile id whose name no
+// longer resolves was captured under a profile that has since been deleted —
+// which is a different statement from "this run matched nothing", and the column
+// keeps them apart.
+const profileDeleted = (r: GameRun) => r.profile_id !== null && r.profile_name === null
+// Prefills the profile form from a run the reader is already looking at.
+const createProfileLocation = (r: GameRun) => ({
+  path: '/game-performance/profiles',
+  query: { exe: r.proc, name: runTitle(r) || r.proc },
+})
 // The listing is capped, so a window holding more runs than the cap has to say
 // what it is showing rather than let the reader assume it is everything.
 const truncated = computed(() => total.value > runs.value.length)
@@ -110,7 +157,9 @@ async function confirmDelete() {
 }
 
 onMounted(async () => {
-  await loadAgents()
+  // Profiles first: they decide whether the list opens on the profiled runs or on
+  // everything, and re-requesting the runs afterwards would flash the wrong set.
+  await Promise.all([loadAgents(), loadProfiles()])
   await loadRuns()
 })
 </script>
@@ -123,6 +172,9 @@ onMounted(async () => {
         <p class="hint sub">{{ t('gameRuns.sub') }}</p>
       </div>
       <span class="spacer"></span>
+      <RouterLink class="btn profiles-btn" to="/game-performance/profiles">
+        {{ t('gameRuns.profilesLink') }}
+      </RouterLink>
       <div class="picker" v-if="agents.length">
         <label for="game-agent">Agent</label>
         <select id="game-agent" v-model="agentId" @change="onAgentChange">
@@ -146,16 +198,31 @@ onMounted(async () => {
       <div class="panel-head">
         <h3 id="game-runs-list-title">{{ t('gameRuns.listTitle') }}</h3>
         <span class="count">{{ total }}</span>
+        <!-- Only meaningful once a profile exists; before that every run is an
+             "other process" and the switch would just be three names for the
+             same list. -->
+        <div v-if="hasProfiles" class="segmented" role="group" :aria-label="t('gameRuns.filterLabel')">
+          <button
+            v-for="f in FILTERS"
+            :key="f"
+            :class="{ active: filter === f }"
+            :aria-pressed="filter === f"
+            @click="selectFilter(f)"
+          >
+            {{ filterLabel(f) }}
+          </button>
+        </div>
         <span class="spacer"></span>
         <span v-if="truncated" class="hint tiny">{{ t('gameRuns.showingN', { n: runs.length, total }) }}</span>
       </div>
-      <p class="hint panel-hint">{{ t('gameRuns.listHint') }}</p>
+      <p class="hint panel-hint">{{ hasProfiles ? t('gameRuns.listHintFiltered') : t('gameRuns.listHint') }}</p>
 
       <div class="table-wrap" role="region" tabindex="0" :aria-label="t('gameRuns.listTitle')">
         <table class="data-table">
           <thead>
             <tr>
               <th>{{ t('gameRuns.thTitle') }}</th>
+              <th>{{ t('gameRuns.thProfile') }}</th>
               <th>{{ t('gameRuns.thProc') }}</th>
               <th>{{ t('gameRuns.thStarted') }}</th>
               <th class="num">{{ t('gameRuns.thDuration') }}</th>
@@ -167,16 +234,25 @@ onMounted(async () => {
           </thead>
           <tbody>
             <tr v-if="loading && !runs.length">
-              <td colspan="8" class="hint">{{ t('common.loading') }}</td>
+              <td colspan="9" class="hint">{{ t('common.loading') }}</td>
             </tr>
             <tr v-else-if="!runs.length && loaded">
-              <td colspan="8" class="hint">{{ t('gameRuns.emptyRange') }}</td>
+              <td colspan="9" class="hint">
+                {{ hasProfiles && filter === 'profiled' ? t('gameRuns.emptyProfiled') : t('gameRuns.emptyRange') }}
+              </td>
             </tr>
             <tr v-for="r in runs" :key="r.id">
               <td>
                 <RouterLink class="run-link" :to="`/game-performance/runs/${r.id}`">
                   {{ runTitle(r) || t('gameRuns.untitled') }}
                 </RouterLink>
+              </td>
+              <td>
+                <span v-if="r.profile_name">{{ r.profile_name }}</span>
+                <span v-else-if="profileDeleted(r)" class="dim">
+                  {{ t('gameRuns.profileDeleted') }}<InfoTip :text="t('gameRuns.profileDeletedHint')" />
+                </span>
+                <span v-else class="dim">—</span>
               </td>
               <td class="mono dim">{{ r.proc }}</td>
               <td>{{ fmtTime(r.started_at) }}</td>
@@ -201,6 +277,11 @@ onMounted(async () => {
               <td class="actions">
                 <RouterLink class="link-btn" :to="`/game-performance/runs/${r.id}`">
                   {{ t('gameRuns.detail') }}
+                </RouterLink>
+                <!-- Only where it would change something: a run that already
+                     matched a profile has nothing to create. -->
+                <RouterLink v-if="!r.profile_id" class="link-btn" :to="createProfileLocation(r)">
+                  {{ t('gameRuns.createProfile') }}
                 </RouterLink>
                 <!-- A run still being recorded cannot be removed: the agent keeps
                      uploading the live session and the server upserts the row
@@ -308,6 +389,52 @@ onMounted(async () => {
   border: 1px solid var(--border);
   text-align: center;
 }
+.profiles-btn {
+  min-height: 44px;
+  display: inline-flex;
+  align-items: center;
+  text-decoration: none;
+}
+.segmented {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: var(--space-3xs);
+  margin-left: var(--space-sm);
+  padding: var(--space-3xs);
+  max-width: 100%;
+  border: var(--rule-hair) solid var(--color-rule-2);
+  border-radius: var(--radius-input);
+  background: var(--color-paper-2);
+}
+.segmented button {
+  min-height: 36px;
+  padding: var(--space-3xs) var(--space-xs);
+  border: none;
+  border-radius: var(--radius-xs);
+  background: transparent;
+  color: var(--color-ink-2);
+  font: inherit;
+  font-size: var(--text-sm);
+  white-space: nowrap;
+  cursor: pointer;
+  transition: transform var(--dur-micro) var(--ease-out), background-color var(--dur-micro) var(--ease-out);
+}
+.segmented button:hover {
+  color: var(--color-ink);
+  background: var(--color-glass-hover);
+}
+.segmented button:active {
+  transform: translateY(1px);
+}
+.segmented button:focus-visible {
+  outline: var(--rule-fine) solid var(--color-focus);
+  outline-offset: var(--space-3xs);
+}
+.segmented button.active {
+  color: var(--color-primary-action-text);
+  background: var(--color-primary-action-bg);
+  font-weight: 600;
+}
 .table-wrap {
   overflow-x: auto;
   overscroll-behavior-inline: contain;
@@ -318,7 +445,7 @@ onMounted(async () => {
   outline-offset: calc(-1 * var(--rule-fine));
 }
 .data-table {
-  min-width: 900px;
+  min-width: 1020px;
 }
 .data-table thead th {
   background: var(--color-glass-subtle);
@@ -350,6 +477,18 @@ onMounted(async () => {
 @media (max-width: 768px) {
   .workbench-head {
     align-items: stretch;
+  }
+  .profiles-btn {
+    justify-content: center;
+    width: 100%;
+  }
+  .segmented {
+    width: 100%;
+    margin-left: 0;
+  }
+  .segmented button {
+    flex: 1 1 0;
+    min-width: 0;
   }
   .picker {
     width: 100%;

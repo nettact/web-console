@@ -15,6 +15,7 @@ import { toDateLocale } from '../../i18n'
 import { theme } from '../../theme'
 import { escapeHtml } from '../../lib/escapeHtml'
 import { chartColor, oklchToRgb } from '../../lib/chartColor'
+import { ALIGNED_GRID_LEFT, ALIGNED_GRID_RIGHT } from '../../lib/chartGrid'
 import type { GameChartSeries, GamePoint } from '../../lib/gameRun'
 
 const props = defineProps<{
@@ -22,7 +23,17 @@ const props = defineProps<{
   // Axis suffix shown on tick labels and in the tooltip (e.g. 'FPS', 'ms').
   unit: string
   series: GameChartSeries[]
+  // The run's window (epoch ms). Pinning it keeps every chart on the page — these
+  // frame charts and the network timeline below them — on one identical time
+  // axis, so a spike at the same x really is the same moment. It also stops a run
+  // whose seconds stop early from silently rescaling to its data. Equal bounds
+  // are only half of it: the grid switches to the shared aligned geometry too, or
+  // the same instant still lands at a different pixel in a differently-inset plot.
+  xMin?: number
+  xMax?: number
 }>()
+
+const aligned = computed(() => props.xMin !== undefined || props.xMax !== undefined)
 
 const { t, locale } = useI18n()
 
@@ -82,9 +93,16 @@ function render() {
         formatter: tooltip as never,
       },
       legend: multi ? { textStyle: { color: ct.title, fontSize: 11 }, itemWidth: 14, itemHeight: 8, top: 8, right: 12 } : undefined,
-      grid: { left: 58, right: 22, top: multi ? 44 : 40, bottom: 30 },
+      grid: {
+        left: aligned.value ? ALIGNED_GRID_LEFT : 58,
+        right: aligned.value ? ALIGNED_GRID_RIGHT : 22,
+        top: multi ? 44 : 40,
+        bottom: 30,
+      },
       xAxis: {
         type: 'time',
+        ...(props.xMin === undefined ? {} : { min: props.xMin }),
+        ...(props.xMax === undefined ? {} : { max: props.xMax }),
         axisLine: { lineStyle: { color: ct.axisLine } },
         axisLabel: { color: ct.label, fontSize: 11 },
         splitLine: { show: false },
@@ -147,7 +165,11 @@ onBeforeUnmount(() => {
   chart?.dispose()
 })
 
-watch(() => [props.series, props.title, props.unit, locale.value, theme.value], render, { deep: true })
+watch(
+  () => [props.series, props.title, props.unit, props.xMin, props.xMax, locale.value, theme.value],
+  render,
+  { deep: true },
+)
 </script>
 
 <template>

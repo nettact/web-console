@@ -27,6 +27,7 @@ import InfoTip from '../components/InfoTip.vue'
 import GameRunChart from '../components/game/GameRunChart.vue'
 import GameStatCards from '../components/game/GameStatCards.vue'
 import GameValue from '../components/game/GameValue.vue'
+import NetworkTimeline from '../components/game/NetworkTimeline.vue'
 import { useGameMeta } from '../composables/useGameMeta'
 import { useMetricMeta } from '../composables/useMetricMeta'
 import {
@@ -68,9 +69,15 @@ const {
 // exactly the kind of quiet lie this feature exists to avoid.
 const BUCKET_LIMIT = 6 * 3600
 
+const SITE = 'site_default'
+
 const runId = computed(() => String(route.params.id || ''))
 const run = ref<GameRun | null>(null)
 const buckets = ref<GameBucket[]>([])
+// The run's profile, when it still exists — only for the monitors it links, which
+// decide what the network section charts. The name comes off the run itself, so a
+// deleted profile still labels the run correctly.
+const profileMonitorIds = ref<string[]>([])
 const loading = ref(true)
 const busy = ref(false)
 const error = ref('')
@@ -98,6 +105,19 @@ async function load() {
     if (mine !== seq) return
     run.value = r
     buckets.value = b
+    profileMonitorIds.value = []
+    // The profile's linked monitors are a nice-to-have for the network section:
+    // failing to read them falls back to the agent's own monitors rather than
+    // failing the page.
+    if (r.profile_id) {
+      try {
+        const list = await api.gameProfiles(SITE)
+        if (mine !== seq) return
+        profileMonitorIds.value = list.items.find((p) => p.id === r.profile_id)?.monitor_ids ?? []
+      } catch {
+        /* keep the fallback */
+      }
+    }
   } catch (e) {
     if (mine !== seq) return
     // A deleted run — and one belonging to another site — is a 404 from both
@@ -106,6 +126,7 @@ async function load() {
     else error.value = String((e as Error).message || e)
     run.value = null
     buckets.value = []
+    profileMonitorIds.value = []
   } finally {
     if (mine === seq) loading.value = false
   }
@@ -121,6 +142,25 @@ const running = computed(() => (run.value ? isRunning(run.value) : false))
 const runTitle = computed(() => run.value?.title?.trim() || '')
 const truncated = computed(() => (run.value ? bucketsTruncated(run.value, buckets.value, BUCKET_LIMIT) : false))
 const quality = computed(() => qualityFlags(buckets.value))
+
+// The profile this run was captured under. A stamped id whose name no longer
+// resolves is a profile that has been deleted since — saying "no profile" there
+// would rewrite what was recorded, so it gets its own wording.
+const profileDeleted = computed(() => !!run.value?.profile_id && run.value.profile_name === null)
+
+// The window every chart on this page shares. It is the run itself, except on a
+// run long enough to come back clipped: then the charts cover the loaded segment,
+// and stretching the axis to the run's full length would draw hours of blank as
+// though nothing had been measured there.
+const chartWindow = computed<[number, number]>(() => {
+  const r = run.value
+  const start = r ? new Date(r.started_at).getTime() : 0
+  const end = r ? (r.ended_at ? new Date(r.ended_at).getTime() : Date.now()) : 0
+  if (truncated.value && buckets.value.length) {
+    return [start, new Date(buckets.value[buckets.value.length - 1].ts).getTime()]
+  }
+  return [start, Math.max(end, start)]
+})
 
 // ---- summary figures ----
 const summaryCards = computed<GameCard[]>(() => {
@@ -306,6 +346,16 @@ watch(runId, load)
         <div class="run-id">
           <p class="eyebrow">{{ t('gameRuns.eyebrow') }}</p>
           <h1>{{ runTitle || t('gameRuns.untitled') }}</h1>
+          <p class="profile-line">
+            <span class="profile-key">{{ t('gameRuns.profileLabel') }}</span>
+            <span v-if="run.profile_name" class="profile-name">{{ run.profile_name }}</span>
+            <span v-else-if="profileDeleted" class="profile-missing">
+              {{ t('gameRuns.profileDeleted') }}<InfoTip :text="t('gameRuns.profileDeletedHint')" />
+            </span>
+            <span v-else class="profile-missing">
+              {{ t('gameRuns.profileNone') }}<InfoTip :text="t('gameRuns.profileNoneHint')" />
+            </span>
+          </p>
           <p class="sub">
             <span class="mono">{{ run.proc }}</span>
             <span class="sep">·</span>
@@ -377,16 +427,38 @@ watch(runId, load)
 
       <template v-if="buckets.length">
         <div class="card chart-card">
-          <GameRunChart :title="t('gameRuns.fpsChart')" unit="FPS" :series="fpsSeries" />
+          <GameRunChart
+            :title="t('gameRuns.fpsChart')"
+            unit="FPS"
+            :series="fpsSeries"
+            :x-min="chartWindow[0]"
+            :x-max="chartWindow[1]"
+          />
           <p v-if="fpsCaption" class="chart-caption">{{ fpsCaption }}</p>
         </div>
 
         <div class="card chart-card">
-          <GameRunChart :title="t('gameRuns.frameTimeChart')" unit="ms" :series="frameTimeSeries" />
+          <GameRunChart
+            :title="t('gameRuns.frameTimeChart')"
+            unit="ms"
+            :series="frameTimeSeries"
+            :x-min="chartWindow[0]"
+            :x-max="chartWindow[1]"
+          />
           <p class="chart-caption">{{ t('gameRuns.frameTimeCaption') }}</p>
         </div>
       </template>
       <p v-else class="hint notice">{{ bucketsNote }}</p>
+
+      <!-- Joint diagnosis: the same window, the same agent, the network side of
+           it. Charted whether or not the frame charts have anything — a run whose
+           seconds aged out can still be read against what the network was doing. -->
+      <NetworkTimeline
+        :agent-id="run.agent_id"
+        :start-ms="chartWindow[0]"
+        :end-ms="chartWindow[1]"
+        :monitor-ids="profileMonitorIds"
+      />
 
       <ConfirmDialog
         :open="askDelete"
@@ -458,6 +530,30 @@ watch(runId, load)
   margin-top: var(--space-2xs);
   color: var(--text-dim);
   font-size: var(--text-sm);
+}
+.profile-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2xs);
+  margin: var(--space-2xs) 0 0;
+  font-size: var(--text-sm);
+}
+.profile-key {
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+.profile-name {
+  padding: 1px 9px;
+  border: var(--rule-hair) solid var(--color-rule);
+  border-radius: var(--radius-pill);
+  background: var(--color-glass-subtle);
+  font-weight: 600;
+}
+.profile-missing {
+  color: var(--text-muted);
 }
 .sep {
   color: var(--text-muted);
