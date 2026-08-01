@@ -14,7 +14,10 @@ import { toDateLocale } from '../../i18n'
 const props = defineProps<{ report: TraceReportView }>()
 
 const { t, locale } = useI18n()
-const { traceStatusLabel, traceReasonLabel, traceReasonDetail, fallbackReasonDetail, modeLabel } = useIncidentLabels()
+const {
+  traceStatusLabel, traceReasonLabel, traceReasonDetail, fallbackReasonDetail, modeLabel,
+  traceSubjectLabel, traceSubjectDetail,
+} = useIncidentLabels()
 
 // Long-form "why it couldn't trace" text, shown when the run ended on a terminal
 // failure reason (report.reason is only set for non-success terminal states).
@@ -33,6 +36,18 @@ const fallbackFromLabel = computed(() => {
 })
 const fallbackDetail = computed(() =>
   props.report.fallback_reason ? fallbackReasonDetail(props.report.fallback_reason) : '',
+)
+
+// Diagnosis subject (DIAG-003): what was traced, when it is not the monitored
+// target. A DNS fault traces its resolver, a proxied fault its proxy, a
+// WireGuard fault the peer's physical path — the destination row alone reads as
+// "the monitored thing" in every case, so the badge and note say otherwise.
+const isSubjectTarget = computed(() => {
+  const k = props.report.subject_kind
+  return !k || k === 'target'
+})
+const subjectDetail = computed(() =>
+  traceSubjectDetail(props.report.subject_kind || '', props.report.subject_reason || ''),
 )
 
 const fmtDateTime = (s: string | null) =>
@@ -58,11 +73,13 @@ const attemptCount = computed(() =>
 )
 const attemptCols = computed(() => Array.from({ length: attemptCount.value }, (_, i) => i))
 
-// Destination display: host, plus the resolved IP when known and different.
+// Destination display: host, plus the resolved IP when known and different. A
+// report that terminalized before it had a destination (an unnameable resolver
+// or proxy) has none to show; the reason note below says why.
 const dest = computed(() => {
   const r = props.report
   if (r.dest_ip && r.dest_ip !== r.dest_host) return `${r.dest_host} (${r.dest_ip})`
-  return r.dest_ip || r.dest_host
+  return r.dest_ip || r.dest_host || '—'
 })
 
 // Attempt at a hop for an attempt-index column, or null when this hop has fewer.
@@ -80,17 +97,26 @@ function attemptAt(hop: TraceReportView['hops'][number], idx: number) {
         <span v-if="isTcpFallback" class="badge warn" :title="fallbackDetail || undefined">
           {{ fallbackFromLabel }} → {{ modeLabel(report.mode) }}
         </span>
+        <span v-if="!isSubjectTarget" class="badge neutral" :title="subjectDetail || undefined">
+          {{ traceSubjectLabel(report.subject_kind) }}
+        </span>
         <span v-if="report.reason" class="hint reason">{{ traceReasonLabel(report.reason) }}</span>
       </div>
       <code class="rid" :title="report.report_id">{{ report.report_id }}</code>
     </div>
 
     <p v-if="fallbackDetail" class="fallback-detail" role="note">{{ fallbackDetail }}</p>
+    <p v-if="subjectDetail" class="reason-detail" role="note">{{ subjectDetail }}</p>
     <p v-if="reasonDetail" class="reason-detail" role="note">{{ reasonDetail }}</p>
 
     <dl class="facts">
       <div><dt>{{ t('incidents.trace.agent') }}</dt><dd>{{ report.agent_name || report.agent_id }}</dd></div>
-      <div><dt>{{ t('incidents.trace.dest') }}</dt><dd class="mono">{{ dest }}</dd></div>
+      <div>
+        <!-- Labelled by subject so the destination cannot be misread as the
+             monitored target when the diagnostic examined something else. -->
+        <dt>{{ isSubjectTarget ? t('incidents.trace.dest') : traceSubjectLabel(report.subject_kind) }}</dt>
+        <dd class="mono">{{ dest }}</dd>
+      </div>
       <div>
         <dt>{{ t('incidents.trace.reached') }}</dt>
         <dd>

@@ -44,6 +44,18 @@ export function useIncidentLabels() {
     fallbackReasonDetail: (r: string) =>
       r && te(`incidents.trace.fallbackDetail.${r}`) ? t(`incidents.trace.fallbackDetail.${r}`) : '',
 
+    // What a trace diagnosed, when that is not the monitored target itself: the
+    // DNS resolver, the egress proxy, a WireGuard peer, the STUN server.
+    traceSubjectLabel: (s: string) => tr(`incidents.trace.subject.${s}`, s),
+    // Long-form "why this subject" note. Keyed by the subject reason when the
+    // server sent one (it distinguishes two WireGuard cases that look identical
+    // on the wire), else by the subject kind. Empty when nothing is defined, so
+    // callers hide the note instead of showing a bare code.
+    traceSubjectDetail: (kind: string, reason: string) => {
+      const key = `incidents.trace.subjectDetail.${reason || kind}`
+      return kind && kind !== 'target' && te(key) ? t(key) : ''
+    },
+
     // Evidence comparator, as symbol (compact) and as words (accessible).
     comparatorSymbol: (c: string) => CMP_SYMBOL[c] ?? c,
     comparatorLabel: (c: string) => tr(`incidents.cmp.${c}`, c),

@@ -673,6 +673,10 @@ export default {
         deadline: 'Deadline exceeded',
         deadline_exceeded: 'Deadline exceeded',
         canceled: 'Canceled',
+        resolver_unknown: 'DNS server unknown',
+        resolver_loopback: 'DNS server is local',
+        proxy_unknown: 'Proxy address unknown',
+        no_stun_server: 'No STUN server address',
       },
       reasonDetail: {
         permission_denied: 'This Agent’s permission policy does not grant path diagnostics. There is no permission settings page in this product: add diagnostic.traceroute.* to NETTACT_AGENT_PERMISSIONS (or the YAML config permissions key) on the Agent and restart it.',
@@ -691,6 +695,10 @@ export default {
         deadline: 'The destination could not be confirmed as reached before the deadline: the target or an intermediate device may filter probes (this does not prove the target is unreachable); if the network is slow, try raising the total diagnostic timeout.',
         deadline_exceeded: 'The destination could not be confirmed as reached before the deadline: the target or an intermediate device may filter probes (this does not prove the target is unreachable); if the network is slow, try raising the total diagnostic timeout.',
         canceled: 'The diagnostic was interrupted (the Agent reconnected or shut down) before it could finish.',
+        resolver_unknown: 'This monitor uses the system resolver and the Agent did not report which DNS server it actually used, so there is no subject to diagnose. Either the platform cannot read it yet (macOS, for example), or the Agent’s local permission policy does not grant network.interface.address.read (reading host network configuration). Configuring an explicit DNS server on the monitor sidesteps both and gives you resolver path diagnostics directly.',
+        resolver_loopback: 'This monitor’s DNS server is a local address (systemd-resolved’s 127.0.0.53, a container-local forwarder, and so on). Its link to the upstream is invisible from outside this host, so a hop-by-hop diagnostic would say nothing. Monitor the upstream DNS server directly instead.',
+        proxy_unknown: 'This monitor probes through a proxy whose address can no longer be determined (the proxy config was likely deleted or is incomplete). The probe traffic does not go directly to the target, so no diagnostic was aimed at the target — that path is unrelated to this fault.',
+        no_stun_server: 'This fault’s frozen evidence does not record which STUN server was used, so the diagnosis subject could not be determined.',
       },
       // Auto-fallback: the requested mode couldn't run and the Agent transparently
       // re-ran the diagnostic in another mode (currently TCP -> ICMP only).
@@ -699,6 +707,30 @@ export default {
           'The Agent was detected running without Administrator privileges, so TCP traceroute could not run; this run automatically fell back to ICMP mode. Re-run the Agent as Administrator to enable TCP mode.',
         permission_denied:
           "The Agent's permission policy does not grant TCP traceroute, so this run automatically fell back to ICMP mode.",
+      },
+      // Diagnosis subject: WHAT this diagnostic traced. A probe reaches its target
+      // through a resolver / proxy / tunnel, and when the fault is on that leg the
+      // diagnostic follows the traffic instead of the monitored target.
+      subject: {
+        target: 'Destination',
+        resolver: 'DNS server',
+        proxy: 'Proxy server',
+        wg_endpoint: 'WG peer',
+        stun_server: 'STUN server',
+      },
+      // Wording states WHAT the subject is, never that a trace executed: a report
+      // can terminalize before dispatch (unnameable resolver, unnameable proxy),
+      // and claiming "traced X" right above "no diagnostic was performed" would
+      // contradict itself.
+      subjectDetail: {
+        resolver: 'The diagnosis subject is the DNS server this monitor queries, not the queried name — nothing dials the name itself, so it has no path to measure. This diagnostic answers whether the DNS server is reachable over the network; if it is and resolution still fails, the problem is the DNS service itself.',
+        proxy: 'This monitor probes through a proxy, so the traffic path is Agent → proxy → target and the diagnosis subject is the proxy server. A direct trace from this host would measure a path this probe never used, so none was run.',
+        stun_server: 'The diagnosis subject is the STUN server this monitor exchanges with; its address comes from this fault’s frozen evidence. The path itself is measured in the mode shown above — ICMP for UDP/DTLS monitors, TCP for TCP/TLS ones.',
+        tunnel_unreachable: 'This monitor probes through a WireGuard tunnel, and the fault is in the tunnel itself (the probe traffic never crossed it). The diagnosis subject is therefore the physical path to the WireGuard peer endpoint — which is exactly the link to investigate.',
+        tunnel_target_unreachable: 'This monitor probes through a WireGuard tunnel. The tunnel itself is working and the fault is on the target inside it. Hop-by-hop diagnostics inside the userspace tunnel are not possible, so the diagnosis subject is the physical path to the WireGuard peer endpoint — context, not the segment the fault is on.',
+        // Fallback when the fault carries no classified cause (a NAT monitor never
+        // does), so neither tunnel verdict can be asserted.
+        wg_endpoint: 'This monitor probes through a WireGuard tunnel. This fault’s evidence cannot establish whether the tunnel itself is healthy, so no claim is made either way; the diagnosis subject is the physical path to the WireGuard peer endpoint.',
       },
     },
   },

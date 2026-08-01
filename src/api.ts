@@ -1050,6 +1050,15 @@ export interface TraceSummary {
   // admin rights or policy grant for TCP traceroute but can still run ICMP).
   fallback_from?: string // '' | 'tcp' — the mode this report was originally requested as
   fallback_reason?: string // raw_socket_unavailable | permission_denied
+  // What dest_host IS. A probe reaches its target through a resolver, a proxy or
+  // a tunnel, and when the fault is on that leg the diagnostic traces THAT — so
+  // the destination alone cannot say what was examined.
+  subject_kind: string // target | resolver | proxy | wg_endpoint | stun_server
+  // Which question a WireGuard endpoint trace answers: tunnel_unreachable = the
+  // probe never crossed the tunnel, so the peer's reachability is the fault;
+  // tunnel_target_unreachable = it did cross and the target failed beyond it, so
+  // this path is context rather than the fault's own path.
+  subject_reason?: string
 }
 // GET /trace-reports/{id}: a full shared report with its per-attempt hops.
 export interface TraceReportView extends TraceSummary {

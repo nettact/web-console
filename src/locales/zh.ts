@@ -679,6 +679,10 @@ export default {
         deadline: '已超过截止时间',
         deadline_exceeded: '已超过截止时间',
         canceled: '已取消',
+        resolver_unknown: '无法确定 DNS 服务器',
+        resolver_loopback: 'DNS 服务器为本机地址',
+        proxy_unknown: '无法确定代理地址',
+        no_stun_server: '缺少 STUN 服务器地址',
       },
       reasonDetail: {
         permission_denied: '该 Agent 的权限策略未授予路径诊断权限。本产品没有权限设置页面：请在 Agent 端把 diagnostic.traceroute.* 并入 NETTACT_AGENT_PERMISSIONS（或 YAML 配置的 permissions 键）后重启 Agent。',
@@ -697,6 +701,10 @@ export default {
         deadline: '在截止时间内未能确认到达目标：目标或中间设备可能过滤了探测包（并不代表目标真的不可达）；若网络较慢，可适当调大诊断总超时。',
         deadline_exceeded: '在截止时间内未能确认到达目标：目标或中间设备可能过滤了探测包（并不代表目标真的不可达）；若网络较慢，可适当调大诊断总超时。',
         canceled: '诊断被中断（Agent 重连或关闭），未能完成。',
+        resolver_unknown: '该监控使用系统解析器，而 Agent 未提供实际使用的 DNS 服务器地址，因此没有可诊断的对象。可能是所在平台尚不支持读取（如 macOS），也可能是该 Agent 的本地权限策略未授予 network.interface.address.read（读取本机网络配置）。为该监控显式配置 DNS 服务器可绕开这两种情况，直接获得解析路径诊断。',
+        resolver_loopback: '该监控使用的 DNS 服务器是本机地址（例如 systemd-resolved 的 127.0.0.53 或容器内的本地转发器），它到上游的链路在本机之外不可见，逐跳诊断没有意义。请改为直接监控上游 DNS 服务器。',
+        proxy_unknown: '该监控通过代理探测，但代理的地址已无法确定（代理配置可能已被删除或不完整）。探测流量并不直发目标，因此没有对目标发起诊断——那条路径与本次故障无关。',
+        no_stun_server: '本次故障的证据中没有记录实际使用的 STUN 服务器地址，无法确定诊断对象。',
       },
       // Auto-fallback: the requested mode couldn't run and the Agent transparently
       // re-ran the diagnostic in another mode (currently TCP → ICMP only).
@@ -704,6 +712,30 @@ export default {
         raw_socket_unavailable:
           '检测 Agent 未以管理员身份运行，无法执行 TCP 路由追踪，本次已自动回退为 ICMP 模式。以管理员身份重新运行 Agent 后可启用 TCP 模式。',
         permission_denied: 'Agent 的权限策略未授予 TCP 路由追踪，本次已自动回退为 ICMP 模式。',
+      },
+      // Diagnosis subject: WHAT this diagnostic traced. A probe reaches its target
+      // through a resolver / proxy / tunnel, and when the fault is on that leg the
+      // diagnostic follows the traffic instead of the monitored target.
+      subject: {
+        target: '目的地址',
+        resolver: 'DNS 服务器',
+        proxy: '代理服务器',
+        wg_endpoint: 'WG 对端',
+        stun_server: 'STUN 服务器',
+      },
+      // Wording states WHAT the subject is, never that a trace executed: a report
+      // can terminalize before dispatch (unnameable resolver, unnameable proxy),
+      // and claiming "traced X" right above "no diagnostic was performed" would
+      // contradict itself.
+      subjectDetail: {
+        resolver: '诊断对象为该监控所使用的 DNS 服务器，而不是被查询的域名——域名本身不会被拨号，没有路径可测。这条诊断回答的是：到 DNS 服务器的网络是否可达（若可达但解析仍失败，问题在 DNS 服务本身）。',
+        proxy: '该监控经代理服务器探测，流量路径是 Agent → 代理 → 目标，因此诊断对象为代理服务器。从本机直发目标的诊断测的是一条本次探测根本没有使用的路径，不予执行。',
+        stun_server: '诊断对象为该监控实际交互的 STUN 服务器，其地址取自本次故障冻结的证据。路径本身按上方标注的模式测量：UDP/DTLS 类监控用 ICMP，TCP/TLS 类监控用 TCP。',
+        tunnel_unreachable: '该监控经 WireGuard 隧道探测，而本次故障发生在隧道本身（探测流量未能穿过隧道）。因此诊断对象为 WireGuard 对端 Endpoint 的物理路径——这正是当前需要排查的链路。',
+        tunnel_target_unreachable: '该监控经 WireGuard 隧道探测，隧道本身工作正常，故障发生在隧道内的目标上。当前的用户态隧道无法进行隧道内逐跳诊断，因此诊断对象为到 WireGuard 对端 Endpoint 的物理路径，作为参考链路，并非故障本身所在的那一段。',
+        // Fallback when the fault carries no classified cause (a NAT monitor never
+        // does), so neither tunnel verdict can be asserted.
+        wg_endpoint: '该监控经 WireGuard 隧道探测。本次故障的证据无法判定隧道本身是否正常，因此不作断言；诊断对象为到 WireGuard 对端 Endpoint 的物理路径。',
       },
     },
   },
