@@ -7,6 +7,10 @@
 //   permission_blocked — not granted by the Agent's local policy, and the platform
 //     could run it. The grant block below is the whole fix.
 //   elevation — the Agent needs more OS privilege (raw-socket TCP traceroute).
+//   component — the capability comes from software installed separately from the
+//     Agent (the PresentMon service, for frame data). Unlike the other capability
+//     causes this one is fixable by the person reading it, so it is the only one
+//     that offers a download and steps.
 //   unsupported — a hard platform/build capability gap. No policy change or
 //     elevation helps; explains which platform/build is required.
 //   dependency — granted and supported, but a permission it requires is not in
@@ -32,7 +36,7 @@ import { usePermissionMeta } from '../../composables/usePermissionMeta'
 const props = defineProps<{
   open: boolean
   permId: string
-  category: 'permission_blocked' | 'elevation' | 'unsupported' | 'dependency'
+  category: 'permission_blocked' | 'elevation' | 'component' | 'unsupported' | 'dependency'
   // Full `NETTACT_AGENT_PERMISSIONS=…` line from the server. Absent when it could
   // not be resolved (then a generic instruction is shown).
   permissionsEnv?: string
@@ -103,9 +107,19 @@ const snippet = computed<string>(() => {
   return ''
 })
 
+// The command that answers "is it actually there and running", which is the one
+// question the component steps cannot answer for the reader. Not localized: it
+// is typed into a shell, and the service name is a literal.
+//
+// `sc.exe`, never bare `sc`: in PowerShell `sc` is an alias for Set-Content, so
+// `sc query <name>` silently writes a file called "query" and prints nothing —
+// indistinguishable, to the reader, from a service that does not exist. The
+// explicit extension bypasses the alias and works unchanged in cmd.
+const verifyCommand = 'sc.exe query PresentMonSharedService'
+
 // Local "copied" feedback, one per copy target so the label reverts independently.
-const copiedKey = ref<'' | 'env' | 'snippet'>('')
-function copyText(text: string, key: 'env' | 'snippet') {
+const copiedKey = ref<'' | 'env' | 'snippet' | 'verify'>('')
+function copyText(text: string, key: 'env' | 'snippet' | 'verify') {
   navigator.clipboard?.writeText(text)
   copiedKey.value = key
   window.setTimeout(() => {
@@ -202,6 +216,32 @@ watch(
                 <li>{{ t('permRemediation.elevationOther') }}</li>
               </ol>
               <p class="prd-note strong">{{ t('permRemediation.reRunNote') }}</p>
+            </template>
+
+            <!-- component: a separately-installed program provides the capability -->
+            <template v-else-if="category === 'component'">
+              <p class="prd-intro">{{ t('permRemediation.componentIntro') }}</p>
+              <p class="prd-note">{{ t('permRemediation.componentWhy') }}</p>
+              <ol class="prd-steps">
+                <li>
+                  {{ t('permRemediation.componentStepDownload') }}
+                  <a class="prd-dl" :href="t('permRemediation.componentUrl')" target="_blank" rel="noopener noreferrer">
+                    {{ t('permRemediation.componentDownload') }} →
+                  </a>
+                </li>
+                <li>{{ t('permRemediation.componentStepInstall') }}</li>
+                <li>{{ t('permRemediation.componentStepVerify') }}</li>
+              </ol>
+              <p class="prd-label">{{ t('permRemediation.componentVerifyLabel') }}</p>
+              <div class="code-wrap">
+                <button class="copy" @click="copyText(verifyCommand, 'verify')">
+                  {{ copiedKey === 'verify' ? t('common.saved') : t('agents.copy') }}
+                </button>
+                <pre><code>{{ verifyCommand }}</code></pre>
+              </div>
+              <p class="prd-note">{{ t('permRemediation.componentAlreadyInstalled') }}</p>
+              <p class="prd-note">{{ t('permRemediation.componentOtherCauses') }}</p>
+              <p class="prd-note strong">{{ t('permRemediation.componentRestartNote') }}</p>
             </template>
 
             <!-- dependency: granted and supported, but a required parent is not effective -->
@@ -348,6 +388,10 @@ watch(
 .prd-docs {
   margin-left: auto;
   font-size: 12px;
+  color: var(--color-accent-text);
+  white-space: nowrap;
+}
+.prd-dl {
   color: var(--color-accent-text);
   white-space: nowrap;
 }

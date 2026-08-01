@@ -94,4 +94,28 @@ describe('categoryFor', () => {
     expect(categoryFor(perm('probe.icmp', false, false, false), 'macos')).toBe('unsupported')
     expect(categoryFor(perm('probe.icmp', false, false, false), 'linux')).toBe('elevation')
   })
+
+  // Frame data is the one capability gap an ordinary user can close themselves,
+  // by installing the PresentMon service. Reporting it as a hard platform gap
+  // would tell a Windows user to change platform for something a download fixes.
+  it('offers the install path for game permissions on Windows', () => {
+    for (const id of ['game.process.detect', 'game.performance.read']) {
+      expect(categoryFor(perm(id, true, false, false), 'windows')).toBe('component')
+      // Ungranted as well: the cause is still the missing component, and the
+      // dialog adds the policy block on top via grantMissing.
+      expect(categoryFor(perm(id, false, false, false), 'windows')).toBe('component')
+      // Elsewhere there is no component to install — the build has no sensor at
+      // all — so offering a download would be a dead end.
+      for (const platform of ['macos', 'linux'] as const) {
+        expect(categoryFor(perm(id, true, false, false), platform)).toBe('unsupported')
+      }
+    }
+  })
+
+  // Once the service is there the permission behaves like any other: still
+  // subject to policy and to its dependency.
+  it('keeps the ordinary causes for game permissions once supported', () => {
+    expect(categoryFor(perm('game.performance.read', false, true, false), 'windows')).toBe('permission_blocked')
+    expect(categoryFor(perm('game.performance.read', true, true, false), 'windows')).toBe('dependency')
+  })
 })

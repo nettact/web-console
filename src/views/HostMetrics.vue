@@ -40,7 +40,7 @@ interface HostGroup {
   metrics: SeriesInfo[]
   collection?: Collection
 }
-type Collection = 'cpu' | 'disk' | 'iface' | 'wifi' | 'netio'
+type Collection = 'cpu' | 'disk' | 'iface' | 'wifi' | 'netio' | 'game'
 
 // Group host series: CPU (total + cores), disk, the network interfaces, and the
 // Wi-Fi adapters each collapse into one collection; the remaining host metrics
@@ -53,7 +53,8 @@ const SECTION_ORDER: Record<string, number> = {
   'iface::all': 3,
   'wifi::all': 4,
   'host::network': 5,
-  'agent::runtime': 6,
+  'game::all': 6,
+  'agent::runtime': 7,
 }
 function classify(s: SeriesInfo): { key: string; label: string; collection?: Collection } {
   if (s.kind === 'host.cpu.pct' || s.kind === 'host.cpu.core.pct')
@@ -63,6 +64,9 @@ function classify(s: SeriesInfo): { key: string; label: string; collection?: Col
     return { key: 'host::network', label: t('hostMetrics.sysNetwork'), collection: 'netio' }
   if (familyOf(s.kind) === 'iface') return { key: 'iface::all', label: t('hostMetrics.sysIface'), collection: 'iface' }
   if (familyOf(s.kind) === 'wifi') return { key: 'wifi::all', label: t('hostMetrics.sysWifi'), collection: 'wifi' }
+  // Game series are keyed by the presenting process, so several unrelated targets
+  // share one section — a collection, like the interfaces, not a single group.
+  if (familyOf(s.kind) === 'game') return { key: 'game::all', label: t('hostMetrics.sysGame'), collection: 'game' }
   if (familyOf(s.kind) === 'host') return { key: 'host::overview', label: t('hostMetrics.sysOverview') }
   return { key: 'agent::runtime', label: t('hostMetrics.agentRuntime') }
 }
@@ -206,6 +210,36 @@ const collectionCharts = computed<CollChart[]>(() => {
     }
     return charts
   }
+  if (g.collection === 'game') {
+    // One pair of charts per game: the frame rate, and the frame times that
+    // explain it. They are separate charts because they share no axis — mixing
+    // 60 fps with 16 ms on one scale hides both.
+    const games = [...new Set(g.metrics.map((m) => m.target))].sort()
+    const charts: CollChart[] = []
+    for (const name of games) {
+      const has = (kind: string) => g.metrics.some((m) => m.kind === kind && m.target === name)
+      const one = (kind: string, unit: string): CollSeries => ({
+        key: ckey(kind, name),
+        label: metricLabel(kind),
+        kind,
+        target: name,
+        unit,
+        color: kindColor(kind),
+      })
+      if (has('game.fps.current')) {
+        charts.push({ id: `game-fps-${name}`, title: `${name} · ${metricLabel('game.fps.current')}`, series: [one('game.fps.current', 'fps')] })
+      }
+      // Average and P95 belong on one chart: the gap between them is the reading,
+      // and it only exists when both lines share an axis.
+      const frameTimes: CollSeries[] = []
+      if (has('game.frame_time.avg_ms')) frameTimes.push(one('game.frame_time.avg_ms', 'ms'))
+      if (has('game.frame_time.p95_ms')) frameTimes.push(one('game.frame_time.p95_ms', 'ms'))
+      if (frameTimes.length) {
+        charts.push({ id: `game-ft-${name}`, title: `${name} · ${t('hostMetrics.gameFrameTime')}`, series: frameTimes })
+      }
+    }
+    return charts
+  }
   const mounts = [...new Set(g.metrics.filter((m) => m.kind === 'host.disk.used').map((m) => m.target))].sort()
   return mounts.map((mp) => ({
     id: `disk-${mp}`,
@@ -307,12 +341,17 @@ async function loadSeries() {
   try {
     const ser = await api.listSeries(agentId.value)
     // Host Metrics owns the host's own hardware: host.* metrics, the network
-    // interfaces (iface.*), and the agent uptime counter. Probe results (the
-    // user-created monitors) belong to the Target Status page.
+    // interfaces (iface.*), what this machine renders (game.*), and the agent
+    // uptime counter. Probe results (the user-created monitors) belong to the
+    // Target Status page.
     series.value = ser.filter(
       (s) =>
         !HIDDEN_KINDS.has(s.kind) &&
-        (familyOf(s.kind) === 'host' || familyOf(s.kind) === 'iface' || familyOf(s.kind) === 'wifi' || s.kind === 'agent.uptime_s'),
+        (familyOf(s.kind) === 'host' ||
+          familyOf(s.kind) === 'iface' ||
+          familyOf(s.kind) === 'wifi' ||
+          familyOf(s.kind) === 'game' ||
+          s.kind === 'agent.uptime_s'),
     )
     const gs = groups.value
     targetKey.value = gs.length ? gs[0].key : ''

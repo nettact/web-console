@@ -1734,6 +1734,7 @@ export default {
       wifi: 'Wi-Fi',
       agent: 'Agent',
       host: '系统',
+      game: '游戏',
     },
     metric: {
       probe_icmp_rtt_ms: 'RTT',
@@ -1782,6 +1783,9 @@ export default {
       host_net_tx_bps: '发送速率',
       host_temp_c: '温度',
       host_temp_sensor_c: '传感器温度',
+      game_fps_current: '帧率',
+      game_frame_time_avg_ms: '帧时间（平均）',
+      game_frame_time_p95_ms: '帧时间（P95）',
     },
     nat: {
       foot: '更新于 {time}',
@@ -1830,6 +1834,7 @@ export default {
     sysIface: '网口',
     sysWifi: 'Wi-Fi',
     sysNetwork: '网络 I/O',
+    sysGame: '游戏性能',
     sysOverview: '系统概览',
     agentRuntime: 'Agent 运行状态',
     cpuTotal: '总 CPU',
@@ -1840,6 +1845,7 @@ export default {
     diskTotal: '总容量',
     diskTotalCap: '总容量 {size}',
     wifiLinkRate: '链路速率',
+    gameFrameTime: '帧时间',
   },
 
   targetStatus: {
@@ -2159,6 +2165,8 @@ export default {
     host_connection_owner_read: '连接所属进程',
     diagnostic_traceroute_icmp: 'ICMP 路径诊断',
     diagnostic_traceroute_tcp: 'TCP 路径诊断',
+    game_process_detect: '游戏进程识别',
+    game_performance_read: '游戏帧数据读取',
     // 受阻权限（已授予但平台/运行方式不支持，因此永远不会生效）的 title 提示。
     blockedTitle: '已授予但当前不受支持：{name}',
     // 可交互（可点击打开解决方案）权限 chip 的 title。
@@ -2205,6 +2213,8 @@ export default {
     host_connection_owner_read: '读取连接所属的进程',
     diagnostic_traceroute_icmp: '用 ICMP 追踪到目标的网络路径',
     diagnostic_traceroute_tcp: '用 TCP 追踪网络路径并观测中间跳',
+    game_process_detect: '识别当前正在渲染画面的进程',
+    game_performance_read: '读取帧率与帧时间（不读取画面内容）',
   },
 
   // 文档站深链。中英各指向自己的语言目录；权限详情锚点由权限 ID 点换连字符得到。
@@ -2222,6 +2232,8 @@ export default {
     network_neighbor_hostname_read: 'Windows 与 Linux 版 Agent 已实现邻居主机名解析；macOS 版尚未实现。',
     diagnostic_traceroute_icmp: 'Windows 与 Linux 版 Agent 已实现 ICMP 路径诊断。与 ICMP 探测不同，它必须收到中间跳的 Time-Exceeded，因此 Linux 上必须有 CAP_NET_RAW 或以 root 运行（无特权 ping socket 收不到这类报文）。macOS 版尚未实现。',
     diagnostic_traceroute_tcp: 'Windows 与 Linux 版 Agent 已实现 TCP 路径诊断，两者都需要提权（Windows 管理员 / Linux CAP_NET_RAW 或 root）。macOS 版尚未实现。',
+    game_process_detect: '帧数据来自 Windows 图形呈现事件，仅 Windows 版 Agent 具备该能力；其他平台的构建不包含相应组件。此外还需要在本机安装 Intel PresentMon 服务（见解决方案）。',
+    game_performance_read: '帧数据来自 Windows 图形呈现事件，仅 Windows 版 Agent 具备该能力；其他平台的构建不包含相应组件。此外还需要在本机安装 Intel PresentMon 服务（见解决方案）。',
     host_temperature_read: '温度取决于机器本身有没有可读的传感器，而查明这一点只能真去读一次传感器，因此 Agent 仅在该权限已授予时才于启动时自检：尚未授予时它不会碰传感器，也就只能报告为不支持——先授予并重启 Agent，即可知道这台机器到底有没有传感器。已授予仍报不支持，说明自检没有读到有效读数：多数虚拟机与不少消费级主板确实没有可读传感器。Linux 读取 /sys/class/hwmon（容器内需挂载宿主机 /sys）；Windows 走 WMI ACPI 温度区，该接口在部分主板与虚拟机上并不存在，非管理员账户下也可能被拒绝访问，Agent 无法区分这两种情况，可确认它是否以 SYSTEM 或管理员身份运行来缩小范围。macOS 版尚未实现。',
   },
 
@@ -2251,6 +2263,17 @@ export default {
     reRunNote: '以提升后的权限重新启动 Agent 后生效。',
     unsupportedIntro: '当前 Agent 的平台或构建不具备此能力，授予权限或提权都无法启用。',
     unsupportedGeneric: '请在支持该能力的平台或构建上部署 Agent。',
+    componentIntro: '该能力需要在本机安装 Intel PresentMon 服务，当前未检测到可用的服务。',
+    componentWhy: '读取帧呈现事件需要系统级的跟踪会话权限。PresentMon 服务以系统账户持有该会话并对外提供数据，因此 NetTact 自身无需管理员权限即可采集。',
+    componentStepDownload: '下载 Intel PresentMon 安装包（MIT 开源，由 Intel 签名）：',
+    componentDownload: '前往下载页',
+    componentStepInstall: '运行安装包，过程中确认一次管理员提示。安装完成后服务会自动启动并随系统启动。',
+    componentStepVerify: '如需确认服务状态，在 PowerShell 或命令提示符中执行下面的命令，STATE 应为 RUNNING。',
+    componentVerifyLabel: '确认服务状态：',
+    componentAlreadyInstalled: '若已安装却仍显示不支持，通常是服务未在运行（上面的命令会显示 STOPPED），或版本与 NetTact 不匹配；重新安装最新版本即可。',
+    componentOtherCauses: 'Agent 只报告"是否支持"，不报告原因，因此以上是最常见的一种。若服务确认正常仍不支持，还有两种可能：该 Agent 的安装包不含游戏采集组件（MSI 版与便携版不含，仅微软商店版包含），或 Agent 版本过旧尚无此功能。',
+    componentRestartNote: '安装完成后需重启 Agent（桌面版重启应用）才会重新检测。',
+    componentUrl: 'https://github.com/GameTechDev/PresentMon/releases/latest',
     desktopNote: '此 Agent 以桌面完全访问模式内嵌运行，权限固定为完全授予，无需修改环境变量或配置文件。',
     tab_powershell: 'PowerShell',
     tab_systemd: 'systemd',
@@ -2334,9 +2357,11 @@ export default {
     permGroup_other: '其它',
     permUnsupportedTag: '该平台不支持',
     permPrivilegedTag: '需提权',
+    permComponentTag: '需装组件',
     permDefaultNote: '当前即 Agent 内置默认集，命令中无需附带权限参数。',
     permNoneNote: '未勾选任何权限：Agent 将以空授权运行，只保留维持运行所必需的功能。',
     permUnsupportedNote: '其中 {n} 项在当前平台无法启用，授予后也不会生效。',
+    permComponentNote: '其中 {n} 项还需要在目标机器上安装 Intel PresentMon 服务，下面的命令只安装 Agent；装完 Agent 后请在 Agent 详情页点击该权限查看安装引导。',
     permReplaceNote: '权限是整体替换语义，不是在默认集上增删。',
   },
 

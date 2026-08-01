@@ -1728,6 +1728,7 @@ export default {
       wifi: 'Wi-Fi',
       agent: 'Agent',
       host: 'Host',
+      game: 'Game',
     },
     metric: {
       probe_icmp_rtt_ms: 'RTT',
@@ -1776,6 +1777,9 @@ export default {
       host_net_tx_bps: 'TX rate',
       host_temp_c: 'Temperature',
       host_temp_sensor_c: 'Sensor temperature',
+      game_fps_current: 'Frame rate',
+      game_frame_time_avg_ms: 'Frame time (avg)',
+      game_frame_time_p95_ms: 'Frame time (P95)',
     },
     nat: {
       foot: 'Updated {time}',
@@ -1824,6 +1828,7 @@ export default {
     sysIface: 'Interfaces',
     sysWifi: 'Wi-Fi',
     sysNetwork: 'Network I/O',
+    sysGame: 'Game performance',
     sysOverview: 'System overview',
     agentRuntime: 'Agent status',
     cpuTotal: 'Total CPU',
@@ -1834,6 +1839,7 @@ export default {
     diskTotal: 'Total',
     diskTotalCap: 'Total {size}',
     wifiLinkRate: 'Link rate',
+    gameFrameTime: 'Frame time',
   },
 
   targetStatus: {
@@ -2155,6 +2161,8 @@ export default {
     host_connection_owner_read: 'Connection owner',
     diagnostic_traceroute_icmp: 'ICMP path diagnostics',
     diagnostic_traceroute_tcp: 'TCP path diagnostics',
+    game_process_detect: 'Game process detection',
+    game_performance_read: 'Game frame data',
     // Tooltip for a blocked permission (granted but not supported by this
     // platform/run mode, so the grant can never take effect).
     blockedTitle: 'Granted but not supported: {name}',
@@ -2202,6 +2210,8 @@ export default {
     host_connection_owner_read: 'Read the owning process of connections',
     diagnostic_traceroute_icmp: 'Trace the network path to a destination via ICMP',
     diagnostic_traceroute_tcp: 'Trace the network path via TCP, observing intermediate hops',
+    game_process_detect: 'Identify which process is currently rendering',
+    game_performance_read: 'Read frame rate and frame times (never screen content)',
   },
 
   // Documentation deep links. Each locale points at its own directory; the
@@ -2221,6 +2231,8 @@ export default {
     network_neighbor_hostname_read: 'The Windows and Linux Agent builds implement neighbor hostname resolution. The macOS build does not implement it yet.',
     diagnostic_traceroute_icmp: 'The Windows and Linux Agent builds implement ICMP path diagnostics. Unlike ICMP probing it must receive intermediate Time-Exceeded replies, so on Linux it does require CAP_NET_RAW or root — an unprivileged ping socket never sees them. The macOS build does not implement it yet.',
     diagnostic_traceroute_tcp: 'The Windows and Linux Agent builds implement TCP path diagnostics, and both need extra privilege (Administrator on Windows, CAP_NET_RAW or root on Linux). The macOS build does not implement it yet.',
+    game_process_detect: 'Frame data comes from the Windows graphics event stream, so only the Windows Agent build has this capability; other builds do not include the component. It also needs the Intel PresentMon service installed on the machine (see the fix).',
+    game_performance_read: 'Frame data comes from the Windows graphics event stream, so only the Windows Agent build has this capability; other builds do not include the component. It also needs the Intel PresentMon service installed on the machine (see the fix).',
     host_temperature_read: 'Temperature depends on whether the machine exposes readable sensors at all, and the only way to find that out is to actually read them once — so the Agent self-checks at startup only when this permission is already granted. Until then it never touches the sensors and can only report the capability as unsupported: grant it and restart the Agent to learn whether this machine has sensors. If it still reports unsupported once granted, the self-check found no usable reading; most virtual machines and many consumer boards genuinely have none. Linux reads /sys/class/hwmon (a container needs the host /sys mounted); Windows reads the WMI ACPI thermal zone, which some mainboards and virtual machines do not expose and which a non-Administrator account may also be refused — the Agent cannot tell those two apart, so checking whether it runs as SYSTEM or Administrator narrows it down. The macOS build does not implement it yet.',
   },
 
@@ -2250,6 +2262,17 @@ export default {
     reRunNote: 'Restart the Agent with the elevated privilege for the change to take effect.',
     unsupportedIntro: 'The Agent’s current platform or build lacks this capability; neither granting the permission nor elevating privilege will enable it.',
     unsupportedGeneric: 'Deploy the Agent on a platform or build that supports this capability.',
+    componentIntro: 'This capability needs the Intel PresentMon service installed on this machine, and no usable service was found.',
+    componentWhy: 'Reading frame presentation events requires a system-level trace session. The PresentMon service holds that session under a system account and serves the data, which is what lets NetTact collect it without running as Administrator.',
+    componentStepDownload: 'Download the Intel PresentMon installer (MIT-licensed, signed by Intel):',
+    componentDownload: 'Open the download page',
+    componentStepInstall: 'Run the installer and approve the one Administrator prompt. The service starts automatically and on every boot.',
+    componentStepVerify: 'To check the service, run the command below in PowerShell or Command Prompt; STATE should read RUNNING.',
+    componentVerifyLabel: 'Check the service:',
+    componentAlreadyInstalled: 'If it is installed but still shows as unsupported, the service is usually not running (the command above shows STOPPED) or its version does not match NetTact; reinstalling the latest version fixes both.',
+    componentOtherCauses: 'The Agent reports whether a capability is supported, never why, so the above is the most common cause rather than a certain one. If the service is confirmed healthy and it is still unsupported, two others remain: this Agent was installed from a package without the game collection component (the MSI and portable builds have none; only the Microsoft Store build carries it), or the Agent predates the feature.',
+    componentRestartNote: 'Restart the Agent after installing (restart the app on desktop) — the check runs at startup.',
+    componentUrl: 'https://github.com/GameTechDev/PresentMon/releases/latest',
     desktopNote: 'This Agent runs embedded in desktop full-access mode with a fixed full grant — no environment variable or config file change is needed.',
     tab_powershell: 'PowerShell',
     tab_systemd: 'systemd',
@@ -2335,9 +2358,11 @@ export default {
     permGroup_other: 'Other',
     permUnsupportedTag: 'not on this platform',
     permPrivilegedTag: 'needs privilege',
+    permComponentTag: 'needs a component',
     permDefaultNote: "This is the Agent's built-in default set, so the command carries no permission argument.",
     permNoneNote: 'Nothing selected: the Agent will run with an empty grant, keeping only what it needs to stay up.',
     permUnsupportedNote: '{n} of these cannot be enabled on this platform and will not take effect even once granted.',
+    permComponentNote: '{n} of these also need the Intel PresentMon service installed on the target machine; the command below installs only the Agent. After installing it, open the permission on the Agent detail page for the install steps.',
     permReplaceNote: 'A permission list REPLACES the default set; it does not add to it.',
     calloutTokenHistory: 'The one-time token appears in this command and your shell history; it becomes invalid immediately after enrollment.',
   },

@@ -156,6 +156,27 @@ describe('platformSupport', () => {
     expect(privilegeCanEnable('host.cpu.read', 'linux')).toBe(false)
   })
 
+  it('rules out game monitoring everywhere but Windows', () => {
+    // Frame presentation comes from a Windows-only component; every other build
+    // compiles a stub that reports no sensor. Letting these read as `ok` would
+    // put them in an install command that can only ever collect nothing.
+    for (const id of ['game.process.detect', 'game.performance.read']) {
+      for (const platform of ['macos', 'linux', 'docker'] as const) {
+        expect(platformSupport(id, platform)).toBe('unsupported')
+        // And no amount of privilege installs a component that isn't built.
+        expect(privilegeCanEnable(id, platform)).toBe(false)
+      }
+      // On Windows it is possible but not self-sufficient: the chooser has to
+      // say so, or the generated command installs the Agent alone and the
+      // enrollment reads as complete while collecting nothing.
+      expect(platformSupport(id, 'windows')).toBe('component')
+      // "unsupported" there most often means the component is simply not
+      // installed — the ordinary case outside the Store build — so remediation
+      // must not prescribe elevation, exactly as for temperature.
+      expect(privilegeCanEnable(id, 'windows')).toBe(false)
+    }
+  })
+
   it('flags TCP path diagnostics and temperature as privileged on Windows', () => {
     expect(platformSupport('diagnostic.traceroute.tcp', 'windows')).toBe('privileged')
     expect(platformSupport('host.temperature.read', 'windows')).toBe('privileged')

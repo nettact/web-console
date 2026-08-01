@@ -96,6 +96,14 @@ const unsupportedSelected = computed(() =>
   selected.value.filter((id) => platformSupport(id, tab.value) === 'unsupported'),
 )
 
+// Permissions the policy includes that need software this command does not
+// install. Without saying so, the enrollment reads as complete and then quietly
+// collects nothing — the one outcome an operator has no way to diagnose from
+// here.
+const componentSelected = computed(() =>
+  selected.value.filter((id) => platformSupport(id, tab.value) === 'component'),
+)
+
 // --- install commands -------------------------------------------------------
 
 function shellQuote(value: string) {
@@ -219,6 +227,9 @@ onMounted(() => {
             <span v-if="support(e.id) === 'unsupported'" class="perm-tag warn">
               {{ $t('onboarding.permUnsupportedTag') }}
             </span>
+            <span v-else-if="support(e.id) === 'component'" class="perm-tag">
+              {{ $t('onboarding.permComponentTag') }}
+            </span>
             <span v-else-if="support(e.id) === 'privileged'" class="perm-tag">
               {{ $t('onboarding.permPrivilegedTag') }}
             </span>
@@ -230,6 +241,9 @@ onMounted(() => {
       <p v-else-if="!selected.length" class="perm-note">{{ $t('onboarding.permNoneNote') }}</p>
       <p v-if="unsupportedSelected.length" class="perm-note warn">
         {{ $t('onboarding.permUnsupportedNote', { n: unsupportedSelected.length }) }}
+      </p>
+      <p v-if="componentSelected.length" class="perm-note warn">
+        {{ $t('onboarding.permComponentNote', { n: componentSelected.length }) }}
       </p>
       <p class="perm-note">
         {{ $t('onboarding.permReplaceNote') }}

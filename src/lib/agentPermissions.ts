@@ -17,11 +17,18 @@
 //                                      required parent isn't effective)
 
 import type { AgentPermission } from '../api'
-import { privilegeCanEnable, type EnrollPlatform } from './permissionSelection'
+import { componentCanEnable, privilegeCanEnable, type EnrollPlatform } from './permissionSelection'
 
 // Which remediation flow a permission opens. `dependency` is the case where the
-// permission itself is fine but a parent it needs isn't effective.
-export type RemediationCategory = 'permission_blocked' | 'elevation' | 'unsupported' | 'dependency'
+// permission itself is fine but a parent it needs isn't effective. `component`
+// is a capability that arrives with separately-installed software rather than
+// with the agent build.
+export type RemediationCategory =
+  | 'permission_blocked'
+  | 'elevation'
+  | 'component'
+  | 'unsupported'
+  | 'dependency'
 
 // The agent reports runtime.GOOS on Windows and macOS but a distribution id on
 // Linux (ubuntu, debian, alpine, …), so anything that is not windows or darwin is
@@ -67,6 +74,21 @@ export function categoryFor(p: AgentPermission, platform: EnrollPlatform): Remed
   // Not supported by this agent. Lead with the capability gap; when the
   // permission is also ungranted the dialog still shows the policy line, flagged
   // as not sufficient on its own.
+  //
+  // A missing component is checked before privilege because it is the more
+  // specific answer and, on the permissions where both could be argued, the true
+  // one: frame data needs the PresentMon service, and once that service holds
+  // the trace session the agent needs no privilege at all. Telling someone to
+  // run as Administrator there would be advice that works by accident and stops
+  // working the moment they stop doing it.
+  //
+  // The report says only that support is absent, never why, so this cause is a
+  // best guess and the dialog says as much. The alternatives it cannot rule out
+  // — an Agent build that ships no sensor at all, or one that never probed
+  // because the permission was not granted — are covered there rather than by
+  // silently choosing a different cause here, because choosing wrongly in either
+  // direction ends in a remedy that cannot work.
+  if (componentCanEnable(p.id, platform)) return 'component'
   return privilegeCanEnable(p.id, platform) ? 'elevation' : 'unsupported'
 }
 

@@ -15,8 +15,12 @@ export type EnrollPlatform = 'windows' | 'macos' | 'linux' | 'docker'
 //   ok         — works as soon as it is granted
 //   privileged — the platform can do it, but only for a sufficiently privileged
 //                process (root / Administrator / a container with NET_RAW)
+//   component  — the platform can do it, but only once separately-installed
+//                software is present. Granting it and installing the Agent is
+//                not enough, so an enrollment that says nothing here produces a
+//                policy that looks complete and collects nothing.
 //   unsupported — this platform's build cannot do it at all; granting is futile
-export type PlatformSupport = 'ok' | 'privileged' | 'unsupported'
+export type PlatformSupport = 'ok' | 'privileged' | 'component' | 'unsupported'
 
 // Path diagnostics has to RECEIVE the ICMP errors intermediate routers send back,
 // which off Windows takes a raw socket — CAP_NET_RAW or root. ICMP *probing* does
@@ -49,6 +53,30 @@ const PRIVILEGED_ON_WINDOWS = new Set([
 // text that can describe both causes.
 const ELEVATION_FIXES_ON_WINDOWS = new Set(['diagnostic.traceroute.tcp'])
 
+// Frame presentation is read from the Windows graphics event stream by a
+// separate Windows component; every other build compiles a stub that reports no
+// sensor at all. Granting these anywhere else can never do anything, so the
+// chooser has to say so rather than let them into an install command that will
+// silently collect nothing.
+const WINDOWS_ONLY = new Set([
+  'game.process.detect',
+  'game.performance.read',
+])
+
+// Permissions whose capability comes from software that is installed separately
+// rather than from the agent build. This is a third kind of "unsupported": not a
+// platform that cannot do it and not a privilege that was withheld, but a
+// component that is not there yet — and the only one of the three an ordinary
+// user can fix themselves.
+const NEEDS_COMPONENT = WINDOWS_ONLY
+
+// componentCanEnable reports whether installing the supporting component is what
+// would turn this permission on. False off Windows, where no such component
+// exists to install.
+export function componentCanEnable(id: string, platform: EnrollPlatform): boolean {
+  return platform === 'windows' && NEEDS_COMPONENT.has(id)
+}
+
 // Implemented only in the Windows and Linux builds today.
 const NOT_ON_MACOS = new Set([
   'probe.icmp',
@@ -65,8 +93,15 @@ const NOT_ON_MACOS = new Set([
 // enrollment. This answers "will this work once granted?", so ICMP probing counts
 // as plain `ok` on Linux: the usual configuration runs it unprivileged.
 export function platformSupport(id: string, platform: EnrollPlatform): PlatformSupport {
+  if (platform !== 'windows' && WINDOWS_ONLY.has(id)) return 'unsupported'
   if (platform === 'macos') return NOT_ON_MACOS.has(id) ? 'unsupported' : 'ok'
   if (platform === 'windows') {
+    // Reported before privilege for the same reason the remediation dialog
+    // prefers it: the component is what this actually needs, and once its
+    // service holds the trace session no elevation is involved at all.
+    if (NEEDS_COMPONENT.has(id)) {
+      return 'component'
+    }
     // Raw-socket TCP path diagnostics and the WMI ACPI thermal zone are the
     // Windows capabilities that need an elevated process; the installer's
     // scheduled task runs as SYSTEM, so both are usually satisfied.
@@ -85,6 +120,12 @@ export function platformSupport(id: string, platform: EnrollPlatform): PlatformS
 // platform cannot do it, which is false.
 export function privilegeCanEnable(id: string, platform: EnrollPlatform): boolean {
   if (platform === 'macos') return false // not implemented; privilege is irrelevant
+  // Elsewhere the component does not exist at all, so privilege changes nothing.
+  if (platform !== 'windows' && WINDOWS_ONLY.has(id)) return false
+  // On Windows the game permissions are deliberately absent from
+  // ELEVATION_FIXES_ON_WINDOWS, for the same reason temperature is: an agent
+  // reporting them unsupported may simply not have the component installed — the
+  // ordinary case outside the Store build — and no privilege installs software.
   if (platform === 'windows') return ELEVATION_FIXES_ON_WINDOWS.has(id)
   return (
     NEEDS_RAW_SOCKET_OFF_WINDOWS.has(id) || id === 'probe.icmp' || id === 'network.gateway.probe'

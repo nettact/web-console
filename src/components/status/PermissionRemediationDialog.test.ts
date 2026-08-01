@@ -7,7 +7,7 @@ import PermissionRemediationDialog from './PermissionRemediationDialog.vue'
 
 type Props = {
   permId: string
-  category: 'permission_blocked' | 'elevation' | 'unsupported' | 'dependency'
+  category: 'permission_blocked' | 'elevation' | 'component' | 'unsupported' | 'dependency'
   permissionsEnv?: string
   requires?: string[]
   grantMissing?: boolean
@@ -105,5 +105,53 @@ describe('PermissionRemediationDialog', () => {
     const w = render({ permId: 'host.cpu.read', category: 'permission_blocked', permissionsEnv: env, desktop: true })
     expect(w.find('pre').exists()).toBe(false)
     expect(w.text()).toContain('full-access')
+  })
+
+  // The component cause is the only capability gap the reader can close, so it
+  // is the only one that has to end in an action rather than an explanation.
+  it('offers a download, a check command and the restart caveat for a missing component', () => {
+    const w = render({ permId: 'game.performance.read', category: 'component' })
+
+    expect(w.text()).toContain('PresentMon')
+    // Why it is needed at all — otherwise "install this" reads as arbitrary.
+    expect(w.text()).toContain('trace session')
+
+    // A real link to the official releases, opened safely.
+    const link = w.findAll('a').find((a) => a.attributes('href')?.includes('GameTechDev/PresentMon'))
+    expect(link).toBeDefined()
+    expect(link!.attributes('target')).toBe('_blank')
+    expect(link!.attributes('rel')).toContain('noopener')
+
+    // The one question the steps cannot answer for the reader, copyable.
+    expect(w.text()).toContain('sc.exe query PresentMonSharedService')
+    // Already-installed-but-stopped is the likeliest second visit.
+    expect(w.text()).toContain('STOPPED')
+    // The capability is probed at startup, so nothing changes until a restart.
+    expect(w.text()).toContain('Restart the Agent')
+  })
+
+  // Desktop grants every permission, so a missing component shows up there as
+  // granted-but-unsupported: the install steps must appear without the policy
+  // block that desktop mode has no use for.
+  it('keeps the component steps in desktop mode and omits the policy block', () => {
+    const w = render({ permId: 'game.performance.read', category: 'component', desktop: true })
+    expect(w.text()).toContain('PresentMon')
+    expect(w.find('pre').text()).toContain('sc.exe query PresentMonSharedService')
+    expect(w.text()).not.toContain('NETTACT_AGENT_PERMISSIONS')
+  })
+
+  // A standalone agent has the component missing AND the permission ungranted.
+  // Installing alone would leave it off, so both halves must show.
+  it('adds the policy line to the component steps when the permission is not granted either', () => {
+    const env = 'NETTACT_AGENT_PERMISSIONS=game.process.detect,game.performance.read'
+    const w = render({
+      permId: 'game.performance.read',
+      category: 'component',
+      permissionsEnv: env,
+      grantMissing: true,
+    })
+    expect(w.text()).toContain('PresentMon')
+    expect(w.text()).toContain('not granted either')
+    expect(w.text()).toContain(env)
   })
 })

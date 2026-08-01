@@ -25,7 +25,7 @@ export function useMetricMeta() {
   }
 
   // bytes / bps are formatted with scaled units (MB/GB/…) via fmtByUnit, not here.
-  const UNIT_LABEL: Record<string, string> = { ms: 'ms', pct: '%', code: '', bool: '', count: '', load: '', dbm: 'dBm', mbps: 'Mbps', c: '°C' }
+  const UNIT_LABEL: Record<string, string> = { ms: 'ms', pct: '%', code: '', bool: '', count: '', load: '', dbm: 'dBm', mbps: 'Mbps', c: '°C', fps: 'FPS' }
   const unitLabel = (u: string) => (u === 's' ? t('chart.unitSec') : UNIT_LABEL[u] ?? u)
 
   // natInfo returns the localized description of a NAT card's categories, shown in
