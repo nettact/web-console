@@ -34,23 +34,23 @@ const NEEDS_RAW_SOCKET_OFF_WINDOWS = new Set([
   'diagnostic.traceroute.tcp',
 ])
 
-// Windows capabilities worth flagging as privileged when picking a policy: the
-// raw socket behind TCP path diagnostics, and the WMI ACPI thermal zone the
-// temperature sensors are read through. The installer's scheduled task runs as
-// SYSTEM, so both are usually satisfied in practice.
+// Windows capabilities worth flagging as privileged when picking a policy. The
+// installer's scheduled task runs as SYSTEM, so these are usually satisfied in
+// practice.
 const PRIVILEGED_ON_WINDOWS = new Set([
   'diagnostic.traceroute.tcp',
-  'host.temperature.read',
 ])
 
+// Windows' standard WMI ACPI thermal zones are not trustworthy hardware
+// temperatures: many machines expose a stale, synthetic, or unrelated value.
+// The Agent deliberately does not query that provider until a real Windows
+// hardware-sensor backend exists.
+const UNSUPPORTED_ON_WINDOWS = new Set(['host.temperature.read'])
+
 // The narrower question of what elevation would actually FIX once an agent
-// already reports a capability as unsupported. Only path diagnostics qualifies:
-// an agent reporting temperature unsupported may equally have no thermal sensor
-// at all — most VMs and many consumer boards don't — and no privilege creates
-// hardware. The agent cannot tell the two apart, so promising Administrator as
-// the remedy would be wrong for the majority of those hosts; the remediation
-// dialog falls through to the platform explanation instead, which is the only
-// text that can describe both causes.
+// already reports a capability as unsupported. Only path diagnostics qualifies;
+// temperature is deliberately unimplemented on Windows, so elevation cannot
+// enable it.
 const ELEVATION_FIXES_ON_WINDOWS = new Set(['diagnostic.traceroute.tcp'])
 
 // Frame presentation is read from the Windows graphics event stream by a
@@ -96,15 +96,15 @@ export function platformSupport(id: string, platform: EnrollPlatform): PlatformS
   if (platform !== 'windows' && WINDOWS_ONLY.has(id)) return 'unsupported'
   if (platform === 'macos') return NOT_ON_MACOS.has(id) ? 'unsupported' : 'ok'
   if (platform === 'windows') {
+    if (UNSUPPORTED_ON_WINDOWS.has(id)) return 'unsupported'
     // Reported before privilege for the same reason the remediation dialog
     // prefers it: the component is what this actually needs, and once its
     // service holds the trace session no elevation is involved at all.
     if (NEEDS_COMPONENT.has(id)) {
       return 'component'
     }
-    // Raw-socket TCP path diagnostics and the WMI ACPI thermal zone are the
-    // Windows capabilities that need an elevated process; the installer's
-    // scheduled task runs as SYSTEM, so both are usually satisfied.
+    // Raw-socket TCP path diagnostics needs an elevated process; the installer's
+    // scheduled task runs as SYSTEM, so it is usually satisfied.
     return PRIVILEGED_ON_WINDOWS.has(id) ? 'privileged' : 'ok'
   }
   // Linux and the Linux-based container image behave identically here.
@@ -123,9 +123,8 @@ export function privilegeCanEnable(id: string, platform: EnrollPlatform): boolea
   // Elsewhere the component does not exist at all, so privilege changes nothing.
   if (platform !== 'windows' && WINDOWS_ONLY.has(id)) return false
   // On Windows the game permissions are deliberately absent from
-  // ELEVATION_FIXES_ON_WINDOWS, for the same reason temperature is: an agent
-  // reporting them unsupported may simply not have the component installed — the
-  // ordinary case outside the Store build — and no privilege installs software.
+  // ELEVATION_FIXES_ON_WINDOWS: an agent reporting them unsupported may simply
+  // not have the component installed, and no privilege installs software.
   if (platform === 'windows') return ELEVATION_FIXES_ON_WINDOWS.has(id)
   return (
     NEEDS_RAW_SOCKET_OFF_WINDOWS.has(id) || id === 'probe.icmp' || id === 'network.gateway.probe'

@@ -2234,7 +2234,7 @@ export default {
     diagnostic_traceroute_tcp: 'Windows 与 Linux 版 Agent 已实现 TCP 路径诊断，两者都需要提权（Windows 管理员 / Linux CAP_NET_RAW 或 root）。macOS 版尚未实现。',
     game_process_detect: '帧数据来自 Windows 图形呈现事件，仅 Windows 版 Agent 具备该能力；其他平台的构建不包含相应组件。此外还需要在本机安装 Intel PresentMon 服务（见解决方案）。',
     game_performance_read: '帧数据来自 Windows 图形呈现事件，仅 Windows 版 Agent 具备该能力；其他平台的构建不包含相应组件。此外还需要在本机安装 Intel PresentMon 服务（见解决方案）。',
-    host_temperature_read: '温度取决于机器本身有没有可读的传感器，而查明这一点只能真去读一次传感器，因此 Agent 仅在该权限已授予时才于启动时自检：尚未授予时它不会碰传感器，也就只能报告为不支持——先授予并重启 Agent，即可知道这台机器到底有没有传感器。已授予仍报不支持，说明自检没有读到有效读数：多数虚拟机与不少消费级主板确实没有可读传感器。Linux 读取 /sys/class/hwmon（容器内需挂载宿主机 /sys）；Windows 走 WMI ACPI 温度区，该接口在部分主板与虚拟机上并不存在，非管理员账户下也可能被拒绝访问，Agent 无法区分这两种情况，可确认它是否以 SYSTEM 或管理员身份运行来缩小范围。macOS 版尚未实现。',
+    host_temperature_read: 'Linux 版从 /sys/class/hwmon 读取主机温度（容器内需挂载宿主机 /sys），且仅在该权限已授予时才于启动时探测传感器——未授予时它一律报告不支持：先授予并重启 Agent，才能知道这台机器到底有没有可读传感器。已授予仍报不支持，说明启动自检没有读到有效读数：多数虚拟机与不少消费级主板确实没有可读传感器。Windows 经 WMI 读到的 ACPI 温度区，在很多机器上返回的是固定值、陈旧值或与 CPU、主板无关的值，而非真实温度，因此 Windows 版不再读取该接口，直接报告不支持；管理员权限也无法启用它。macOS 版尚未实现。',
   },
 
   // 权限受阻解决方案弹窗（AGENT-003）。
