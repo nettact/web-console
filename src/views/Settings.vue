@@ -179,7 +179,7 @@ const diag = reactive({
   snapshotDeadlineS: 10, // incident_snapshot_deadline_ms / 1000
   snapshotMaxKiB: 256, // incident_snapshot_max_bytes / 1024
   diagEnabled: true, // diag_enabled
-  totalTimeoutS: 90, // diag_total_timeout_ms / 1000
+  totalTimeoutS: 300, // diag_total_timeout_ms / 1000
   maxHops: 30, // diag_max_hops
   attempts: 3, // diag_attempts_per_hop
   agentConc: 4, // diag_agent_concurrency
@@ -192,7 +192,7 @@ const diag = reactive({
 const BOUNDS: Record<string, [number, number]> = {
   snapshotDeadlineS: [1, 60],
   snapshotMaxKiB: [64, 1024],
-  totalTimeoutS: [5, 120],
+  totalTimeoutS: [5, 600],
   maxHops: [1, 64],
   attempts: [1, 5],
   agentConc: [1, 16],
@@ -211,7 +211,7 @@ function populateDiag(s: Record<string, string>) {
   diag.snapshotDeadlineS = Math.round(num('incident_snapshot_deadline_ms', 10000) / 1000)
   diag.snapshotMaxKiB = Math.round(num('incident_snapshot_max_bytes', 262144) / 1024)
   diag.diagEnabled = num('diag_enabled', 1) !== 0
-  diag.totalTimeoutS = Math.round(num('diag_total_timeout_ms', 90000) / 1000)
+  diag.totalTimeoutS = Math.round(num('diag_total_timeout_ms', 300000) / 1000)
   diag.maxHops = num('diag_max_hops', 30)
   diag.attempts = num('diag_attempts_per_hop', 3)
   diag.agentConc = num('diag_agent_concurrency', 4)
@@ -980,7 +980,7 @@ onMounted(() => {
           <label class="knob">
             <span class="knob-label">{{ t('settings.diag.totalTimeout') }}</span>
             <span class="knob-input">
-              <input type="number" v-model.number="diag.totalTimeoutS" min="5" max="120" step="1" :disabled="!diag.diagEnabled" />
+              <input type="number" v-model.number="diag.totalTimeoutS" min="5" max="600" step="1" :disabled="!diag.diagEnabled" />
               <span class="unit">{{ t('settings.unit.seconds') }}</span>
             </span>
             <span class="knob-help hint">{{ t('settings.diag.totalTimeoutHelp') }}</span>
