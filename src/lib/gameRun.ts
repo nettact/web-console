@@ -8,11 +8,17 @@
 // instead, and the answer is specific enough to be worth reading.
 
 import {
+  CAP_BUSIEST_CORE,
+  CAP_CPU_SPLIT,
   CAP_DISPLAYED,
   CAP_FRAME_TYPE,
+  CAP_GPU_SPLIT,
+  CAP_GPU_TEL,
+  CAP_LATENCY,
   CAP_PRESENT_META,
   CAP_PROC_CPU,
   CAP_PROC_MEM,
+  CAP_PROC_VRAM,
   CAP_STUTTER,
   type GameBucket,
   type GameRun,
@@ -23,6 +29,11 @@ import {
 // resource fields are split three ways rather than one because 'procCpu' and
 // 'procWs'/'procPriv' are backed by different capabilities — a source can report
 // the game's memory without being able to report its CPU.
+// The diagnostic families each get their own field, one per chart the page
+// draws, even where two of them share a capability. A field is what a caption
+// asks about, and "the presentation chain is missing" and "the GPU breakdown is
+// missing" are different sentences to write even when one absent capability
+// causes both.
 export type GameField =
   | 'displayed'
   | 'dropped'
@@ -35,6 +46,15 @@ export type GameField =
   | 'procCpu'
   | 'procWs'
   | 'procPriv'
+  | 'cpuSplit'
+  | 'gpuSplit'
+  | 'presentChain'
+  | 'displayLatency'
+  | 'animError'
+  | 'gpuUtil'
+  | 'gpuMem'
+  | 'procVram'
+  | 'busiestCore'
 
 // Why a value is missing.
 //
@@ -62,6 +82,64 @@ const CAP_FOR: Partial<Record<GameField, string>> = {
   procCpu: CAP_PROC_CPU,
   procWs: CAP_PROC_MEM,
   procPriv: CAP_PROC_MEM,
+  cpuSplit: CAP_CPU_SPLIT,
+  // The present-chain figures (time blocked inside Present, and Present to GPU
+  // completion) travel in the GPU breakdown block, so they stand or fall with
+  // it — but they answer a different question, which is why they are charted and
+  // explained separately.
+  gpuSplit: CAP_GPU_SPLIT,
+  presentChain: CAP_GPU_SPLIT,
+  // Display latency and animation error come from the same block for the same
+  // reason: one says how long a frame took to appear, the other how evenly the
+  // frames that did appear were spaced.
+  displayLatency: CAP_LATENCY,
+  animError: CAP_LATENCY,
+  // Whole-adapter telemetry. Utilization and memory are one capability because
+  // one poll returns both, even though a driver may publish only one of them —
+  // that narrower absence is per-second and is not a capability question.
+  gpuUtil: CAP_GPU_TEL,
+  gpuMem: CAP_GPU_TEL,
+  procVram: CAP_PROC_VRAM,
+  busiestCore: CAP_BUSIEST_CORE,
+}
+
+// The diagnostic capabilities, split by where they come from. The GPU pair is
+// the half that needs a permission the others do not — game.gpu.read — and can
+// therefore be absent from a run that asked for everything else and got it.
+export const DIAG_FRAME_CAPS = [CAP_CPU_SPLIT, CAP_GPU_SPLIT, CAP_LATENCY]
+export const DIAG_GPU_CAPS = [CAP_GPU_TEL, CAP_PROC_VRAM]
+export const DIAG_CAPS = [...DIAG_FRAME_CAPS, ...DIAG_GPU_CAPS, CAP_BUSIEST_CORE]
+
+// Why a run is missing diagnostic capabilities — which is really the question
+// "what, if anything, would fix it", and the answers are not interchangeable.
+//
+// A run's caps state what it set out to measure, so they distinguish the case
+// nobody can act on from the two somebody can:
+//
+// - 'tier'    not one diagnostic capability: the run was captured at the base
+//             depth. The profile's tier decides this, and switching it to
+//             Diagnostic makes LATER runs carry the breakdowns.
+// - 'gpu'     everything else is present and exactly the GPU-sourced pair is
+//             not. The depth is already Diagnostic — the missing half needs
+//             game.gpu.read to be granted and effective on the agent, or the
+//             machine publishes no GPU telemetry at all. Re-selecting the tier
+//             changes nothing, and telling the reader to try it wastes a
+//             configuration round-trip on the wrong page.
+// - 'partial' captured at the diagnostic depth with some other family missing:
+//             a source that did not initialize on that machine. Again not a
+//             tier problem.
+//
+// The distinction only holds while caps are per-run truthful — a run captured at
+// base depth must not carry diagnostic caps, or 'gpu'/'partial' would be
+// reported for runs whose actual answer is 'tier'.
+export type DiagAbsence = 'none' | 'tier' | 'gpu' | 'partial'
+
+export function diagAbsence(caps: readonly string[]): DiagAbsence {
+  const missing = DIAG_CAPS.filter((c) => !caps.includes(c))
+  if (!missing.length) return 'none'
+  if (missing.length === DIAG_CAPS.length) return 'tier'
+  if (missing.every((c) => DIAG_GPU_CAPS.includes(c))) return 'gpu'
+  return 'partial'
 }
 
 export function missingCause(field: GameField, caps: readonly string[]): MissingCause {

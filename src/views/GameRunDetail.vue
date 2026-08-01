@@ -37,6 +37,8 @@ import {
   bucketsAbsence,
   bucketsTruncated,
   chartFloor,
+  diagAbsence,
+  DIAG_CAPS,
   isRunning,
   missingCause,
   observes,
@@ -265,6 +267,10 @@ const stutterCards = computed<GameCard[]>(() => {
 })
 
 // ---- capture source ----
+// The diagnostic six are listed last and only ever as a group, because they
+// arrive together: a run captured at the base depth declares none of them, and
+// the panel showing six crosses in a row is what tells the reader the run was
+// recorded shallow rather than that the machine could not manage it.
 const CAPS = [
   CAP_DISPLAYED,
   CAP_FRAME_TYPE,
@@ -273,6 +279,7 @@ const CAPS = [
   CAP_STUTTER,
   CAP_PROC_CPU,
   CAP_PROC_MEM,
+  ...DIAG_CAPS,
 ]
 const capRows = computed(() => CAPS.map((cap) => ({ cap, label: capLabel(cap), desc: capDesc(cap), on: caps.value.includes(cap) })))
 
@@ -433,22 +440,23 @@ const showProcMem = computed(() => observes('procWs', caps.value))
 const chartEmptyText = () =>
   truncated.value ? t('gameRuns.chartNotRecordedSegment') : t('gameRuns.chartNotRecorded')
 
-const procCpuCaption = computed(() =>
-  seriesHasValue(procCpuSeries.value[0].data) ? t('gameRuns.procCpuCaption') : chartEmptyText(),
-)
-const procMemCaption = computed(() => {
-  const [ws, priv] = procMemSeries.value
-  const gone = [
-    ...(seriesHasValue(ws.data) ? [] : [ws.label]),
-    ...(seriesHasValue(priv.data) ? [] : [priv.label]),
-  ]
-  if (!gone.length) return t('gameRuns.procMemCaption')
-  if (gone.length === 2) return chartEmptyText()
-  const series = gone.join(t('gameRuns.listSep'))
+// The caption under a chart the source declared it could fill: the sentence
+// explaining what the lines mean when they are there, and the reason for the
+// blank when they are not. A chart missing only SOME of its lines names them,
+// because a legend entry above an undrawn line is read as a line at zero that
+// the eye missed.
+function chartCaption(series: readonly GameChartSeries[], text: string): string {
+  const gone = series.filter((s) => !seriesHasValue(s.data))
+  if (!gone.length) return text
+  if (gone.length === series.length) return chartEmptyText()
+  const names = gone.map((s) => s.label).join(t('gameRuns.listSep'))
   return truncated.value
-    ? t('gameRuns.seriesNotRecordedSegment', { series })
-    : t('gameRuns.seriesNotRecorded', { series })
-})
+    ? t('gameRuns.seriesNotRecordedSegment', { series: names })
+    : t('gameRuns.seriesNotRecorded', { series: names })
+}
+
+const procCpuCaption = computed(() => chartCaption(procCpuSeries.value, t('gameRuns.procCpuCaption')))
+const procMemCaption = computed(() => chartCaption(procMemSeries.value, t('gameRuns.procMemCaption')))
 
 // With neither capability there is no chart at all, and an unexplained gap
 // between the frame charts and the network timeline reads as a page that forgot
@@ -460,6 +468,108 @@ const procUnavailable = computed(() => {
   if (!showProcMem.value) missing.push(capLabel(CAP_PROC_MEM))
   if (!missing.length) return ''
   return t('gameRuns.chartUnavailable', { series: missing.join(t('gameRuns.listSep')) })
+})
+
+// ---- diagnostic detail ----
+// Only a run captured at the diagnostic depth carries any of this, and every
+// family is gated on its own capability rather than on one "diag" flag. The
+// mixed case is the ordinary one: a machine whose driver publishes no adapter
+// telemetry still produced the per-frame breakdown, and drawing neither would
+// blame a working sensor for a missing driver.
+//
+// The frame-derived breakdowns below aggregate the same frames `ft` does, so
+// they line up second for second with the frame-time chart above them — which is
+// the entire point of reading them together.
+const cpuSplitSeries = computed<GameChartSeries[]>(() => [
+  { key: 'busyAvg', label: t('gameRuns.seriesCpuBusyAvg'), color: '#38bdf8', data: points((b) => b.cpu_split?.busy_avg) },
+  { key: 'busyP95', label: t('gameRuns.seriesCpuBusyP95'), color: '#f472b6', data: points((b) => b.cpu_split?.busy_p95) },
+  { key: 'waitAvg', label: t('gameRuns.seriesCpuWaitAvg'), color: '#a78bfa', data: points((b) => b.cpu_split?.wait_avg) },
+  { key: 'waitP95', label: t('gameRuns.seriesCpuWaitP95'), color: '#fbbf24', data: points((b) => b.cpu_split?.wait_p95) },
+])
+const gpuSplitSeries = computed<GameChartSeries[]>(() => [
+  { key: 'timeAvg', label: t('gameRuns.seriesGpuTimeAvg'), color: '#38bdf8', data: points((b) => b.gpu_split?.time_avg) },
+  { key: 'timeP95', label: t('gameRuns.seriesGpuTimeP95'), color: '#f472b6', data: points((b) => b.gpu_split?.time_p95) },
+  { key: 'busyAvg', label: t('gameRuns.seriesGpuBusyAvg'), color: '#34d399', data: points((b) => b.gpu_split?.busy_avg) },
+  { key: 'busyP95', label: t('gameRuns.seriesGpuBusyP95'), color: '#fbbf24', data: points((b) => b.gpu_split?.busy_p95) },
+  { key: 'latencyAvg', label: t('gameRuns.seriesGpuLatencyAvg'), color: '#a78bfa', data: points((b) => b.gpu_split?.latency_avg) },
+  { key: 'waitAvg', label: t('gameRuns.seriesGpuWaitAvg'), color: '#fb923c', data: points((b) => b.gpu_split?.wait_avg) },
+])
+// The present path, charted apart from the GPU breakdown it travels with: these
+// two answer "what did the presentation path cost" rather than "how long did the
+// GPU work", and six lines plus these two on one axis would be unreadable.
+const presentChainSeries = computed<GameChartSeries[]>(() => [
+  { key: 'inPresent', label: t('gameRuns.seriesInPresent'), color: '#38bdf8', data: points((b) => b.gpu_split?.in_present_avg) },
+  { key: 'renderLatency', label: t('gameRuns.seriesRenderLatency'), color: '#a78bfa', data: points((b) => b.gpu_split?.render_latency_avg) },
+])
+const latencySeries = computed<GameChartSeries[]>(() => [
+  { key: 'display', label: t('gameRuns.seriesDisplayLatency'), color: '#38bdf8', data: points((b) => b.lat?.display_avg) },
+  { key: 'animAvg', label: t('gameRuns.seriesAnimErrAvg'), color: '#a78bfa', data: points((b) => b.lat?.anim_err_avg) },
+  { key: 'animP95', label: t('gameRuns.seriesAnimErrP95'), color: '#f472b6', data: points((b) => b.lat?.anim_err_p95) },
+])
+// Whole-adapter telemetry. Every label on these two charts says so, because the
+// figure the reader will otherwise take away is "the game used 98% of the GPU" —
+// a claim this reading cannot make about any single process.
+const gpuUtilSeries = computed<GameChartSeries[]>(() => [
+  { key: 'util', label: t('gameRuns.seriesGpuUtil'), color: '#34d399', data: points((b) => b.gpu_tel?.util_pct) },
+])
+const gpuMemSeries = computed<GameChartSeries[]>(() => [
+  { key: 'used', label: t('gameRuns.seriesGpuMemUsed'), color: '#38bdf8', data: points((b) => b.gpu_tel?.mem_used) },
+  { key: 'size', label: t('gameRuns.seriesGpuMemSize'), color: '#94a3b8', data: points((b) => b.gpu_tel?.mem_size) },
+])
+// The game's own dedicated video memory against the budget the OS grants it.
+// Budget is optional even on a source that reports usage, so the caption names
+// it when it is missing rather than leaving a legend entry with no line.
+const procVramSeries = computed<GameChartSeries[]>(() => [
+  { key: 'used', label: t('gameRuns.seriesProcVramUsed'), color: '#38bdf8', data: points((b) => b.proc_vram?.used) },
+  { key: 'budget', label: t('gameRuns.seriesProcVramBudget'), color: '#94a3b8', data: points((b) => b.proc_vram?.budget) },
+])
+const busiestCoreSeries = computed<GameChartSeries[]>(() => [
+  { key: 'busiest', label: t('gameRuns.seriesBusiestCore'), color: '#f472b6', data: points((b) => b.busiest_core_pct) },
+])
+
+const showCpuSplit = computed(() => observes('cpuSplit', caps.value))
+// The presentation chain travels in the GPU breakdown block, so one capability
+// decides both charts.
+const showGpuSplit = computed(() => observes('gpuSplit', caps.value))
+const showLatency = computed(() => observes('displayLatency', caps.value))
+const showGpuTel = computed(() => observes('gpuUtil', caps.value))
+const showProcVram = computed(() => observes('procVram', caps.value))
+const showBusiestCore = computed(() => observes('busiestCore', caps.value))
+
+const cpuSplitCaption = computed(() => chartCaption(cpuSplitSeries.value, t('gameRuns.cpuSplitCaption')))
+const gpuSplitCaption = computed(() => chartCaption(gpuSplitSeries.value, t('gameRuns.gpuSplitCaption')))
+const presentChainCaption = computed(() =>
+  chartCaption(presentChainSeries.value, t('gameRuns.presentChainCaption')),
+)
+const latencyCaption = computed(() => chartCaption(latencySeries.value, t('gameRuns.latencyCaption')))
+const gpuUtilCaption = computed(() => chartCaption(gpuUtilSeries.value, t('gameRuns.gpuUtilCaption')))
+const gpuMemCaption = computed(() => chartCaption(gpuMemSeries.value, t('gameRuns.gpuMemCaption')))
+const procVramCaption = computed(() => chartCaption(procVramSeries.value, t('gameRuns.procVramCaption')))
+const busiestCoreCaption = computed(() =>
+  chartCaption(busiestCoreSeries.value, t('gameRuns.busiestCoreCaption')),
+)
+
+// A run recorded at the base depth loses six chart rows at once, and six
+// unexplained gaps between the frame charts and the network timeline read as a
+// page that failed to load rather than as a run that was never asked for this.
+//
+// The notice gets its own sentences rather than the chartUnavailable one used
+// above, which blames the capture source — the wrong culprit here. It then
+// branches on what the run's caps say, because the remediation is different in
+// each case and only one of the three is a tier setting. Promising "switch the
+// profile to Diagnostic" to a run that WAS captured at the diagnostic depth
+// sends the reader to change a setting that is already right, and leaves the
+// actual cause — an ungranted game.gpu.read, or a source that did not come up on
+// that machine — unmentioned.
+const diagUnavailable = computed(() => {
+  const state = diagAbsence(caps.value)
+  if (state === 'none') return ''
+  const series = DIAG_CAPS.filter((c) => !caps.value.includes(c))
+    .map(capLabel)
+    .join(t('gameRuns.listSep'))
+  if (state === 'tier') return t('gameRuns.diagUnavailableTier', { series })
+  if (state === 'gpu') return t('gameRuns.diagUnavailableGpu', { series })
+  return t('gameRuns.diagUnavailablePartial', { series })
 })
 
 // ---- delete ----
@@ -614,6 +724,58 @@ watch(runId, load)
           <p class="chart-caption">{{ frameTimeCaption }}</p>
         </div>
 
+        <!-- The diagnostic breakdown of the frame times above. Same seconds,
+             same frames, one axis apart — which is what lets a spike in the
+             chart above be read off against what the CPU and the GPU were each
+             doing in that second. -->
+        <div v-if="showCpuSplit" class="card chart-card">
+          <GameRunChart
+            :title="t('gameRuns.cpuSplitChart')"
+            unit="ms"
+            :series="cpuSplitSeries"
+            :x-min="chartWindow[0]"
+            :x-max="chartWindow[1]"
+          />
+          <p class="chart-caption">{{ cpuSplitCaption }}</p>
+        </div>
+
+        <div v-if="showGpuSplit" class="card chart-card">
+          <GameRunChart
+            :title="t('gameRuns.gpuSplitChart')"
+            unit="ms"
+            :series="gpuSplitSeries"
+            :x-min="chartWindow[0]"
+            :x-max="chartWindow[1]"
+          />
+          <p class="chart-caption">{{ gpuSplitCaption }}</p>
+        </div>
+
+        <div v-if="showGpuSplit" class="card chart-card">
+          <GameRunChart
+            :title="t('gameRuns.presentChainChart')"
+            unit="ms"
+            :series="presentChainSeries"
+            :x-min="chartWindow[0]"
+            :x-max="chartWindow[1]"
+          />
+          <p class="chart-caption">{{ presentChainCaption }}</p>
+        </div>
+
+        <!-- Titled as an estimate everywhere it appears. It is derived from the
+             presentation model rather than measured end to end, and a number
+             this page presents as "latency" without that word is the exact
+             overclaim the product rule forbids. -->
+        <div v-if="showLatency" class="card chart-card">
+          <GameRunChart
+            :title="t('gameRuns.latencyChart')"
+            unit="ms"
+            :series="latencySeries"
+            :x-min="chartWindow[0]"
+            :x-max="chartWindow[1]"
+          />
+          <p class="chart-caption">{{ latencyCaption }}</p>
+        </div>
+
         <div v-if="showProcCpu" class="card chart-card">
           <!-- Pinned to 0-100 because the figure is a share of the whole
                machine: auto-scaling a game using 12% of it to fill the plot
@@ -641,7 +803,63 @@ watch(runId, load)
           <p class="chart-caption">{{ procMemCaption }}</p>
         </div>
 
+        <!-- Whole-GPU, and the title says so. Pinned to 0-100 for the same
+             reason the process CPU chart is: the share IS the meaning, and a
+             card at 12% auto-scaled to fill the plot draws the same picture as
+             one at 95%. -->
+        <div v-if="showGpuTel" class="card chart-card">
+          <GameRunChart
+            :title="t('gameRuns.gpuUtilChart')"
+            unit="%"
+            :series="gpuUtilSeries"
+            :y-min="0"
+            :y-max="100"
+            :x-min="chartWindow[0]"
+            :x-max="chartWindow[1]"
+          />
+          <p class="chart-caption">{{ gpuUtilCaption }}</p>
+        </div>
+
+        <div v-if="showGpuTel" class="card chart-card">
+          <GameRunChart
+            :title="t('gameRuns.gpuMemChart')"
+            unit="bytes"
+            :series="gpuMemSeries"
+            :x-min="chartWindow[0]"
+            :x-max="chartWindow[1]"
+          />
+          <p class="chart-caption">{{ gpuMemCaption }}</p>
+        </div>
+
+        <!-- The other video-memory question, and a separate reading: what this
+             game is holding, against the budget the OS grants it. A full card
+             above says nothing about which process filled it. -->
+        <div v-if="showProcVram" class="card chart-card">
+          <GameRunChart
+            :title="t('gameRuns.procVramChart')"
+            unit="bytes"
+            :series="procVramSeries"
+            :x-min="chartWindow[0]"
+            :x-max="chartWindow[1]"
+          />
+          <p class="chart-caption">{{ procVramCaption }}</p>
+        </div>
+
+        <div v-if="showBusiestCore" class="card chart-card">
+          <GameRunChart
+            :title="t('gameRuns.busiestCoreChart')"
+            unit="%"
+            :series="busiestCoreSeries"
+            :y-min="0"
+            :y-max="100"
+            :x-min="chartWindow[0]"
+            :x-max="chartWindow[1]"
+          />
+          <p class="chart-caption">{{ busiestCoreCaption }}</p>
+        </div>
+
         <p v-if="procUnavailable" class="hint notice">{{ procUnavailable }}</p>
+        <p v-if="diagUnavailable" class="hint notice">{{ diagUnavailable }}</p>
       </template>
       <p v-else class="hint notice">{{ bucketsNote }}</p>
 

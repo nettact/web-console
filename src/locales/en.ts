@@ -1932,6 +1932,12 @@ export default {
       stutter: 'Stutter detection',
       proc_cpu: 'Process CPU',
       proc_mem: 'Process memory',
+      cpu_split: 'CPU frame breakdown',
+      gpu_split: 'GPU frame breakdown',
+      latency: 'Display latency estimate',
+      gpu_tel: 'Whole-GPU telemetry',
+      proc_vram: 'Process video memory',
+      busiest_core: 'Busiest logical core',
     },
     capDesc: {
       displayed: 'Follows each frame through to the screen, so displayed and dropped counts and the real on-screen rhythm are known.',
@@ -1941,6 +1947,12 @@ export default {
       stutter: 'Detects long frames against a rolling baseline, so each second carries how many hitches it held and how much time they cost. Without it the percentiles are all there is, and a P99 cannot say whether a second held one bad frame or ten.',
       proc_cpu: 'Samples the game process’s own CPU usage once a second. Scoped to that process rather than the machine — “the box is busy” and “the game is busy” lead to different fixes.',
       proc_mem: 'Samples the game process’s own memory footprint once a second. Listed apart from process CPU because the two come from different queries and one can be readable while the other is not.',
+      cpu_split: 'Splits every frame’s CPU time into the work the game did and the time it spent waiting. A frame interval says the second was slow; the split says which side held it up.',
+      gpu_split: 'Per-frame GPU queueing, active and idle time, plus the presentation path around Present. Taken from the frame events and scoped to this game process, not to the whole card.',
+      latency: 'Per-frame estimate of frame start → on screen, plus how far the game’s own pacing drifted from the display’s. An estimate rather than a measured end-to-end input latency, and its accuracy depends on the presentation mode.',
+      gpu_tel: 'Polls the whole adapter’s utilization and memory once a second. The card, not this process — a card at 100% while this game’s own GPU time stays low is something else taking it. Requires the agent’s game.gpu.read permission.',
+      proc_vram: 'Reads the game process’s own dedicated video memory, and the budget the OS grants it, once a second. Kept apart from the whole-card figure because a full card says nothing about who filled it. Requires the agent’s game.gpu.read permission.',
+      busiest_core: 'Reads per-core utilization once a second and reports the busiest one. A single-threaded game pins one core while the machine-wide average stays comfortable, and the average is what hides it.',
     },
     source: {
       presentmon_service: 'Intel PresentMon service',
@@ -1979,10 +1991,13 @@ export default {
     quality: {
       hist_clipped: 'Histogram clipped',
       consume_backlog: 'Read backlog',
+      diag_degraded: 'Diagnostics stopped',
     },
     qualityDesc: {
       hist_clipped: 'Some frame intervals fell outside the histogram’s range and landed in an end bin. The frame total is still right, but the tail is not where it appears.',
       consume_backlog: 'A read returned a full buffer, so frames may have been produced faster than they were consumed and a few may belong to a neighbouring second.',
+      diag_degraded:
+        'Diagnostic capture stopped after exceeding its per-second budget; the frame data is unaffected. The sensor’s work at the second boundary ran over its wall-clock budget, so the polled diagnostics (GPU telemetry, process video memory, busiest core) were dropped for the rest of the run. The breakdowns derived from the frame events cost nothing extra at the boundary and continue — a second after this flag is partial, not empty.',
     },
 
     fpsChart: 'Frame rate (one point per second)',
@@ -2004,6 +2019,49 @@ export default {
     procMemChart: 'Game process memory (one point per second)',
     procMemCaption:
       'Working set is the part currently resident in physical memory; private bytes is the committed memory this process alone owns. The system can trim the first under pressure and cannot trim the second.',
+
+    // ---- diagnostic depth ----
+    // Display latency always carries the word "estimate": it is derived from the
+    // presentation model rather than measured end to end, and dropping the word
+    // is exactly the overclaim the product rule forbids.
+    // The adapter telemetry always says "whole-GPU": it is the card, not this
+    // game process.
+    cpuSplitChart: 'CPU frame time breakdown (one point per second)',
+    cpuSplitCaption:
+      'Each frame’s CPU time split into the work the game did and the time it spent waiting. Busy high with wait low is the CPU itself running out of room; busy low with wait high means it was waiting on the GPU or on something else — the same long frame time, two entirely different things to fix.',
+    gpuSplitChart: 'GPU frame time breakdown (one point per second)',
+    gpuSplitCaption:
+      'This is the game process’s own GPU time, taken from the frame events rather than from adapter load. Read against the CPU split above: GPU busy high with CPU wait high is a GPU-bound frame; CPU busy high with GPU wait high is the mirror image.',
+    presentChainChart: 'Presentation chain (one point per second)',
+    presentChainCaption:
+      'Time blocked inside the Present call is where a frame cap or vsync shows itself; Present → GPU done is how deep the render pipeline still was after submission.',
+    latencyChart: 'Display latency estimate and animation error (one point per second)',
+    latencyCaption:
+      'Display latency is an estimate, not a measured end-to-end input latency, and how good an estimate depends on the presentation mode above — an independent flip is measured far more tightly than a composed copy. Animation error is the gap between the game’s own pacing and what the screen showed (absolute value): it is what to read when the frame rate looks fine but the motion does not.',
+    gpuUtilChart: 'GPU utilization, whole card (one point per second)',
+    gpuUtilCaption:
+      'The whole adapter, not this game process. A card near 100% while the process’s own GPU time above stays low is something else on the machine taking it. The axis is pinned to 0–100.',
+    gpuMemChart: 'Video memory, whole card (one point per second)',
+    gpuMemCaption:
+      'Dedicated memory used and total on the whole card — not what this game is holding, which is the next chart.',
+    procVramChart: 'Game process video memory (one point per second)',
+    procVramCaption:
+      'The dedicated video memory this game process holds. The budget is what the OS allows this process, and it explains memory pressure better than the card’s nominal capacity: as used approaches it, paging starts costing frames.',
+    // Three absences, three remediations, and only the first is a setting anyone
+    // can change. Telling a run that WAS captured at the diagnostic depth to
+    // switch its depth to Diagnostic sends the reader to change a setting that is
+    // already right, while hiding the real cause — an ungranted permission, or a
+    // source that never came up on that machine.
+    diagUnavailableTier:
+      'This run recorded no {series}, so there are no charts for them — rather than lines sitting flat at 0. They belong to the Diagnostic capture depth, and this run was recorded at Base. Set the game’s capture depth to Diagnostic on the Game profiles page and later runs will carry these charts; runs already recorded will not gain them.',
+    diagUnavailableGpu:
+      'This run recorded no {series}, so there are no charts for them — rather than lines sitting flat at 0. The run itself was captured at the Diagnostic depth and the other diagnostic charts are above: what is missing all comes from the graphics card, and needs the game.gpu.read permission granted and effective on this agent — or the machine may publish no GPU telemetry at all. Changing the capture depth will not help; check that permission on this agent instead.',
+    diagUnavailablePartial:
+      'This run recorded no {series}, so there are no charts for them — rather than lines sitting flat at 0. This run was captured at the Diagnostic depth and the other diagnostic charts are above, so the depth is not the problem: these particular sources did not come up on this machine. The GPU figures among them need the game.gpu.read permission granted and effective on this agent; the rest depend on whether the machine offers the reading at all. Changing the capture depth will not help.',
+    busiestCoreChart: 'Busiest logical core (one point per second)',
+    busiestCoreCaption:
+      'The busiest of all logical cores. A single thread pinning one core leaves the machine-wide average looking comfortable; this line is what that average hides. The axis is pinned to 0–100.',
+
     seriesPresented: 'Presented',
     seriesDisplayed: 'Displayed',
     seriesApp: 'Game-rendered',
@@ -2013,6 +2071,27 @@ export default {
     seriesProcCpu: 'Process CPU',
     seriesWorkingSet: 'Working set',
     seriesPrivBytes: 'Private bytes',
+    seriesCpuBusyAvg: 'CPU busy avg',
+    seriesCpuBusyP95: 'CPU busy P95',
+    seriesCpuWaitAvg: 'CPU wait avg',
+    seriesCpuWaitP95: 'CPU wait P95',
+    seriesGpuTimeAvg: 'GPU time avg',
+    seriesGpuTimeP95: 'GPU time P95',
+    seriesGpuBusyAvg: 'GPU busy avg',
+    seriesGpuBusyP95: 'GPU busy P95',
+    seriesGpuLatencyAvg: 'GPU start wait avg',
+    seriesGpuWaitAvg: 'GPU idle wait avg',
+    seriesInPresent: 'Blocked in Present avg',
+    seriesRenderLatency: 'Present → GPU done avg',
+    seriesDisplayLatency: 'Display latency (estimate) avg',
+    seriesAnimErrAvg: 'Animation error avg',
+    seriesAnimErrP95: 'Animation error P95',
+    seriesGpuUtil: 'Whole-GPU utilization',
+    seriesGpuMemUsed: 'Whole-GPU memory used',
+    seriesGpuMemSize: 'Whole-GPU memory capacity',
+    seriesProcVramUsed: 'Process video memory used',
+    seriesProcVramBudget: 'Process video memory budget',
+    seriesBusiestCore: 'Busiest logical core',
     seriesNotRecorded:
       'The source declares {series} but no second of this run carried it, so the line is absent from the chart rather than sitting flat at 0.',
     seriesNotRecordedSegment:
@@ -2106,16 +2185,12 @@ export default {
       'Used only to judge whether the frame rate met expectations. Leave it unset for no goal — nothing here will guess one from your refresh rate.',
     tier: 'Capture depth',
     tierBase: 'Base',
-    tierBaseDesc: 'Frame rate and frame times. Every capture source can do it, at negligible cost.',
+    tierBaseDesc:
+      'Frame rate, frame times and presentation settings, stutter detection, and the game process’s own CPU and memory. Every capture source can do it, at negligible cost.',
     tierDiag: 'Diagnostic',
     // The description says what it collects TODAY, not what it is meant to.
     tierDiagDesc:
-      'Reserved for the deeper CPU / GPU time breakdown. What it actually collects today is identical to Base.',
-    tierDiagUnavailable: 'Not implemented yet',
-    tierDiagUnavailableHint:
-      'Diagnostic capture has not been built: the sensor collects nothing extra for this option and GPU telemetry is still switched off agent-side. The choice opens up once it ships — until then it would give you exactly the same data as Base.',
-    tierDiagStored:
-      'This profile is already stored as Diagnostic and is kept that way; nothing here rewrites it, only an edit you make yourself.',
+      'Everything Base records, plus the per-frame CPU / GPU time breakdown, the display latency estimate, GPU utilization and memory, the game process’s video memory, and the busiest logical core (the GPU figures need the agent’s game.gpu.read permission). The cost is still held down by the sensor’s per-second budget — the polled diagnostics stop first if it is exceeded, and the frame data is unaffected.',
     monitors: 'Linked monitors',
     monitorsHint:
       'A run’s network timeline charts these monitors first. Linking none is fine — it falls back to the machine’s own gateway / ICMP monitors. Only gateway and ICMP monitors are listed: the timeline plots round-trip time and packet loss, which a TCP / DNS / HTTP / NAT monitor does not measure, so linking one would chart nothing.',
@@ -2461,6 +2536,7 @@ export default {
     diagnostic_traceroute_tcp: 'TCP path diagnostics',
     game_process_detect: 'Game process detection',
     game_performance_read: 'Game frame data',
+    game_gpu_read: 'GPU and video memory',
     // Tooltip for a blocked permission (granted but not supported by this
     // platform/run mode, so the grant can never take effect).
     blockedTitle: 'Granted but not supported: {name}',
@@ -2510,6 +2586,7 @@ export default {
     diagnostic_traceroute_tcp: 'Trace the network path via TCP, observing intermediate hops',
     game_process_detect: 'Identify which process is currently rendering',
     game_performance_read: 'Read frame rate and frame times (never screen content)',
+    game_gpu_read: 'Read GPU utilization and video memory — the whole adapter, not just the game',
   },
 
   // Documentation deep links. Each locale points at its own directory; the
@@ -2531,6 +2608,7 @@ export default {
     diagnostic_traceroute_tcp: 'The Windows and Linux Agent builds implement TCP path diagnostics, and both need extra privilege (Administrator on Windows, CAP_NET_RAW or root on Linux). The macOS build does not implement it yet.',
     game_process_detect: 'Frame data comes from the Windows graphics event stream, so only the Windows Agent build has this capability; other builds do not include the component. It also needs the Intel PresentMon service installed on the machine (see the fix).',
     game_performance_read: 'Frame data comes from the Windows graphics event stream, so only the Windows Agent build has this capability; other builds do not include the component. It also needs the Intel PresentMon service installed on the machine (see the fix).',
+    game_gpu_read: 'GPU and video-memory telemetry comes through the same Windows-only component as the frame data, so no other build has this capability. Installing the component is necessary but not always sufficient here: this reads the adapter rather than the game’s own presentation, and many drivers publish no adapter telemetry at all. An Agent can therefore still report this unsupported with the component installed and working — in which case the machine simply has nothing to read, and neither Administrator access nor a capture-depth setting changes it.',
     host_temperature_read: 'The Linux build reads host temperatures from /sys/class/hwmon (a container needs the host /sys mounted), and it probes the sensors only when this permission is already granted — so an Agent without the grant always reports unsupported: grant it and restart the Agent to learn whether this machine has readable sensors at all. If it still reports unsupported once granted, the startup probe found no usable reading; most virtual machines and many consumer boards genuinely have none. Windows ACPI thermal zones read through WMI commonly return a fixed, stale or unrelated value rather than a real CPU or mainboard temperature, so the Windows build does not read them and reports this permission unsupported outright; Administrator access cannot enable it. The macOS build does not implement it yet.',
   },
 

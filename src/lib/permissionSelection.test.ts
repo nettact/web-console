@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 
 import type { PermissionCatalogEntry } from '../api'
 import {
+  componentCanEnable,
   deselectWithDependents,
   groupCatalog,
   orderedSelection,
@@ -157,7 +158,7 @@ describe('platformSupport', () => {
     // Frame presentation comes from a Windows-only component; every other build
     // compiles a stub that reports no sensor. Letting these read as `ok` would
     // put them in an install command that can only ever collect nothing.
-    for (const id of ['game.process.detect', 'game.performance.read']) {
+    for (const id of ['game.process.detect', 'game.performance.read', 'game.gpu.read']) {
       for (const platform of ['macos', 'linux', 'docker'] as const) {
         expect(platformSupport(id, platform)).toBe('unsupported')
         // And no amount of privilege installs a component that isn't built.
@@ -172,6 +173,24 @@ describe('platformSupport', () => {
       // must not prescribe elevation, exactly as for temperature.
       expect(privilegeCanEnable(id, 'windows')).toBe(false)
     }
+  })
+
+  // The GPU telemetry permission arrived after the other two and is a genuinely
+  // different read — the adapter and everything sharing it, rather than the
+  // game's own presentation — so it is easy to leave out of these sets. Left out,
+  // it reads as an ordinary Linux/macOS permission the picker would happily put
+  // in an install command, and on Windows as one needing nothing installed.
+  it('classifies GPU telemetry with the component that carries it', () => {
+    for (const platform of ['macos', 'linux', 'docker'] as const) {
+      expect(platformSupport('game.gpu.read', platform)).toBe('unsupported')
+      expect(privilegeCanEnable('game.gpu.read', platform)).toBe(false)
+      expect(componentCanEnable('game.gpu.read', platform)).toBe(false)
+    }
+    expect(platformSupport('game.gpu.read', 'windows')).toBe('component')
+    expect(componentCanEnable('game.gpu.read', 'windows')).toBe(true)
+    // No privilege installs the component, and none makes a driver publish
+    // adapter telemetry it does not publish — so elevation is never the advice.
+    expect(privilegeCanEnable('game.gpu.read', 'windows')).toBe(false)
   })
 
   it('flags only TCP path diagnostics as privileged on Windows', () => {

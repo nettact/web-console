@@ -1399,6 +1399,18 @@ export const CAP_STUTTER = 'stutter'
 // from different queries and one can be readable while the other is not.
 export const CAP_PROC_CPU = 'proc_cpu'
 export const CAP_PROC_MEM = 'proc_mem'
+// The diagnostic capabilities, declared only by a run captured under a 'diag'
+// profile. They are six rather than one because they come from four different
+// acquisition paths — frame events, adapter telemetry, a per-process video
+// memory query and a per-core counter read — and a machine can support any
+// subset. Collapsing them would make one unavailable driver hide five readings
+// that were there.
+export const CAP_CPU_SPLIT = 'cpu_split'
+export const CAP_GPU_SPLIT = 'gpu_split'
+export const CAP_LATENCY = 'latency'
+export const CAP_GPU_TEL = 'gpu_tel'
+export const CAP_PROC_VRAM = 'proc_vram'
+export const CAP_BUSIEST_CORE = 'busiest_core'
 
 // Whole-run figures, derived server-side by summing the run's frame-time
 // histograms. The FPS figures are null when the run held too few frames for them
@@ -1512,6 +1524,78 @@ export interface GameProcRes {
   ws_bytes?: number | null
   priv_bytes?: number | null
 }
+
+// ---- the diagnostic blocks ----
+//
+// Only a run captured at the 'diag' depth carries these. Each block is
+// GROUP-ATOMIC: it is present only when every field in it was measured, because
+// the sensor registers whole metric groups at once and a half-filled block is
+// not a state that can occur. So no field inside needs a presence of its own —
+// except where marked, and those say why.
+//
+// The frame-derived blocks (cpu_split, gpu_split, lat) are milliseconds and are
+// within-second statistics over the same frames `ft` describes: a p95 here
+// belongs to this second and averaging a run's p95s does not produce the run's.
+// gpu_tel and proc_vram are the other kind — single readings taken once at the
+// second boundary.
+
+// Each frame's CPU time split into the work the game did and the time it spent
+// waiting. The frame interval says a second was slow; this says which side was
+// holding it up.
+export interface GameCPUSplit {
+  busy_avg: number
+  busy_p95: number
+  wait_avg: number
+  wait_p95: number
+}
+// The frame's GPU side, from the queue in front of it to the present that ends
+// it. Scoped to the tracked PROCESS — these come from the frame events, not from
+// adapter telemetry — so `busy_avg` here is this game's work, not the card's
+// total load. GameGPUTel is the other half of that comparison.
+export interface GameGPUSplit {
+  latency_avg: number // frame start → GPU work start
+  time_avg: number // GPU total duration per frame
+  time_p95: number
+  busy_avg: number // GPU active time per frame
+  busy_p95: number
+  wait_avg: number
+  in_present_avg: number // blocked inside the Present call
+  render_latency_avg: number // Present → GPU completion
+}
+// How long the second's frames took to become visible, and how far the game's
+// own pacing drifted from what the screen showed.
+//
+// `display_avg` is an ESTIMATE whose accuracy depends on how the frames reached
+// the screen — an independent flip is measured far more tightly than a composed
+// copy — so the UI labels it as one and shows it beside the presentation mode.
+export interface GameLatency {
+  display_avg: number // frame start → on screen (estimate)
+  anim_err_avg: number // |animation error|; the source is signed, the absolute value is recorded
+  anim_err_p95: number
+}
+// Whole-GPU telemetry polled once a second. Deliberately the ADAPTER's figures
+// and not the tracked process's: a card at 100% while this game's own gpu_split
+// shows it idling is something else on the machine taking the card — a
+// conclusion neither number reaches alone. Every label for these must say
+// whole-GPU, or the reader attributes the card's load to the game.
+//
+// The inner fields are independently nullable, breaking the group-atomic rule
+// above, because which telemetry a driver publishes varies by vendor and by
+// metric. A card reporting utilization but not memory is an ordinary card.
+export interface GameGPUTel {
+  util_pct?: number | null // whole-GPU utilization 0-100 (NOT this process)
+  mem_used?: number | null // whole-GPU dedicated memory used, bytes
+  mem_size?: number | null // dedicated memory capacity, bytes
+}
+// The game process's own dedicated video memory, in bytes. It answers what
+// gpu_tel.mem_used cannot: a full card says nothing about whether this game is
+// the one filling it. `budget` is optional because the OS does not always expose
+// a per-process budget, and `used` without it is still the measurement.
+export interface GameProcVRAM {
+  used: number
+  budget?: number | null
+}
+
 export interface GameBucket {
   run_id: string
   ts: string
@@ -1522,6 +1606,16 @@ export interface GameBucket {
   present?: GamePresent
   stutter?: GameStutter | null
   proc_res?: GameProcRes | null
+  cpu_split?: GameCPUSplit | null
+  gpu_split?: GameGPUSplit | null
+  lat?: GameLatency | null
+  gpu_tel?: GameGPUTel | null
+  proc_vram?: GameProcVRAM | null
+  // The busiest logical core, % 0-100. It stands apart from proc_res because it
+  // describes the MACHINE, not the process: a single-threaded game pins one core
+  // while proc_res.cpu_pct — a share of all cores — reads low, and that gap is
+  // the finding.
+  busiest_core_pct?: number | null
   quality?: string[]
 }
 
@@ -1533,7 +1627,11 @@ export interface GameBucket {
 
 // How deeply the capture source instruments a matched process. 'base' is the
 // frame-time record every source can produce; 'diag' additionally asks for the
-// CPU/GPU breakdown, which costs measurably more per second.
+// per-frame CPU/GPU breakdown, the display-latency estimate, adapter telemetry,
+// per-process video memory and the busiest core — the CAP_* group above. It
+// costs measurably more per second, which is why it is a choice and why the
+// sensor stops the polled half of it (flagging `diag_degraded`) rather than
+// letting it run over budget.
 export type GameProfileTier = 'base' | 'diag'
 
 // `target_fps` is null when no frame-rate goal was declared — NOT 0, which would

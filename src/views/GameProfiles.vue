@@ -109,14 +109,6 @@ interface Form {
 const form = reactive<Form>({ name: '', exe: [], fpsChoice: '', fpsCustom: '', tier: 'base', monitorIds: [] })
 const editing = ref<GameProfile | null>(null)
 
-// The diagnostic tier is on the wire and in the API, but nothing collects for it
-// yet: the sensor does not branch on it and GPU telemetry is off agent-side, so
-// choosing it today buys exactly the base data under a name that promises more.
-// It is therefore offered only where it is already the stored answer — an
-// existing diag profile can be edited (and switched back and forth) without this
-// form quietly downgrading it, while a new one cannot opt into a promise the
-// capture side cannot keep.
-const diagSelectable = computed(() => editing.value?.tier === 'diag')
 const formOpen = ref(false)
 const formError = ref('')
 const exeDraft = ref('')
@@ -377,20 +369,14 @@ onMounted(async () => {
               <em>{{ t('gameProfiles.tierBaseDesc') }}</em>
             </span>
           </label>
-          <!-- Diagnostic capture is not built yet, so the option cannot be
-               chosen — offering it would let someone configure a depth that
-               silently returns base data. A profile already stored as diag keeps
-               the choice available so this form never rewrites it on its own. -->
-          <label class="opt" :class="{ disabled: !diagSelectable }">
-            <input type="radio" value="diag" v-model="form.tier" :disabled="!diagSelectable" />
+          <!-- The description is what this depth collects TODAY. It is the one
+               line here that can turn into a promise the capture side does not
+               keep, so it names the actual blocks rather than the ambition. -->
+          <label class="opt">
+            <input type="radio" value="diag" v-model="form.tier" />
             <span>
-              <strong>
-                {{ t('gameProfiles.tierDiag') }}
-                <span class="soon">{{ t('gameProfiles.tierDiagUnavailable') }}</span>
-              </strong>
+              <strong>{{ t('gameProfiles.tierDiag') }}</strong>
               <em>{{ t('gameProfiles.tierDiagDesc') }}</em>
-              <em>{{ t('gameProfiles.tierDiagUnavailableHint') }}</em>
-              <em v-if="diagSelectable" class="kept">{{ t('gameProfiles.tierDiagStored') }}</em>
             </span>
           </label>
         </fieldset>
@@ -454,9 +440,6 @@ onMounted(async () => {
               <td class="num">{{ p.target_fps === null ? '—' : p.target_fps }}</td>
               <td>
                 <span class="badge neutral">{{ tierLabel(p.tier) }}</span>
-                <!-- A stored diag profile reads as "collecting more than base"
-                     unless the row says otherwise; it is not, yet. -->
-                <InfoTip v-if="p.tier === 'diag'" :text="t('gameProfiles.tierDiagUnavailableHint')" />
               </td>
               <td>
                 <span v-if="!p.monitor_ids.length" class="dim">{{ t('gameProfiles.monitorsNone') }}</span>
@@ -674,26 +657,6 @@ onMounted(async () => {
   color: var(--text-dim);
   font-style: normal;
   font-size: 11.5px;
-}
-.opt.disabled {
-  color: var(--text-muted);
-}
-.opt.disabled em {
-  color: var(--text-muted);
-}
-.opt em.kept {
-  color: var(--color-warning-text);
-}
-.soon {
-  margin-left: 6px;
-  padding: 1px 7px;
-  border: var(--rule-hair) solid var(--color-rule);
-  border-radius: var(--radius-pill);
-  background: var(--color-glass-subtle);
-  color: var(--text-muted);
-  font-size: 11px;
-  font-weight: 500;
-  vertical-align: middle;
 }
 .monitor-pick {
   display: flex;

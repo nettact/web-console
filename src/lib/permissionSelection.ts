@@ -61,6 +61,17 @@ const ELEVATION_FIXES_ON_WINDOWS = new Set(['diagnostic.traceroute.tcp'])
 const WINDOWS_ONLY = new Set([
   'game.process.detect',
   'game.performance.read',
+  // The GPU and video-memory telemetry rides the same Windows-only component,
+  // so it is unsupported everywhere else for exactly the same reason. It is a
+  // SEPARATE permission because it is a separate read — the frame timings come
+  // from the game's own presentation, while this describes the adapter and every
+  // process sharing it — and because a machine can support one and not the
+  // other. That last part is why the component is necessary here but not
+  // sufficient: plenty of drivers publish no adapter telemetry at all, and an
+  // agent can report this unsupported with the component installed and working.
+  // The platform note says so; the classification cannot, since there is no
+  // fourth answer for "installed, granted, and the hardware still says no".
+  'game.gpu.read',
 ])
 
 // Permissions whose capability comes from software that is installed separately

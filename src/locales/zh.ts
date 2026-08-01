@@ -1937,6 +1937,12 @@ export default {
       stutter: '卡顿检测',
       proc_cpu: '进程 CPU',
       proc_mem: '进程内存',
+      cpu_split: 'CPU 帧耗时分解',
+      gpu_split: 'GPU 帧耗时分解',
+      latency: '显示延迟（估算）',
+      gpu_tel: 'GPU 遥测（整卡）',
+      proc_vram: '进程显存',
+      busiest_core: '最忙逻辑核',
     },
     capDesc: {
       displayed: '能追踪每一帧是否真正送达屏幕，因而知道送达帧数、丢弃帧数，以及画面实际刷新的节奏。',
@@ -1946,6 +1952,12 @@ export default {
       stutter: '能按滚动基线判定长帧，因而知道每一秒发生过几次卡顿、总共多花了多少时间。没有这一项时只剩分位数可看，而 P99 说不出这一秒是卡了一次还是十次。',
       proc_cpu: '每秒采一次游戏进程自身的 CPU 占用。只统计这个进程，而不是整台机器——「机器忙」和「游戏忙」要改的地方并不一样。',
       proc_mem: '每秒采一次游戏进程自身的内存占用。与进程 CPU 分开列出，是因为两者取自不同的查询，可能一个能读到、另一个读不到。',
+      cpu_split: '把每一帧的 CPU 时间拆成「在干活」和「在等」两段。帧间隔只能说这一秒慢了，拆分才说得出是哪一边把它拖住的。',
+      gpu_split: '按帧给出 GPU 的排队、活跃、空闲耗时，以及 Present 前后的呈现链路。数据取自帧事件，范围是这个游戏进程，不是整块显卡。',
+      latency: '按帧给出「帧开始 → 上屏」的估算延迟，以及游戏自身节奏与屏幕节奏之差。这是估算，不是实测的端到端输入延迟，准确度取决于呈现方式。',
+      gpu_tel: '每秒读一次整块显卡的利用率与显存。口径是整卡，不是本进程——整卡满而本进程的 GPU 并不忙，说明卡被别的东西占着。需要 agent 的 game.gpu.read 权限。',
+      proc_vram: '每秒读一次这个游戏进程自己占用的专用显存，以及系统给它的额度。与整卡显存分开，是因为一块占满的显卡说明不了是谁占的。需要 agent 的 game.gpu.read 权限。',
+      busiest_core: '每秒读一次逐核占用，取其中最忙的一个。单线程游戏钉住一个核时，整机平均值看起来毫无压力——被平均掉的正是这一项。',
     },
     source: {
       presentmon_service: 'Intel PresentMon 服务',
@@ -1983,10 +1995,13 @@ export default {
     quality: {
       hist_clipped: '直方图触顶',
       consume_backlog: '读取积压',
+      diag_degraded: '诊断采集已停止',
     },
     qualityDesc: {
       hist_clipped: '有帧间隔落在直方图范围之外，被计入了两端的边界桶。总帧数仍然正确，但尾部的分布位置不准。',
       consume_backlog: '某次读取时缓冲区已满，帧的产生可能快于消费，个别帧可能被归到了相邻的一秒。',
+      diag_degraded:
+        '诊断采集因超出每秒预算已停止，帧数据不受影响。传感器在秒边界上的那批调用超出了墙钟预算，于是本次运行接下来不再做轮询类诊断（GPU 遥测、进程显存、最忙逻辑核）。由帧事件推导的耗时分解与延迟不额外占用这段预算，照常继续——所以出现这个标记之后的秒是缺了一部分，而不是空的。',
     },
 
     fpsChart: '帧率（每秒一点）',
@@ -2005,6 +2020,44 @@ export default {
     procCpuCaption: '占整机 CPU 总量的百分比，而不是单核占用；纵轴固定 0–100，看的是这个游戏吃掉了这台机器的多少。',
     procMemChart: '游戏进程内存（每秒一点）',
     procMemCaption: '工作集是当前驻留在物理内存里的部分，专用字节是这个进程独占的已提交内存。前者会被系统回收压缩，后者不会。',
+
+    // ---- 诊断档（diag）----
+    // 「显示延迟」一律带「估算」二字：它是按呈现模型推出来的，不是实测的端到端
+    // 输入延迟，去掉这两个字就是产品规则里明令禁止的过度承诺。
+    // GPU 遥测一律带「整卡」二字：读的是整块显卡，不是这个游戏进程。
+    cpuSplitChart: 'CPU 帧耗时分解（每秒一点）',
+    cpuSplitCaption:
+      '把每帧的 CPU 时间拆成游戏自己在干的活和它在等的时间。忙碌高、等待低是 CPU 自己吃满了；忙碌低、等待高说明它在等 GPU 或别的东西——同样是一条变长的帧时间，要改的地方完全不同。',
+    gpuSplitChart: 'GPU 帧耗时分解（每秒一点）',
+    gpuSplitCaption:
+      '这里画的是这个游戏进程自己的 GPU 耗时，取自帧事件，不是整卡负载。与上面的 CPU 拆分对着看：GPU 活跃高且 CPU 等待高 → GPU 瓶颈；CPU 忙碌高且 GPU 空闲等待高 → CPU 瓶颈。',
+    presentChainChart: '呈现链路（每秒一点）',
+    presentChainCaption:
+      'Present 内阻塞是这一帧卡在 Present 调用里的时间，限帧与垂直同步都在这里现形；Present→GPU 完成是提交之后渲染管线还剩多深。',
+    latencyChart: '显示延迟（估算）与动画误差（每秒一点）',
+    latencyCaption:
+      '显示延迟是估算值，不是实测的端到端输入延迟；它有多准取决于上面的呈现方式——独立翻转量得紧，合成拷贝松得多。动画误差是游戏自身节奏与屏幕节奏之差（取绝对值）：帧率看着不低、画面却发飘时，要看的就是它。',
+    gpuUtilChart: 'GPU 利用率（整卡，每秒一点）',
+    gpuUtilCaption:
+      '整块显卡的利用率，不是这个游戏进程的。整卡满而上面那张图里本进程的 GPU 活跃并不高，说明卡被别的东西占着。纵轴固定 0–100。',
+    gpuMemChart: '显存（整卡，每秒一点）',
+    gpuMemCaption: '整块显卡的显存已用量与容量，不是这个游戏占了多少——进程自己的显存看下一张图。',
+    procVramChart: '进程显存（每秒一点）',
+    procVramCaption:
+      '这个游戏进程自己占用的专用显存。预算是系统给这个进程的额度，比显卡标称容量更能解释显存压力：已用贴近预算时，换入换出就开始拖帧了。',
+    // 三种缺失、三种补救方式，只有第一种是改设置能解决的。对一次本来就按「诊断」
+    // 记录的运行说「去把深度改成诊断」，是让人去改一个已经是对的设置，同时把真正
+    // 的原因（权限没生效、数据源没起来）藏了起来。
+    diagUnavailableTier:
+      '本次运行没有采集{series}，所以这里没有对应的图——而不是画一条贴着 0 的线。这些属于「诊断」采集深度，而本次运行是按「基础」深度记录的。到「游戏档案」页把这个游戏的采集深度改成「诊断」，之后的运行就会带上这几张图；已经记录下来的运行不会因此补上。',
+    diagUnavailableGpu:
+      '本次运行没有采集{series}，所以这里没有对应的图——而不是画一条贴着 0 的线。这次运行本身就是按「诊断」深度记录的，其余诊断图都在上面：缺的这几项都取自显卡，需要这台 agent 上已授予并生效的 game.gpu.read 权限，也可能是这台机器根本不提供 GPU 遥测。改采集深度解决不了这个问题——要到这台 agent 的权限设置里看这一项。',
+    diagUnavailablePartial:
+      '本次运行没有采集{series}，所以这里没有对应的图——而不是画一条贴着 0 的线。这次运行是按「诊断」深度记录的，其余诊断图都在上面，说明深度设置没有问题：缺的这几项在这台机器上没能起来。其中 GPU 相关项需要这台 agent 上已授予并生效的 game.gpu.read 权限，其余项取决于这台机器是否提供对应的数据源。改采集深度解决不了这个问题。',
+    busiestCoreChart: '最忙逻辑核（每秒一点）',
+    busiestCoreCaption:
+      '全部逻辑核里最忙的那一个。单线程吃满一个核时，整机平均 CPU 看着还很轻松——被平均掉的就是这条线。纵轴固定 0–100。',
+
     seriesPresented: '提交帧率',
     seriesDisplayed: '送达帧率',
     seriesApp: '游戏渲染帧率',
@@ -2014,6 +2067,27 @@ export default {
     seriesProcCpu: '进程 CPU',
     seriesWorkingSet: '工作集',
     seriesPrivBytes: '专用字节',
+    seriesCpuBusyAvg: 'CPU 忙碌 平均',
+    seriesCpuBusyP95: 'CPU 忙碌 P95',
+    seriesCpuWaitAvg: 'CPU 等待 平均',
+    seriesCpuWaitP95: 'CPU 等待 P95',
+    seriesGpuTimeAvg: 'GPU 总耗时 平均',
+    seriesGpuTimeP95: 'GPU 总耗时 P95',
+    seriesGpuBusyAvg: 'GPU 活跃 平均',
+    seriesGpuBusyP95: 'GPU 活跃 P95',
+    seriesGpuLatencyAvg: 'GPU 启动等待 平均',
+    seriesGpuWaitAvg: 'GPU 空闲等待 平均',
+    seriesInPresent: 'Present 内阻塞 平均',
+    seriesRenderLatency: 'Present→GPU 完成 平均',
+    seriesDisplayLatency: '显示延迟（估算）平均',
+    seriesAnimErrAvg: '动画误差 平均',
+    seriesAnimErrP95: '动画误差 P95',
+    seriesGpuUtil: '整卡利用率',
+    seriesGpuMemUsed: '整卡已用显存',
+    seriesGpuMemSize: '整卡显存容量',
+    seriesProcVramUsed: '进程已用显存',
+    seriesProcVramBudget: '进程显存预算',
+    seriesBusiestCore: '最忙逻辑核',
     seriesNotRecorded: '采集源声明支持{series}，但本次运行没有任何一秒记录到，所以图上没有这条曲线——而不是曲线贴在 0 上。',
     seriesNotRecordedSegment:
       '采集源声明支持{series}，但已加载的这段秒里没有任何一秒记录到，所以图上没有这条曲线。该运行的其余部分没有加载，整段是否记录过无从判断。',
@@ -2099,14 +2173,12 @@ export default {
     fpsHint: '只用于判断帧率是否达到预期。留空表示没有设定目标——不会替你按显示器刷新率猜一个。',
     tier: '采集深度',
     tierBase: '基础',
-    tierBaseDesc: '记录帧率与帧时间。每一种采集源都能做到，开销可以忽略。',
+    tierBaseDesc:
+      '帧率、帧时间与呈现设置，卡顿检测，以及游戏进程自身的 CPU 与内存。每一种采集源都能做到，开销可以忽略。',
     tierDiag: '诊断',
     // 说明写的是「今天采到什么」，不是「将来打算采什么」。
-    tierDiagDesc: '为 CPU / GPU 耗时拆分预留的更深采集。目前实际采到的内容与「基础」完全相同。',
-    tierDiagUnavailable: '尚未实现',
-    tierDiagUnavailableHint:
-      '诊断采集还没有做：采集端不会因为这个选项多采任何东西，GPU 遥测在 agent 侧也仍然是关闭的。等它上线后这里会开放选择——在此之前选它只会得到与「基础」一样的数据。',
-    tierDiagStored: '这个档案已保存为「诊断」，这里原样保留，不会被自动改写；只有你亲手改动才会写回。',
+    tierDiagDesc:
+      '在基础之上再采：每帧 CPU / GPU 耗时分解、显示延迟估算、GPU 利用率与显存、进程显存、最忙逻辑核（其中 GPU 相关项需要 agent 的 game.gpu.read 权限）。开销仍受传感器每秒预算保护——超出预算时先停轮询类诊断，帧数据不受影响。',
     monitors: '关联监控',
     monitorsHint:
       '关联之后，运行详情页的网络时间轴优先画这些监控的曲线。不关联也可以——那里会退回到本机的网关 / ICMP 监控。这里只列出网关与 ICMP 监控：时间轴画的是往返延迟与丢包，TCP / DNS / HTTP / NAT 监控没有这两项，关联了也画不出东西。',
@@ -2449,6 +2521,7 @@ export default {
     diagnostic_traceroute_tcp: 'TCP 路径诊断',
     game_process_detect: '游戏进程识别',
     game_performance_read: '游戏帧数据读取',
+    game_gpu_read: 'GPU 与显存读取',
     // 受阻权限（已授予但平台/运行方式不支持，因此永远不会生效）的 title 提示。
     blockedTitle: '已授予但当前不受支持：{name}',
     // 可交互（可点击打开解决方案）权限 chip 的 title。
@@ -2497,6 +2570,7 @@ export default {
     diagnostic_traceroute_tcp: '用 TCP 追踪网络路径并观测中间跳',
     game_process_detect: '识别当前正在渲染画面的进程',
     game_performance_read: '读取帧率与帧时间（不读取画面内容）',
+    game_gpu_read: '读取 GPU 利用率与显存占用——口径是整块显卡，不只是这个游戏',
   },
 
   // 文档站深链。中英各指向自己的语言目录；权限详情锚点由权限 ID 点换连字符得到。
@@ -2516,6 +2590,7 @@ export default {
     diagnostic_traceroute_tcp: 'Windows 与 Linux 版 Agent 已实现 TCP 路径诊断，两者都需要提权（Windows 管理员 / Linux CAP_NET_RAW 或 root）。macOS 版尚未实现。',
     game_process_detect: '帧数据来自 Windows 图形呈现事件，仅 Windows 版 Agent 具备该能力；其他平台的构建不包含相应组件。此外还需要在本机安装 Intel PresentMon 服务（见解决方案）。',
     game_performance_read: '帧数据来自 Windows 图形呈现事件，仅 Windows 版 Agent 具备该能力；其他平台的构建不包含相应组件。此外还需要在本机安装 Intel PresentMon 服务（见解决方案）。',
+    game_gpu_read: 'GPU 与显存遥测走的是与帧数据同一个 Windows 专有组件，因此其他平台的构建同样不具备该能力。但这里装上组件是必要条件、未必是充分条件：它读的是整块显卡，而不是游戏自身的呈现，而相当多的驱动根本不发布这类遥测。所以组件装好、权限也授予了，Agent 仍可能报告不支持——那说明这台机器就是没有可读的数据，管理员权限和采集深度设置都改变不了。',
     host_temperature_read: 'Linux 版从 /sys/class/hwmon 读取主机温度（容器内需挂载宿主机 /sys），且仅在该权限已授予时才于启动时探测传感器——未授予时它一律报告不支持：先授予并重启 Agent，才能知道这台机器到底有没有可读传感器。已授予仍报不支持，说明启动自检没有读到有效读数：多数虚拟机与不少消费级主板确实没有可读传感器。Windows 经 WMI 读到的 ACPI 温度区，在很多机器上返回的是固定值、陈旧值或与 CPU、主板无关的值，而非真实温度，因此 Windows 版不再读取该接口，直接报告不支持；管理员权限也无法启用它。macOS 版尚未实现。',
   },
 

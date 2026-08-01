@@ -1,10 +1,16 @@
 import { describe, it, expect } from 'vitest'
 import {
+  CAP_BUSIEST_CORE,
+  CAP_CPU_SPLIT,
   CAP_DISPLAYED,
   CAP_FRAME_TYPE,
+  CAP_GPU_SPLIT,
+  CAP_GPU_TEL,
+  CAP_LATENCY,
   CAP_PRESENT_META,
   CAP_PROC_CPU,
   CAP_PROC_MEM,
+  CAP_PROC_VRAM,
   CAP_STUTTER,
   type GameBucket,
   type GameRun,
@@ -13,6 +19,8 @@ import {
   bucketsAbsence,
   bucketsTruncated,
   chartFloor,
+  diagAbsence,
+  DIAG_CAPS,
   isRunning,
   missingCause,
   observes,
@@ -60,6 +68,41 @@ describe('missingCause', () => {
     expect(missingCause('procWs', [CAP_PROC_MEM])).toEqual({ kind: 'notRecorded' })
   })
 
+  // The diagnostic depth is six capabilities and not one, because they come from
+  // four different acquisition paths and a machine can support any subset. A run
+  // whose driver publishes no adapter telemetry still has its frame breakdown,
+  // and the blank where the GPU chart would be has to say which of the two it is.
+  it('names the diagnostic capability behind each family', () => {
+    const base = [CAP_DISPLAYED, CAP_STUTTER]
+    expect(missingCause('cpuSplit', base)).toEqual({ kind: 'source', cap: CAP_CPU_SPLIT })
+    expect(missingCause('gpuSplit', base)).toEqual({ kind: 'source', cap: CAP_GPU_SPLIT })
+    expect(missingCause('presentChain', base)).toEqual({ kind: 'source', cap: CAP_GPU_SPLIT })
+    expect(missingCause('displayLatency', base)).toEqual({ kind: 'source', cap: CAP_LATENCY })
+    expect(missingCause('animError', base)).toEqual({ kind: 'source', cap: CAP_LATENCY })
+    expect(missingCause('gpuUtil', base)).toEqual({ kind: 'source', cap: CAP_GPU_TEL })
+    expect(missingCause('gpuMem', base)).toEqual({ kind: 'source', cap: CAP_GPU_TEL })
+    expect(missingCause('procVram', base)).toEqual({ kind: 'source', cap: CAP_PROC_VRAM })
+    expect(missingCause('busiestCore', base)).toEqual({ kind: 'source', cap: CAP_BUSIEST_CORE })
+  })
+
+  // The whole-card telemetry and the game's own video memory are different
+  // readings from different queries, and conflating them is exactly the error
+  // the labels on those two charts exist to prevent.
+  it('does not let whole-GPU telemetry answer for the process figures', () => {
+    expect(missingCause('procVram', [CAP_GPU_TEL])).toEqual({ kind: 'source', cap: CAP_PROC_VRAM })
+    expect(missingCause('gpuUtil', [CAP_PROC_VRAM])).toEqual({ kind: 'source', cap: CAP_GPU_TEL })
+    expect(missingCause('busiestCore', [CAP_PROC_CPU])).toEqual({ kind: 'source', cap: CAP_BUSIEST_CORE })
+  })
+
+  // A declared diag capability whose seconds came back empty is a different
+  // story from one that was never offered: the first is what `diag_degraded`
+  // leaves behind mid-run, and it must not be reported as a missing sensor.
+  it('separates a declared diagnostic capability from a missing one', () => {
+    expect(missingCause('cpuSplit', [CAP_CPU_SPLIT])).toEqual({ kind: 'notRecorded' })
+    expect(missingCause('gpuUtil', [CAP_GPU_TEL])).toEqual({ kind: 'notRecorded' })
+    expect(missingCause('busiestCore', [CAP_BUSIEST_CORE])).toEqual({ kind: 'notRecorded' })
+  })
+
   // A null 1% low says the run was too short to support the figure. Blaming a
   // capability for it would send the user off installing something that would not
   // have helped.
@@ -85,6 +128,83 @@ describe('observes', () => {
     expect(observes('stutter', [CAP_PROC_CPU, CAP_PROC_MEM])).toBe(false)
     expect(observes('procCpu', [CAP_PROC_MEM])).toBe(false)
     expect(observes('procWs', [CAP_PROC_MEM])).toBe(true)
+  })
+
+  // A base-tier run declares none of the diagnostic capabilities, so none of
+  // those charts may be drawn at all — an empty axis under a title promising a
+  // CPU/GPU breakdown reads as a game that used no GPU time.
+  it('draws no diagnostic chart for a run that declared none of it', () => {
+    const base = [CAP_DISPLAYED, CAP_FRAME_TYPE, CAP_PRESENT_META, CAP_STUTTER, CAP_PROC_CPU, CAP_PROC_MEM]
+    for (const f of ['cpuSplit', 'gpuSplit', 'presentChain', 'displayLatency', 'gpuUtil', 'procVram', 'busiestCore'] as const) {
+      expect(observes(f, base), f).toBe(false)
+    }
+  })
+
+  // The mixed case a partly-supported machine actually produces: frame-derived
+  // breakdowns registered, adapter telemetry not published by the driver.
+  it('lets one diagnostic family be observed while another is not', () => {
+    const caps = [CAP_CPU_SPLIT, CAP_GPU_SPLIT, CAP_LATENCY]
+    expect(observes('cpuSplit', caps)).toBe(true)
+    expect(observes('presentChain', caps)).toBe(true)
+    expect(observes('displayLatency', caps)).toBe(true)
+    expect(observes('gpuUtil', caps)).toBe(false)
+    expect(observes('gpuMem', caps)).toBe(false)
+    expect(observes('procVram', caps)).toBe(false)
+    expect(observes('busiestCore', caps)).toBe(false)
+  })
+})
+
+// The section notice under the charts tells the reader what to do about six
+// missing chart rows, and the three answers are not interchangeable: one is a
+// profile setting, one is an agent permission, one is a machine that could not
+// provide the reading. Getting this wrong sends someone to re-select a capture
+// depth that is already Diagnostic and leaves the real cause unsaid.
+describe('diagAbsence', () => {
+  const BASE = [CAP_DISPLAYED, CAP_FRAME_TYPE, CAP_PRESENT_META, CAP_STUTTER, CAP_PROC_CPU, CAP_PROC_MEM]
+
+  it('says nothing when the run carries every diagnostic capability', () => {
+    expect(diagAbsence([...BASE, ...DIAG_CAPS])).toBe('none')
+  })
+
+  // The base-depth run: not one diagnostic capability, and the profile's tier is
+  // the only thing that decides it.
+  it('blames the capture depth when no diagnostic capability is declared', () => {
+    expect(diagAbsence(BASE)).toBe('tier')
+    expect(diagAbsence([])).toBe('tier')
+  })
+
+  // The run WAS captured at the diagnostic depth and the GPU-sourced pair is
+  // exactly what is missing — game.gpu.read not granted or not effective, or a
+  // machine that publishes no GPU telemetry. Re-selecting the tier fixes nothing.
+  it('blames the GPU permission when only the GPU-sourced pair is missing', () => {
+    expect(diagAbsence([...BASE, CAP_CPU_SPLIT, CAP_GPU_SPLIT, CAP_LATENCY, CAP_BUSIEST_CORE])).toBe('gpu')
+  })
+
+  // Either GPU capability alone counts: a source can publish adapter telemetry
+  // without being able to answer the per-process video memory query.
+  it('treats one absent GPU capability the same way', () => {
+    const caps = [...BASE, CAP_CPU_SPLIT, CAP_GPU_SPLIT, CAP_LATENCY, CAP_BUSIEST_CORE, CAP_GPU_TEL]
+    expect(diagAbsence(caps)).toBe('gpu')
+    expect(diagAbsence([...caps.filter((c) => c !== CAP_GPU_TEL), CAP_PROC_VRAM])).toBe('gpu')
+  })
+
+  // A diagnostic run missing something that has nothing to do with the GPU: a
+  // source that did not initialize. Still not a tier problem, so the notice must
+  // not offer the tier as the fix.
+  it('reports a partly-initialized diagnostic run without blaming the depth', () => {
+    expect(diagAbsence([...BASE, CAP_CPU_SPLIT, CAP_GPU_SPLIT, CAP_LATENCY, CAP_GPU_TEL, CAP_PROC_VRAM])).toBe(
+      'partial',
+    )
+    expect(diagAbsence([...BASE, CAP_CPU_SPLIT, CAP_BUSIEST_CORE])).toBe('partial')
+  })
+
+  // The boundary between 'tier' and the other two: a single diagnostic
+  // capability is enough to prove the run asked for the depth, and from there the
+  // profile page is the wrong advice.
+  it('stops blaming the depth as soon as one diagnostic capability is present', () => {
+    for (const cap of DIAG_CAPS) {
+      expect(diagAbsence([...BASE, cap]), cap).not.toBe('tier')
+    }
   })
 })
 
@@ -317,5 +437,13 @@ describe('qualityFlags', () => {
       bucket({ quality: ['consume_backlog', 'hist_clipped'] }),
     ]
     expect(qualityFlags(buckets)).toEqual(['hist_clipped', 'consume_backlog'])
+  })
+
+  // diag_degraded is raised part-way through a run — the second the sensor gave
+  // up on the polled diagnostics — so every earlier second is unflagged. Reading
+  // only the first second would leave the page silent about why the GPU charts
+  // stop halfway down the axis.
+  it('surfaces a flag that only appears part-way through the run', () => {
+    expect(qualityFlags([bucket(), bucket(), bucket({ quality: ['diag_degraded'] })])).toEqual(['diag_degraded'])
   })
 })
