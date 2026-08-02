@@ -1,13 +1,27 @@
 import { describe, expect, it } from 'vitest'
 
 import type { AgentPermission } from '../api'
-import { agentPlatform, bucketAgentPermissions, categoryFor } from './agentPermissions'
+import {
+  agentPlatform,
+  bucketAgentPermissions,
+  categoryFor,
+  isKnownUnsupportedReason,
+  reasonCategory,
+  unsupportedReasonState,
+} from './agentPermissions'
 
-const perm = (id: string, granted: boolean, supported: boolean, effective: boolean): AgentPermission => ({
+const perm = (
+  id: string,
+  granted: boolean,
+  supported: boolean,
+  effective: boolean,
+  unsupported_reason?: string,
+): AgentPermission => ({
   id,
   granted,
   supported,
   effective,
+  ...(unsupported_reason ? { unsupported_reason } : {}),
 })
 
 describe('bucketAgentPermissions', () => {
@@ -116,5 +130,117 @@ describe('categoryFor', () => {
   it('keeps the ordinary causes for game permissions once supported', () => {
     expect(categoryFor(perm('game.performance.read', false, true, false), 'windows')).toBe('permission_blocked')
     expect(categoryFor(perm('game.performance.read', true, true, false), 'windows')).toBe('dependency')
+  })
+})
+
+describe('categoryFor with a reported reason', () => {
+  // The bug this whole field exists for: a user whose PresentMon was installed
+  // and running was told to install PresentMon, because the console guessed the
+  // one cause it knew about. proto_mismatch is fixed by updating the AGENT.
+  it('stops sending a stale-sensor agent down the PresentMon install flow', () => {
+    expect(categoryFor(perm('game.performance.read', true, false, false, 'proto_mismatch'), 'windows')).toBe(
+      'agent_sensor',
+    )
+  })
+
+  it('keeps the PresentMon flow for the three causes PresentMon actually explains', () => {
+    for (const reason of ['presentmon_missing', 'service_unavailable', 'version_mismatch']) {
+      expect(categoryFor(perm('game.performance.read', true, false, false, reason), 'windows')).toBe('component')
+    }
+  })
+
+  it('routes every sensor-side and runtime failure away from anything installable', () => {
+    for (const reason of ['proto_mismatch', 'sensor_missing', 'probe_failed', 'sensor_exited', 'internal_error', 'session_lost']) {
+      expect(categoryFor(perm('game.performance.read', true, false, false, reason), 'windows')).toBe('agent_sensor')
+    }
+  })
+
+  it('calls the OS and hardware gaps unsupported', () => {
+    // Neither has a remedy the reader can act on: no Windows build, no adapter
+    // telemetry. Offering a download for either would be a dead end.
+    expect(categoryFor(perm('game.performance.read', true, false, false, 'unsupported_os'), 'windows')).toBe(
+      'unsupported',
+    )
+    expect(categoryFor(perm('game.gpu.read', true, false, false, 'gpu_telemetry_unavailable'), 'windows')).toBe(
+      'unsupported',
+    )
+  })
+
+  // The reason comes from the machine itself, so it beats the platform tables
+  // rather than being filtered by them. A Linux agent reporting sensor_missing
+  // is telling the truth about its own build.
+  it('believes the agent over the platform guess, on any platform', () => {
+    expect(categoryFor(perm('game.performance.read', true, false, false, 'sensor_missing'), 'linux')).toBe(
+      'agent_sensor',
+    )
+    expect(categoryFor(perm('game.performance.read', true, false, false, 'presentmon_missing'), 'macos')).toBe(
+      'component',
+    )
+  })
+
+  // Absent is a real answer — the agent does not probe a capability nothing
+  // granted — and an unknown code is one from a newer agent. Both keep the old
+  // guess, which is the only path still allowed to hedge in the dialog.
+  it('falls back to the platform guess for an absent or unknown reason', () => {
+    expect(categoryFor(perm('game.performance.read', false, false, false), 'windows')).toBe('component')
+    expect(categoryFor(perm('game.performance.read', false, false, false, 'brand_new_code'), 'windows')).toBe(
+      'component',
+    )
+    expect(categoryFor(perm('probe.icmp', true, false, false, 'brand_new_code'), 'linux')).toBe('elevation')
+  })
+
+  // A reason arriving on a supported permission (the server says it never should)
+  // must not hijack the dependency/policy causes, which are about something else
+  // entirely and have working remedies.
+  it('never lets a reason override a supported permission’s cause', () => {
+    expect(categoryFor(perm('game.performance.read', true, true, false, 'proto_mismatch'), 'windows')).toBe(
+      'dependency',
+    )
+    expect(categoryFor(perm('game.performance.read', false, true, false, 'proto_mismatch'), 'windows')).toBe(
+      'permission_blocked',
+    )
+  })
+})
+
+describe('reasonCategory', () => {
+  it('reports unknown for codes it does not carry text for', () => {
+    expect(reasonCategory(undefined)).toBeUndefined()
+    expect(reasonCategory('')).toBeUndefined()
+    expect(reasonCategory('something_new')).toBeUndefined()
+    expect(isKnownUnsupportedReason('presentmon_missing')).toBe(true)
+    expect(isKnownUnsupportedReason('something_new')).toBe(false)
+  })
+
+  it('does not mistake an Object.prototype key for a known code', () => {
+    // A plain object literal lookup answers `constructor` with a function, which
+    // is truthy — enough to route a permission into a flow whose text does not
+    // exist and render raw i18n paths at the user.
+    for (const key of ['constructor', 'toString', '__proto__', 'hasOwnProperty']) {
+      expect(reasonCategory(key)).toBeUndefined()
+      expect(isKnownUnsupportedReason(key)).toBe(false)
+    }
+  })
+})
+
+describe('unsupportedReasonState', () => {
+  // Routing collapses the last two states; wording must not. "The agent reported
+  // no cause" is false about an agent that reported one this build cannot read,
+  // and the advice that follows it ("grant it to get a real answer") is wrong for
+  // a permission that is already granted.
+  it('separates explained, reported-but-unreadable, and never-reported', () => {
+    expect(unsupportedReasonState('proto_mismatch')).toBe('known')
+    expect(unsupportedReasonState('a_code_from_a_newer_agent')).toBe('unknown_code')
+    expect(unsupportedReasonState(undefined)).toBe('not_reported')
+    expect(unsupportedReasonState('')).toBe('not_reported')
+  })
+
+  it('agrees with the routing on which states cannot pick a flow', () => {
+    // Both non-known states must fall through categoryFor to the platform guess,
+    // so the dialog's hedged wording and the flow it opens always match.
+    for (const reason of [undefined, '', 'a_code_from_a_newer_agent', 'constructor']) {
+      expect(reasonCategory(reason)).toBeUndefined()
+      expect(unsupportedReasonState(reason)).not.toBe('known')
+      expect(categoryFor(perm('game.performance.read', true, false, false, reason), 'windows')).toBe('component')
+    }
   })
 })

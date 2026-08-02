@@ -94,6 +94,13 @@ export interface AgentPermission {
   // permission, dependency-closed by the server. Present only when not granted —
   // the console never derives the closure itself.
   permissions_env?: string
+  // WHY the capability is absent, when the agent knows. A stable code (see
+  // lib/agentPermissions.ts for the vocabulary and what each one means).
+  //
+  // ABSENT MEANS THE QUESTION WAS NEVER ASKED — the agent does not probe a
+  // capability nothing granted — not "unknown failure". Readers must also
+  // tolerate codes they do not recognise: newer agents can send new ones.
+  unsupported_reason?: string
 }
 export interface AgentPermissions {
   agent_id: string

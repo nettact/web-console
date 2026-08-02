@@ -2638,6 +2638,10 @@ export default {
     reRunNote: 'Restart the Agent with the elevated privilege for the change to take effect.',
     unsupportedIntro: 'The Agent’s current platform or build lacks this capability; neither granting the permission nor elevating privilege will enable it.',
     unsupportedGeneric: 'Deploy the Agent on a platform or build that supports this capability.',
+    // Generic lead-in for the Agent-sensor cause. In practice the reason code
+    // always supplies a more specific one; this only guards against an empty
+    // paragraph if a caller opens the cause without a code.
+    sensorIntro: 'The Agent’s own sensor component could not supply this data. The problem is on the Agent side, not with any separately installed software.',
     componentIntro: 'This capability needs the Intel PresentMon service installed on this machine, and no usable service was found.',
     componentWhy: 'Reading frame presentation events requires a system-level trace session. The PresentMon service holds that session under a system account and serves the data, which is what lets NetTact collect it without running as Administrator.',
     componentStepDownload: 'Download the Intel PresentMon installer (MIT-licensed, signed by Intel):',
@@ -2646,14 +2650,82 @@ export default {
     componentStepVerify: 'To check the service, run the command below in PowerShell or Command Prompt; STATE should read RUNNING.',
     componentVerifyLabel: 'Check the service:',
     componentAlreadyInstalled: 'If it is installed but still shows as unsupported, the service is usually not running (the command above shows STOPPED) or its version does not match NetTact; reinstalling the latest version fixes both.',
-    componentOtherCauses: 'The Agent reports whether a capability is supported, never why, so the above is the most common cause rather than a certain one. If the service is confirmed healthy and it is still unsupported, two others remain: this Agent was installed from a package without the game collection component (the MSI and portable builds have none; only the Microsoft Store build carries it), or the Agent predates the feature.',
+    // The three "we are guessing" paragraphs, one per state. Only the first may
+    // tell anyone to grant the permission — it is the only one where it is not
+    // already granted, and the only one where granting produces a real cause.
+    componentOtherCauses: 'This Agent attached no cause to this permission — it does not probe a capability nothing granted it — so the above is the most common cause rather than a certain one. Grant the permission and restart the Agent, and the next report says what was actually found. Other possibilities remain meanwhile: this Agent was installed from a package without the game collection component (the MSI and portable builds have none; only the Microsoft Store build carries it), or the Agent predates the feature.',
+    causeNotReported: 'The permission is granted here, yet this Agent reported no cause — usually an Agent from before causes were reported at all, sometimes a probe with nothing to report. Update the Agent to get a specific answer, and check the Agent log in the meantime. The above is the most common cause rather than a certain one.',
+    causeUnknown: 'This Agent reported a cause this console build does not recognise: “{code}”. Updating the console will explain it; until then that code is the exact term to search for or to quote in a report. The above is the most common cause rather than a certain one — a starting point, not the finding.',
     componentRestartNote: 'Restart the Agent after installing (restart the app on desktop) — the check runs at startup.',
+    // Same caveat for the path where nothing is being installed, so it does not
+    // contradict a fix that just said no download is needed.
+    serviceRestartNote: 'Once the service is running, restart the Agent (restart the app on desktop) — the check runs at startup, so nothing changes before then.',
     componentUrl: 'https://github.com/GameTechDev/PresentMon/releases/latest',
     desktopNote: 'This Agent runs embedded in desktop full-access mode with a fixed full grant — no environment variable or config file change is needed.',
     tab_powershell: 'PowerShell',
     tab_systemd: 'systemd',
     tab_container: 'Docker Compose',
     tab_yaml: 'YAML',
+  },
+
+  // Why a capability is unsupported, keyed by the agent's reason code (NOT by
+  // permission id like permissionHint/permissionPlatforms above). Each code gets
+  // `found` — what the Agent actually observed — and `fix` — what the reader
+  // should do, up to and including "nothing you can install".
+  //
+  // The one rule these strings exist to enforce: never send someone to install
+  // Intel PresentMon unless PresentMon is what is missing or out of date. Only
+  // the first three codes are about PresentMon at all; for the sensor codes it is
+  // demonstrably not the problem, and saying so plainly is the point — a user
+  // with a healthy PresentMon was previously told to install it.
+  //
+  // Unknown codes never reach here: the dialog treats them like an absent reason
+  // and falls back to the hedged guess.
+  permUnsupportedReason: {
+    presentmon_missing: {
+      found: 'The Intel PresentMon middleware was not found on this machine.',
+      fix: 'Install Intel PresentMon with the steps below, then restart the Agent.',
+    },
+    service_unavailable: {
+      found: 'Intel PresentMon is installed, but its service could not be reached — it is not running, or it stopped responding.',
+      fix: 'Start or repair the PresentMonSharedService service, then restart the Agent. Use the command below to confirm STATE reads RUNNING; there is no need to download the installer again.',
+    },
+    version_mismatch: {
+      found: 'The Intel PresentMon installed here is not compatible with this Agent’s sensor component.',
+      fix: 'Update Intel PresentMon to a compatible version — install the latest release with the steps below — then restart the Agent.',
+    },
+    proto_mismatch: {
+      found: 'The sensor component and the Agent come from different builds, so the protocol between them no longer matches. Intel PresentMon is not the problem here: this is settled entirely inside the Agent, and a healthy, running PresentMon looks exactly like this.',
+      fix: 'Update or reinstall the Agent so both parts come from the same build, then restart it. Installing or reinstalling Intel PresentMon will not help.',
+    },
+    sensor_missing: {
+      found: 'This Agent build ships no sensor component, so the capability was never available to it. Nothing is wrong with this machine, and nothing is wrong with Intel PresentMon.',
+      fix: 'Use the Windows desktop build, which includes the sensor component. Installing Intel PresentMon cannot add a component this build does not contain.',
+    },
+    probe_failed: {
+      found: 'The sensor component did not answer when the Agent queried it.',
+      fix: 'Installing software will not fix this. Check the Agent log for the underlying error, then restart the Agent.',
+    },
+    sensor_exited: {
+      found: 'The sensor component exited unexpectedly.',
+      fix: 'Installing software will not fix this. Check the Agent log for why it exited, then restart the Agent.',
+    },
+    internal_error: {
+      found: 'The sensor component hit an internal error.',
+      fix: 'Installing software will not fix this. Check the Agent log for the error detail, then restart the Agent.',
+    },
+    session_lost: {
+      found: 'The capture session was lost while running.',
+      fix: 'This is usually transient — the Agent recovers or restarts the session on its own, so check again shortly. If it never comes back, the Agent log has the detail.',
+    },
+    unsupported_os: {
+      found: 'This Windows build cannot supply the data.',
+      fix: 'This is a genuine platform gap. It needs a Windows version that provides the data; no software you install changes it.',
+    },
+    gpu_telemetry_unavailable: {
+      found: 'Capture itself is working — this GPU or its driver publishes no telemetry to read.',
+      fix: 'There is nothing to install: the machine simply has nothing to report. Only an adapter or driver that publishes this telemetry will produce readings.',
+    },
   },
 
   selector: {

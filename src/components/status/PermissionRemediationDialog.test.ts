@@ -3,16 +3,23 @@ import { mount } from '@vue/test-utils'
 import { createI18n } from 'vue-i18n'
 
 import en from '../../locales/en'
+import type { RemediationCategory } from '../../lib/agentPermissions'
 import PermissionRemediationDialog from './PermissionRemediationDialog.vue'
 
 type Props = {
   permId: string
-  category: 'permission_blocked' | 'elevation' | 'component' | 'unsupported' | 'dependency'
+  category: RemediationCategory
+  unsupportedReason?: string
   permissionsEnv?: string
   requires?: string[]
   grantMissing?: boolean
   desktop?: boolean
 }
+
+// The official releases page. Nothing in the sensor-side or hardware causes may
+// link here: every one of them is a problem installing PresentMon cannot touch.
+const hasDownloadLink = (w: { findAll: (s: string) => Array<{ attributes: (a: string) => string | undefined }> }) =>
+  w.findAll('a').some((a) => a.attributes('href')?.includes('GameTechDev/PresentMon'))
 
 function render(props: Props) {
   const i18n = createI18n({ legacy: false, locale: 'en', messages: { en } })
@@ -151,6 +158,205 @@ describe('PermissionRemediationDialog', () => {
       grantMissing: true,
     })
     expect(w.text()).toContain('PresentMon')
+    expect(w.text()).toContain('not granted either')
+    expect(w.text()).toContain(env)
+  })
+})
+
+// Once the agent says WHY, the dialog must stop offering the one remedy it used
+// to offer for everything. These cover the codes where "install Intel PresentMon"
+// is wrong, plus the ones where it is still right.
+describe('PermissionRemediationDialog unsupported reasons', () => {
+  it('tells a stale-sensor agent to update the Agent, never to install PresentMon', () => {
+    // The reported bug: PresentMon installed and running perfectly, console said
+    // it was not installed. The finding must name the build mismatch, the remedy
+    // must name the Agent, and there must be no installer link to follow.
+    const w = render({
+      permId: 'game.performance.read',
+      category: 'agent_sensor',
+      unsupportedReason: 'proto_mismatch',
+    })
+    const text = w.text()
+    expect(text).toContain('different builds')
+    expect(text).toContain('reinstall the Agent')
+    expect(text).toContain('will not help')
+    // No install steps, no download, and no service check — none of it applies.
+    expect(hasDownloadLink(w)).toBe(false)
+    expect(text).not.toContain('sc.exe query')
+    // And none of the hedging that belongs to the guessing path.
+    expect(text).not.toContain('most common cause')
+  })
+
+  it('tells a build without the sensor to change build, and clears PresentMon by name', () => {
+    const w = render({
+      permId: 'game.performance.read',
+      category: 'agent_sensor',
+      unsupportedReason: 'sensor_missing',
+    })
+    expect(w.text()).toContain('ships no sensor component')
+    expect(w.text()).toContain('Windows desktop build')
+    expect(w.text()).toContain('Nothing is wrong with this machine')
+    expect(hasDownloadLink(w)).toBe(false)
+  })
+
+  it('sends the runtime failures to the log rather than to a download', () => {
+    for (const reason of ['probe_failed', 'sensor_exited', 'internal_error']) {
+      const w = render({ permId: 'game.performance.read', category: 'agent_sensor', unsupportedReason: reason })
+      expect(w.text()).toContain('Agent log')
+      expect(w.text()).toContain('will not fix this')
+      expect(hasDownloadLink(w)).toBe(false)
+    }
+  })
+
+  it('calls a lost capture session transient instead of a fault to fix', () => {
+    const w = render({ permId: 'game.performance.read', category: 'agent_sensor', unsupportedReason: 'session_lost' })
+    expect(w.text()).toContain('transient')
+    expect(hasDownloadLink(w)).toBe(false)
+  })
+
+  // The service is installed, so the download is busywork — but the check command
+  // is exactly what answers "is it running?", so that half stays.
+  it('offers the service check but not the installer when the service is unreachable', () => {
+    const w = render({
+      permId: 'game.performance.read',
+      category: 'component',
+      unsupportedReason: 'service_unavailable',
+    })
+    expect(w.text()).toContain('could not be reached')
+    expect(w.text()).toContain('Start or repair')
+    expect(w.text()).toContain('sc.exe query PresentMonSharedService')
+    expect(hasDownloadLink(w)).toBe(false)
+    // The closing caveat must not contradict the fix that just said there is
+    // nothing to download: no "restart after installing" on this path.
+    expect(w.text()).not.toContain('after installing')
+    expect(w.text()).toContain('Once the service is running, restart the Agent')
+  })
+
+  it('keeps the install-flavoured restart caveat where installing is the fix', () => {
+    for (const reason of ['presentmon_missing', 'version_mismatch', undefined]) {
+      const w = render({ permId: 'game.performance.read', category: 'component', unsupportedReason: reason })
+      expect(w.text()).toContain('Restart the Agent after installing')
+      expect(w.text()).not.toContain('Once the service is running')
+    }
+  })
+
+  it('keeps the download for the two causes an installer really fixes', () => {
+    for (const reason of ['presentmon_missing', 'version_mismatch']) {
+      const w = render({ permId: 'game.performance.read', category: 'component', unsupportedReason: reason })
+      expect(hasDownloadLink(w)).toBe(true)
+      expect(w.text()).toContain('sc.exe query PresentMonSharedService')
+      // A known cause never hedges: the alternatives paragraph is for guesses.
+      expect(w.text()).not.toContain('most common cause')
+    }
+    expect(
+      render({ permId: 'game.performance.read', category: 'component', unsupportedReason: 'version_mismatch' }).text(),
+    ).toContain('not compatible')
+  })
+
+  it('says there is nothing to install for an OS or hardware gap', () => {
+    const os = render({ permId: 'game.performance.read', category: 'unsupported', unsupportedReason: 'unsupported_os' })
+    expect(os.text()).toContain('cannot supply the data')
+    expect(hasDownloadLink(os)).toBe(false)
+
+    const gpu = render({ permId: 'game.gpu.read', category: 'unsupported', unsupportedReason: 'gpu_telemetry_unavailable' })
+    expect(gpu.text()).toContain('Capture itself is working')
+    expect(gpu.text()).toContain('nothing to install')
+    expect(hasDownloadLink(gpu)).toBe(false)
+    // The per-permission platform note is written for the guessing path and ends
+    // in "install the component"; the reason's own remedy replaces it.
+    expect(gpu.text()).not.toContain('see the fix')
+  })
+
+  // A newer agent's code, and an agent that never probed at all, must both land
+  // on the old guess WITH its hedge rather than on a blank or invented cause —
+  // but they are three different states and each gets its own wording.
+  it('hedges on all three no-answer states and never renders a raw i18n path', () => {
+    for (const reason of [undefined, 'a_code_from_a_newer_agent']) {
+      for (const grantMissing of [true, false]) {
+        const w = render({
+          permId: 'game.performance.read',
+          category: 'component',
+          unsupportedReason: reason,
+          grantMissing,
+          // An env line only so the grant block has something to render; it is
+          // not what this test is about.
+          permissionsEnv: grantMissing ? 'NETTACT_AGENT_PERMISSIONS=game.performance.read' : undefined,
+        })
+        expect(w.text()).toContain('no usable service was found')
+        expect(w.text()).toContain('most common cause')
+        expect(hasDownloadLink(w)).toBe(true)
+        expect(w.text()).not.toMatch(/permUnsupportedReason\.|permRemediation\.\w/)
+      }
+    }
+  })
+
+  it('tells an ungranted permission with no reported cause to grant it and restart', () => {
+    // The agent does not probe what nothing granted, so granting really is how
+    // the reader gets a real cause out of it.
+    const w = render({
+      permId: 'game.performance.read',
+      category: 'component',
+      grantMissing: true,
+      permissionsEnv: 'NETTACT_AGENT_PERMISSIONS=game.performance.read',
+    })
+    expect(w.text()).toContain('does not probe a capability nothing granted it')
+    expect(w.text()).toContain('Grant the permission and restart the Agent')
+  })
+
+  it('does not tell an already-granted permission to grant itself when no cause was reported', () => {
+    // Same silence, opposite state: the grant is done, so repeating that advice
+    // sends the reader to change a setting that is already correct.
+    const w = render({ permId: 'game.performance.read', category: 'component', grantMissing: false })
+    expect(w.text()).not.toContain('Grant the permission and restart the Agent')
+    expect(w.text()).not.toContain('does not probe a capability nothing granted it')
+    expect(w.text()).toContain('reported no cause')
+    expect(w.text()).toContain('Update the Agent')
+    expect(w.text()).toContain('Agent log')
+  })
+
+  it('says an unrecognised code was reported, and shows the code', () => {
+    // The agent DID answer. Claiming it reported nothing is false, and the raw
+    // code is the one identifier worth putting in front of the reader: it is
+    // what they search for or quote when reporting this.
+    const w = render({
+      permId: 'game.performance.read',
+      category: 'component',
+      unsupportedReason: 'a_code_from_a_newer_agent',
+      grantMissing: false,
+    })
+    expect(w.text()).toContain('does not recognise')
+    expect(w.text()).toContain('a_code_from_a_newer_agent')
+    expect(w.text()).toContain('Updating the console')
+    // Neither of the "nothing was reported" stories applies here.
+    expect(w.text()).not.toContain('attached no cause')
+    expect(w.text()).not.toContain('reported no cause')
+    expect(w.text()).not.toContain('Grant the permission and restart the Agent')
+  })
+
+  it('surfaces an unrecognised code on the platform-gap route instead of swallowing it', () => {
+    // Off Windows the fallback guess sends an unknown code here, where the body
+    // otherwise asserts a build gap the agent may not have been talking about.
+    const w = render({
+      permId: 'game.performance.read',
+      category: 'unsupported',
+      unsupportedReason: 'a_code_from_a_newer_agent',
+    })
+    expect(w.text()).toContain('a_code_from_a_newer_agent')
+    expect(w.text()).toContain('does not recognise')
+  })
+
+  it('still adds the policy block on top of a reason-driven cause', () => {
+    // Knowing why the capability is missing changes nothing about the grant: both
+    // halves have to be fixed, so both halves have to show.
+    const env = 'NETTACT_AGENT_PERMISSIONS=game.process.detect,game.performance.read'
+    const w = render({
+      permId: 'game.performance.read',
+      category: 'agent_sensor',
+      unsupportedReason: 'proto_mismatch',
+      permissionsEnv: env,
+      grantMissing: true,
+    })
+    expect(w.text()).toContain('different builds')
     expect(w.text()).toContain('not granted either')
     expect(w.text()).toContain(env)
   })

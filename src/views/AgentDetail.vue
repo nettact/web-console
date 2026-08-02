@@ -96,6 +96,7 @@ const permBuckets = computed(() => bucketAgentPermissions(permissions.value))
 const remediation = ref<{
   permId: string
   category: RemediationCategory
+  unsupportedReason: string
   env: string
   requires: string[]
   grantMissing: boolean
@@ -108,6 +109,10 @@ function openRemediation(permId: string) {
     // Whether a capability gap is fixable by elevation depends on the agent's
     // platform, so the cause is decided with it rather than from the id alone.
     category: categoryFor(p, agentPlatform(agent.value?.platform || '')),
+    // The agent's own account of why the capability is missing, passed through
+    // verbatim. Empty is a real answer — it means the capability was never
+    // probed — and the dialog falls back to explaining the likeliest cause.
+    unsupportedReason: p.unsupported_reason || '',
     env: p.permissions_env || '',
     requires: p.requires || [],
     grantMissing: !p.granted,
@@ -286,6 +291,7 @@ onMounted(() => {
       :open="!!remediation"
       :perm-id="remediation?.permId || ''"
       :category="remediation?.category || 'unsupported'"
+      :unsupported-reason="remediation?.unsupportedReason"
       :permissions-env="remediation?.env"
       :requires="remediation?.requires"
       :grant-missing="remediation?.grantMissing"

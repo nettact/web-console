@@ -2620,6 +2620,9 @@ export default {
     reRunNote: '以提升后的权限重新启动 Agent 后生效。',
     unsupportedIntro: '当前 Agent 的平台或构建不具备此能力，授予权限或提权都无法启用。',
     unsupportedGeneric: '请在支持该能力的平台或构建上部署 Agent。',
+    // Agent 传感组件类原因的通用开场白。实际使用中原因码总会给出更具体的说明，
+    // 这条只是兜底，避免调用方不带原因码时段落为空。
+    sensorIntro: 'Agent 自身的传感组件未能提供该数据。问题出在 Agent 一侧，与另行安装的软件无关。',
     componentIntro: '该能力需要在本机安装 Intel PresentMon 服务，当前未检测到可用的服务。',
     componentWhy: '读取帧呈现事件需要系统级的跟踪会话权限。PresentMon 服务以系统账户持有该会话并对外提供数据，因此 NetTact 自身无需管理员权限即可采集。',
     componentStepDownload: '下载 Intel PresentMon 安装包（MIT 开源，由 Intel 签名）：',
@@ -2628,14 +2631,78 @@ export default {
     componentStepVerify: '如需确认服务状态，在 PowerShell 或命令提示符中执行下面的命令，STATE 应为 RUNNING。',
     componentVerifyLabel: '确认服务状态：',
     componentAlreadyInstalled: '若已安装却仍显示不支持，通常是服务未在运行（上面的命令会显示 STOPPED），或版本与 NetTact 不匹配；重新安装最新版本即可。',
-    componentOtherCauses: 'Agent 只报告"是否支持"，不报告原因，因此以上是最常见的一种。若服务确认正常仍不支持，还有两种可能：该 Agent 的安装包不含游戏采集组件（MSI 版与便携版不含，仅微软商店版包含），或 Agent 版本过旧尚无此功能。',
+    // 三种「只能推测」状态各自的说明文案。只有第一条可以叫人去授予权限——只有
+    // 那一种情况下权限确实还没授予，也只有那一种情况下授予之后才会拿到真正的原因。
+    componentOtherCauses: '该 Agent 没有给出这一项的具体原因——它不会去探测任何未被授予的能力——因此以上只是最常见的一种可能，并非确定结论。先授予该权限并重启 Agent，下一次上报就会说明实际探测到了什么。在那之前还有别的可能：该 Agent 的安装包不含游戏采集组件（MSI 版与便携版不含，仅微软商店版包含），或 Agent 版本过旧尚无此功能。',
+    causeNotReported: '该权限在本机已经授予，但这个 Agent 没有上报原因——通常说明它的版本早于「上报原因」这项能力，也可能是探测本身没有可上报的内容。升级 Agent 可以拿到确切原因；在那之前请查看 Agent 日志。以上只是最常见的一种可能，并非确定结论。',
+    causeUnknown: '该 Agent 上报了一个当前控制台版本无法识别的原因码：「{code}」。升级控制台后即可看到它的说明；在那之前，这个原因码就是最适合用来检索或在反馈中引用的关键词。以上只是最常见的一种可能，并非确定结论，只能当作排查起点。',
     componentRestartNote: '安装完成后需重启 Agent（桌面版重启应用）才会重新检测。',
+    // 不涉及安装的路径用同样的提醒，避免与「无需下载安装包」的处置建议自相矛盾。
+    serviceRestartNote: '服务恢复运行后需重启 Agent（桌面版重启应用）才会重新检测，在那之前状态不会变化。',
     componentUrl: 'https://github.com/GameTechDev/PresentMon/releases/latest',
     desktopNote: '此 Agent 以桌面完全访问模式内嵌运行，权限固定为完全授予，无需修改环境变量或配置文件。',
     tab_powershell: 'PowerShell',
     tab_systemd: 'systemd',
     tab_container: 'Docker Compose',
     tab_yaml: 'YAML',
+  },
+
+  // 能力不可用的原因说明，按 Agent 上报的原因码查找（注意：不是像上面
+  // permissionHint / permissionPlatforms 那样按权限 id 查找）。每个原因码有
+  // found（实际探测到了什么）与 fix（该怎么做，包括「没有任何东西可装」）两句。
+  //
+  // 这组文案要守住的唯一底线：除非 PresentMon 确实缺失或版本过旧，否则绝不叫人
+  // 去装 Intel PresentMon。只有前三个原因码与 PresentMon 有关；传感组件类原因码
+  // 已经明确排除了它，必须直说——此前就有用户 PresentMon 装好且运行正常，却被
+  // 提示去安装它。
+  //
+  // 未知原因码不会走到这里：弹窗会把它当作没有原因，回落到带「只是推测」措辞的
+  // 猜测路径。
+  permUnsupportedReason: {
+    presentmon_missing: {
+      found: '本机未找到 Intel PresentMon 中间件。',
+      fix: '按下面的步骤安装 Intel PresentMon，然后重启 Agent。',
+    },
+    service_unavailable: {
+      found: 'Intel PresentMon 已安装，但它的服务连接不上——未在运行，或已停止响应。',
+      fix: '启动或修复 PresentMonSharedService 服务，然后重启 Agent。可用下面的命令确认 STATE 为 RUNNING；无需重新下载安装包。',
+    },
+    version_mismatch: {
+      found: '本机安装的 Intel PresentMon 与该 Agent 的传感组件版本不兼容。',
+      fix: '把 Intel PresentMon 更新到兼容版本——按下面的步骤安装最新版——然后重启 Agent。',
+    },
+    proto_mismatch: {
+      found: '传感组件与 Agent 主体来自不同的构建，两者之间的协议已经对不上。这里与 Intel PresentMon 无关：问题完全发生在 Agent 内部，PresentMon 装好且运行正常时看到的就是这一条。',
+      fix: '更新或重新安装 Agent，让两个部件来自同一个构建，然后重启。安装或重新安装 Intel PresentMon 对此没有任何帮助。',
+    },
+    sensor_missing: {
+      found: '当前 Agent 构建不包含传感组件，因此从一开始就不具备该能力。这台机器没有问题，Intel PresentMon 也没有问题。',
+      fix: '改用包含传感组件的 Windows 桌面版构建。安装 Intel PresentMon 无法为当前构建补上它本来就没有的组件。',
+    },
+    probe_failed: {
+      found: 'Agent 向传感组件发出查询后没有得到回应。',
+      fix: '这不是安装任何软件能解决的问题。请在 Agent 日志中查看具体错误，然后重启 Agent。',
+    },
+    sensor_exited: {
+      found: '传感组件意外退出。',
+      fix: '这不是安装任何软件能解决的问题。请在 Agent 日志中查看退出原因，然后重启 Agent。',
+    },
+    internal_error: {
+      found: '传感组件发生内部错误。',
+      fix: '这不是安装任何软件能解决的问题。请在 Agent 日志中查看错误详情，然后重启 Agent。',
+    },
+    session_lost: {
+      found: '采集会话在运行过程中丢失。',
+      fix: '这通常是暂时的——Agent 会自行恢复或重建会话，稍后再看即可。若一直不恢复，详情见 Agent 日志。',
+    },
+    unsupported_os: {
+      found: '当前 Windows 版本无法提供该数据。',
+      fix: '这是真正的系统能力缺失，需要能提供该数据的 Windows 版本；安装任何软件都改变不了。',
+    },
+    gpu_telemetry_unavailable: {
+      found: '采集本身是正常的——是这块显卡或它的驱动不发布可读的遥测数据。',
+      fix: '没有任何东西需要安装：这台机器就是没有可上报的数据。只有发布该遥测的显卡或驱动才会有读数。',
+    },
   },
 
   selector: {

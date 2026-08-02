@@ -11,10 +11,22 @@
 //     Agent (the PresentMon service, for frame data). Unlike the other capability
 //     causes this one is fixable by the person reading it, so it is the only one
 //     that offers a download and steps.
+//   agent_sensor — the Agent's own sensor part is missing from this build, from a
+//     different build than the rest of the Agent, or failing at runtime. The fix
+//     is the Agent, never PresentMon, so this cause offers no download at all.
 //   unsupported — a hard platform/build capability gap. No policy change or
 //     elevation helps; explains which platform/build is required.
 //   dependency — granted and supported, but a permission it requires is not in
 //     effect, so it was pruned. Fix the parent first.
+//
+// `unsupportedReason` is the agent's own answer to "why is it unsupported". When
+// it is a code this console knows, it REPLACES the cause paragraph with what was
+// actually found and what to do about it, and the PresentMon download/install
+// steps render only for the codes where installing PresentMon is the real fix.
+// Showing them anywhere else is the bug this prop exists to kill: a user whose
+// PresentMon was installed and healthy was told to install it, because the
+// console could only guess. When the reason is absent or unrecognised the dialog
+// falls back to the old guess AND to saying that it is a guess.
 //
 // The grant block shows the server-computed full NETTACT_AGENT_PERMISSIONS=… line
 // (granted ∪ missing, dependency-closed) with copy, plus per run-mode snippets
@@ -32,11 +44,16 @@
 import { computed, nextTick, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { usePermissionMeta } from '../../composables/usePermissionMeta'
+import { unsupportedReasonState, type RemediationCategory } from '../../lib/agentPermissions'
 
 const props = defineProps<{
   open: boolean
   permId: string
-  category: 'permission_blocked' | 'elevation' | 'component' | 'unsupported' | 'dependency'
+  category: RemediationCategory
+  // The agent's reason code for an unsupported capability. Absent when the
+  // capability was never probed, or when the opener has no permission row to
+  // read it from — a valid state, not a missing value.
+  unsupportedReason?: string
   // Full `NETTACT_AGENT_PERMISSIONS=…` line from the server. Absent when it could
   // not be resolved (then a generic instruction is shown).
   permissionsEnv?: string
@@ -63,6 +80,53 @@ const platforms = computed(() => permPlatforms(props.permId))
 const requiresLabel = computed(() =>
   (props.requires || []).map(permLabel).join(t('permRemediation.listSep')),
 )
+
+// Three states, kept apart: explained, reported-but-unreadable, and not reported
+// at all. They route the same way (neither of the last two can pick a flow) but
+// they must not read the same way — see the cause paragraph below.
+const reasonState = computed(() => unsupportedReasonState(props.unsupportedReason))
+const reason = computed(() => (reasonState.value === 'known' ? (props.unsupportedReason as string) : ''))
+// The raw code, shown ONLY when this console cannot explain it. Normally an
+// internal identifier has no business in front of a user, but here it is the
+// most useful thing on screen: it is what they would search for, quote in a bug
+// report, or hand to support, and it is the proof that the agent did answer.
+const unknownCode = computed(() =>
+  reasonState.value === 'unknown_code' ? (props.unsupportedReason as string) : '',
+)
+// What was found, then what to do about it — in that order, so the remedy is
+// never read without the finding that justifies it.
+const reasonFound = computed(() => (reason.value ? t(`permUnsupportedReason.${reason.value}.found`) : ''))
+const reasonFix = computed(() => (reason.value ? t(`permUnsupportedReason.${reason.value}.fix`) : ''))
+
+// The PresentMon installer helps in exactly two cases: it is not there, or the
+// copy that is there is too old. For `service_unavailable` the software is
+// already installed and downloading it again is busywork, so the steps give way
+// to the check command and the fix line telling them to start it.
+const showDownloadSteps = computed(
+  () =>
+    props.category === 'component' &&
+    (!reason.value || reason.value === 'presentmon_missing' || reason.value === 'version_mismatch'),
+)
+// The console is guessing at the cause: no reason, or one it does not know. Only
+// this path may hedge — and only this path may list the alternative causes,
+// which is where the guess used to be dressed up as an answer.
+const guessing = computed(() => reasonState.value !== 'known')
+
+// Which guess the reader is looking at, worded for the state they are actually
+// in. All three hedge; none of them may claim something untrue about what the
+// agent said or tell someone to grant a permission they already granted:
+//
+//   unknown code   — the agent answered and this build cannot read the answer.
+//   nothing said, not granted — the expected case: the agent does not probe a
+//     capability nothing granted, so granting it IS how you get a real cause.
+//   nothing said, already granted — an agent that predates the field (or a probe
+//     with nothing to say). Granting is done; the log and an update are what is
+//     left.
+const causeNote = computed(() => {
+  if (unknownCode.value) return t('permRemediation.causeUnknown', { code: unknownCode.value })
+  if (props.grantMissing === true) return t('permRemediation.componentOtherCauses')
+  return t('permRemediation.causeNotReported')
+})
 
 // Deep link into the permission reference for THIS permission. The docs give each
 // entry an explicit `{#id-with-hyphens}` anchor precisely because VitePress's
@@ -220,9 +284,10 @@ watch(
 
             <!-- component: a separately-installed program provides the capability -->
             <template v-else-if="category === 'component'">
-              <p class="prd-intro">{{ t('permRemediation.componentIntro') }}</p>
+              <p class="prd-intro">{{ reasonFound || t('permRemediation.componentIntro') }}</p>
+              <p v-if="reasonFix" class="prd-note strong">{{ reasonFix }}</p>
               <p class="prd-note">{{ t('permRemediation.componentWhy') }}</p>
-              <ol class="prd-steps">
+              <ol v-if="showDownloadSteps" class="prd-steps">
                 <li>
                   {{ t('permRemediation.componentStepDownload') }}
                   <a class="prd-dl" :href="t('permRemediation.componentUrl')" target="_blank" rel="noopener noreferrer">
@@ -239,9 +304,27 @@ watch(
                 </button>
                 <pre><code>{{ verifyCommand }}</code></pre>
               </div>
-              <p class="prd-note">{{ t('permRemediation.componentAlreadyInstalled') }}</p>
-              <p class="prd-note">{{ t('permRemediation.componentOtherCauses') }}</p>
-              <p class="prd-note strong">{{ t('permRemediation.componentRestartNote') }}</p>
+              <!-- Only when the cause is a guess: these two paragraphs exist to
+                   cover what the guess could not rule out. With a reason in hand
+                   they would be speculation about a question already answered. -->
+              <template v-if="guessing">
+                <p class="prd-note">{{ t('permRemediation.componentAlreadyInstalled') }}</p>
+                <p class="prd-note">{{ causeNote }}</p>
+              </template>
+              <!-- "Restart after installing" is incoherent on the path that just
+                   told them not to install anything, so the service path gets the
+                   same caveat phrased around starting the service. -->
+              <p class="prd-note strong">
+                {{ showDownloadSteps ? t('permRemediation.componentRestartNote') : t('permRemediation.serviceRestartNote') }}
+              </p>
+            </template>
+
+            <!-- agent_sensor: the Agent's own sensor part, not the middleware.
+                 No download anywhere in this branch — every code that reaches it
+                 is one that installing PresentMon cannot affect. -->
+            <template v-else-if="category === 'agent_sensor'">
+              <p class="prd-intro">{{ reasonFound || t('permRemediation.sensorIntro') }}</p>
+              <p v-if="reasonFix" class="prd-note strong">{{ reasonFix }}</p>
             </template>
 
             <!-- dependency: granted and supported, but a required parent is not effective -->
@@ -254,8 +337,22 @@ watch(
 
             <!-- unsupported: hard platform/build gap -->
             <template v-else>
-              <p class="prd-intro">{{ t('permRemediation.unsupportedIntro') }}</p>
-              <p class="prd-note">{{ platforms || t('permRemediation.unsupportedGeneric') }}</p>
+              <p class="prd-intro">{{ reasonFound || t('permRemediation.unsupportedIntro') }}</p>
+              <!-- The per-permission platform note is written for the guessing
+                   path and several entries end in "install the component"; with
+                   a reason in hand the reason's own remedy is the accurate one. -->
+              <p v-if="reasonFix" class="prd-note">{{ reasonFix }}</p>
+              <p v-else class="prd-note">{{ platforms || t('permRemediation.unsupportedGeneric') }}</p>
+              <!-- An unrecognised code reaches this branch on a non-Windows agent
+                   (the platform guess sends it here). The paragraph above is then
+                   a claim about the build made while the agent was saying
+                   something else, so the code has to be shown rather than
+                   swallowed. The elevation branch needs no equivalent: no
+                   permission that can carry a reason routes to it on any
+                   platform. -->
+              <p v-if="unknownCode" class="prd-note">
+                {{ t('permRemediation.causeUnknown', { code: unknownCode }) }}
+              </p>
             </template>
 
             <!-- how to grant it, when the policy is (part of) what's missing -->
