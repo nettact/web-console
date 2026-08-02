@@ -12,6 +12,11 @@ export interface ListenStatus {
   pending_addr?: string
   fallback_from?: string
   overrides_flag: boolean
+  // Deployment shape: whether the server runs in a container and how that
+  // container is attached to the network. 'isolated' (published-port docker)
+  // means the bind address belongs to the runtime, not the operator.
+  container: boolean
+  network_mode?: 'host' | 'isolated' | 'unknown'
 }
 // Last successful update check, as reported under server-info's "update" key.
 // The key is absent until a check succeeds and while update checking is switched
@@ -971,6 +976,7 @@ export interface SnapshotBaseTarget {
   kind?: string
   target?: string
   port?: number
+  iface?: string // gateway monitors: the frozen NIC selection
 }
 // Per-Agent allowlisted scene payload. Only these typed groups are ever present
 // — never process lists, user names, file paths, credentials or request bodies.

@@ -125,13 +125,28 @@ const listenSaved = ref<'' | 'pending' | 'restarting'>('')
 const listenNewUrl = ref('')
 const listenStatus = computed(() => serverInfo.value?.listen ?? null)
 
+// 容器里这个设置不归运维管：非 host 网络的容器靠端口映射对外，绑到 127.0.0.1 会让
+// 容器彻底失联（docker-proxy 也进不来）且没有界面可撤销，改端口则与端口映射、健康检查
+// 脱节——所以直接隐藏，只留说明。host 网络与裸机无异，正常显示。检测不出网络模式时
+// 保留控件，但先用红字把风险说清楚。
+const listenLocked = computed(
+  () => listenStatus.value?.container === true && listenStatus.value.network_mode === 'isolated',
+)
+const listenModeUnknown = computed(
+  () => listenStatus.value?.container === true && listenStatus.value.network_mode === 'unknown',
+)
+
+// 任何“未指定主机”的绑定都是通配监听，即局域网可达：0.0.0.0、::（上报时带方括号
+// 的 [::]）以及省略主机的 ":12450"。脚本安装的 Docker 默认 `-addr :12450`，绑成双栈
+// 通配后上报 "[::]:12450"——只认 0.0.0.0 会把它错显成「仅本机」。
 function parseListenAddr(addr: string): { mode: 'loopback' | 'all'; port: number } | null {
   const i = addr.lastIndexOf(':')
   if (i < 0) return null
-  const host = addr.slice(0, i)
+  const host = addr.slice(0, i).replace(/^\[/, '').replace(/\]$/, '')
   const port = parseInt(addr.slice(i + 1), 10)
   if (!Number.isFinite(port)) return null
-  return { mode: host === '0.0.0.0' ? 'all' : 'loopback', port }
+  const wildcard = host === '' || host === '0.0.0.0' || host === '::'
+  return { mode: wildcard ? 'all' : 'loopback', port }
 }
 
 function populateListen() {
@@ -884,7 +899,7 @@ onMounted(() => {
     <section class="panel" v-if="listenStatus">
       <div class="panel-head"><h3>{{ t('settings.listen.title') }}</h3></div>
       <div class="panel-body">
-        <p class="hint">{{ t('settings.listen.hint') }}</p>
+        <p class="hint">{{ listenLocked ? t('settings.listen.containerHint') : t('settings.listen.hint') }}</p>
         <p class="hint listen-status">
           {{ t('settings.listen.effective') }}: <span class="mono">{{ listenStatus.effective_addr }}</span>
           <span v-if="listenStatus.pending_addr" class="badge pending-badge">
@@ -895,34 +910,43 @@ onMounted(() => {
           {{ t('settings.listen.fallbackWarn', { addr: listenStatus.fallback_from }) }}
         </p>
         <p v-if="listenStatus.overrides_flag" class="hint">{{ t('settings.listen.overridesFlag') }}</p>
-        <div class="listen-modes">
-          <label class="toggle-row">
-            <input type="radio" value="loopback" v-model="listen.mode" />
-            <span>{{ t('settings.listen.loopback') }}</span>
-          </label>
-          <label class="toggle-row">
-            <input type="radio" value="all" v-model="listen.mode" />
-            <span>{{ t('settings.listen.all') }}</span>
-          </label>
-        </div>
-        <div v-if="listen.mode === 'all'" class="warn-box">
-          {{ t('settings.listen.lanWarning') }}
-          <template v-if="listenStatus.desktop"> {{ t('settings.listen.lanWarningDesktop') }}</template>
-        </div>
-        <div class="row field-row">
-          <label class="knob-label">{{ t('settings.listen.port') }}</label>
-          <input type="number" v-model.number="listen.port" min="1" max="65535" step="1" class="port-in" />
-          <button class="btn btn-primary" @click="saveListen">{{ t('common.save') }}</button>
-        </div>
-        <p v-if="listen.port < 1024 && serverInfo && serverInfo.os !== 'windows'" class="hint">
-          {{ t('settings.listen.lowPortHint') }}
-        </p>
-        <p v-if="listenSaved === 'pending'" class="hint saved">✓ {{ t('settings.listen.pendingSaved') }}</p>
-        <p v-if="listenSaved === 'restarting'" class="hint saved">
-          ✓ {{ t('settings.listen.restarting') }}
-          <a :href="listenNewUrl" class="mono">{{ listenNewUrl }}</a>
-        </p>
-        <p v-if="listenError" class="err inline">{{ listenError }}</p>
+        <template v-if="listenLocked">
+          <p class="hint">{{ t('settings.listen.containerLockedHow') }}</p>
+          <!-- 隐藏控件不等于没有暴露风险：默认映射就是发布到宿主机所有网卡，
+               这条警告在容器里反而更该出现。 -->
+          <div class="warn-box">{{ t('settings.listen.containerExposureWarn') }}</div>
+        </template>
+        <template v-else>
+          <p v-if="listenModeUnknown" class="err inline">{{ t('settings.listen.containerUnknownWarn') }}</p>
+          <div class="listen-modes">
+            <label class="toggle-row">
+              <input type="radio" value="loopback" v-model="listen.mode" />
+              <span>{{ t('settings.listen.loopback') }}</span>
+            </label>
+            <label class="toggle-row">
+              <input type="radio" value="all" v-model="listen.mode" />
+              <span>{{ t('settings.listen.all') }}</span>
+            </label>
+          </div>
+          <div v-if="listen.mode === 'all'" class="warn-box">
+            {{ t('settings.listen.lanWarning') }}
+            <template v-if="listenStatus.desktop"> {{ t('settings.listen.lanWarningDesktop') }}</template>
+          </div>
+          <div class="row field-row">
+            <label class="knob-label">{{ t('settings.listen.port') }}</label>
+            <input type="number" v-model.number="listen.port" min="1" max="65535" step="1" class="port-in" />
+            <button class="btn btn-primary" @click="saveListen">{{ t('common.save') }}</button>
+          </div>
+          <p v-if="listen.port < 1024 && serverInfo && serverInfo.os !== 'windows'" class="hint">
+            {{ t('settings.listen.lowPortHint') }}
+          </p>
+          <p v-if="listenSaved === 'pending'" class="hint saved">✓ {{ t('settings.listen.pendingSaved') }}</p>
+          <p v-if="listenSaved === 'restarting'" class="hint saved">
+            ✓ {{ t('settings.listen.restarting') }}
+            <a :href="listenNewUrl" class="mono">{{ listenNewUrl }}</a>
+          </p>
+          <p v-if="listenError" class="err inline">{{ listenError }}</p>
+        </template>
       </div>
     </section>
 
