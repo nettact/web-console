@@ -10,6 +10,8 @@ import { fmtByUnit, isByteUnit } from '../lib/format'
 import { escapeHtml } from '../lib/escapeHtml'
 import { lineDataWithGaps } from '../lib/chartSeries'
 import { chartColor, oklchToRgb } from '../lib/chartColor'
+import { bandAt, mergeBands, type BandKind, type ChartBand } from '../lib/chartBands'
+import { pixelAtTime, useChartSelection, type TimeSelection } from '../composables/useChartSelection'
 import { ALIGNED_GRID_LEFT, ALIGNED_GRID_RIGHT } from '../lib/chartGrid'
 
 const { t, locale } = useI18n()
@@ -60,9 +62,52 @@ const props = defineProps<{
   // axis bounds inside unequal plot rectangles still misplace the same instant.
   xMin?: number
   xMax?: number
+  // Spans to shade behind the lines. The game run's network timeline carries the
+  // stretches the game presented nothing in, so a blank here reads the same way
+  // as the blank on the frame charts above — "the game was minimised", not "the
+  // network data is missing".
+  bands?: ChartBand[]
+  // Whether a drag on this chart selects a time span.
+  //
+  // Off by default, and explicitly rather than by inferring it from the model
+  // binding: defineModel hands back a writable local ref whether or not a parent
+  // bound one, so an inferred version would make every dashboard and history
+  // chart in the app draggable — each growing a highlight that nothing explains
+  // and no panel reports. The game run page is the only place that owns a
+  // selection, so it is the only place that asks for one.
+  selectable?: boolean
 }>()
 
 const aligned = computed(() => props.xMin !== undefined || props.xMax !== undefined)
+
+// How strongly each kind is shaded, and in what. Kept in step with
+// GameRunChart's table on purpose: the same stretch shaded two different colours
+// on two charts a reader is comparing is worse than not shading it at all.
+const BAND_ALPHA: Record<BandKind, number> = {
+  stutter: 0.16,
+  gapBackground: 0.1,
+  gapNoFrames: 0.12,
+  gapUnknown: 0.1,
+}
+
+function bandFill(kind: BandKind): string {
+  const isLight = theme.value === 'light'
+  const base =
+    kind === 'stutter'
+      ? chartColor('--color-warning', isLight ? '#b45309' : '#fbbf24')
+      : kind === 'gapNoFrames'
+        ? chartColor('--color-info', isLight ? '#0369a1' : '#38bdf8')
+        : chartColor('--color-chart-label', isLight ? '#4a5768' : '#b7c3d4')
+  return echarts.color.modifyAlpha(base, BAND_ALPHA[kind]) ?? base
+}
+
+// One markArea's worth of items, each carrying its own colour — see
+// lib/chartBands for why the kinds share one and never merge into each other.
+function markAreaData() {
+  return mergeBands(props.bands ?? []).flatMap(({ kind, spans }) =>
+    spans.map(([from, to]) => [{ xAxis: from, itemStyle: { color: bandFill(kind) } }, { xAxis: to }]),
+  )
+}
 
 const el = ref<HTMLDivElement>()
 let chart: echarts.ECharts | null = null
@@ -154,7 +199,8 @@ function renderLines(ms: ChartMetric[]) {
     ...(u === 'bool' ? { min: 0, max: 1, interval: 1 } : {}),
   }))
 
-  const series = ms.map((m) => {
+  const areas = markAreaData()
+  const series = ms.map((m, i) => {
     const isBool = m.unit === 'bool'
     const ai = Math.max(0, axisUnits.indexOf(m.unit || ''))
     const color = oklchToRgb(m.color) ?? m.color
@@ -162,6 +208,10 @@ function renderLines(ms: ChartMetric[]) {
       name: m.label,
       type: 'line' as const,
       showSymbol: false,
+      // The bands belong to the chart rather than to a line, but ECharts hangs
+      // markArea off a series — so the first one carries them all, silent, which
+      // keeps them out of the axis tooltip's hit testing.
+      ...(i === 0 && areas.length ? { markArea: { silent: true, data: areas } } : {}),
       smooth: !isBool,
       step: isBool ? ('end' as const) : (false as const),
       yAxisIndex: ai,
@@ -181,24 +231,44 @@ function renderLines(ms: ChartMetric[]) {
     }
   })
 
-  // Only override the tooltip when a series needs scaled formatting (capacity or
-  // duration); other charts keep ECharts' default axis tooltip untouched.
+  // Only override the tooltip when there is something ECharts' default would not
+  // say: a series needing scaled formatting (capacity or duration), or a shaded
+  // band that has to explain itself. Every other chart keeps the default.
+  //
+  // The band case is why this is not only about formatting. A band is drawn on
+  // these charts as well as on the frame charts — that is the point of it, since
+  // a stretch where nobody was playing looks identical on every one of them —
+  // and a reader hovering here got values with no hint that the seconds under
+  // them were an alt-tab. The colour alone does not say; it is explained once
+  // above the charts, which is a long way from the pointer.
   const unitByName = new Map(ms.map((m) => [m.label, m.unit]))
   const hasScaled = ms.some((m) => isByteUnit(m.unit) || isDurUnit(m.unit))
-  const scaledTooltip = (params: { axisValue: number; seriesName: string; marker: string; value: [number, number] }[]) => {
+  const hasBands = !!props.bands?.length
+  const axisTooltip = (params: { axisValue: number; seriesName: string; marker: string; value: [number, number] }[]) => {
     const rows = params
       .map((p) => {
         const u = unitByName.get(p.seriesName) ?? ''
         const raw = p.value[1]
-        const disp = isByteUnit(u)
-          ? fmtByUnit(u, raw)
-          : isDurUnit(u)
-            ? fmtDurSec(raw)
-            : `${Number.isInteger(raw) ? raw : raw.toFixed(1)}${u ? ' ' + unitName(u) : ''}`
+        const disp =
+          u === 'bool'
+            ? // As the axis labels read it, not as the number it is stored as: a
+              // tooltip saying "1" beside an axis saying 正常 is two answers.
+              raw >= 0.5
+              ? t('chart.normal')
+              : t('chart.interrupted')
+            : isByteUnit(u)
+              ? fmtByUnit(u, raw)
+              : isDurUnit(u)
+                ? fmtDurSec(raw)
+                : `${Number.isInteger(raw) ? raw : raw.toFixed(1)}${u ? ' ' + unitName(u) : ''}`
         return `${p.marker}${escapeHtml(p.seriesName)}<span style="float:right;margin-left:20px;font-weight:600">${disp}</span>`
       })
       .join('<br/>')
-    return `${fmtTime(params[0].axisValue)}<br/>${rows}`
+    // From the UNMERGED list, so a band drawn as one stretch still explains each
+    // of the seconds inside it in its own terms.
+    const hit = bandAt(props.bands, params[0].axisValue)
+    const note = hit?.text ? `<br/><span style="opacity:0.85">${escapeHtml(hit.text)}</span>` : ''
+    return `${fmtTime(params[0].axisValue)}<br/>${rows}${note}`
   }
 
   // A single legend row overflows once there are many series (per-core CPU),
@@ -228,7 +298,7 @@ function renderLines(ms: ChartMetric[]) {
         borderWidth: 1,
         textStyle: { color: ct.tooltipText, fontSize: 12 },
         axisPointer: { lineStyle: { color: ct.pointer } },
-        ...(hasScaled ? { formatter: scaledTooltip as never } : {}),
+        ...(hasScaled || hasBands ? { formatter: axisTooltip as never } : {}),
       },
       // Title sits top-left; the legend is top-right for a few series, or wraps
       // into centered rows below the title when there are many (see above).
@@ -368,6 +438,10 @@ function renderTimeline(
                 data: restarts.map((t) => ({ xAxis: t })),
               }
             : undefined,
+          // The timeline shades the same stretches the line charts do. Without
+          // it a reader comparing a blank in the frame chart against this one
+          // would find the explanation on one and not the other.
+          ...(markAreaData().length ? { markArea: { silent: true, data: markAreaData() } } : {}),
         },
       ],
     },
@@ -407,16 +481,64 @@ function render() {
 
 function resize() {
   chart?.resize()
+  placeOverlay()
+}
+
+// ---- the shared time selection ----
+//
+// The same span the game charts above are highlighting, drawn here too, so a
+// reader dragging across a frame-rate dip sees the network side of the same
+// seconds. Inert on every other page that uses this component: without
+// `selectable` no drag is claimed, and with nothing selected the overlay never
+// leaves display:none.
+const selection = defineModel<TimeSelection>('selection', { default: null })
+
+const overlay = ref<HTMLDivElement>()
+
+useChartSelection({
+  el: () => el.value,
+  chart: () => chart,
+  selection,
+  enabled: () => props.selectable === true,
+})
+
+function placeOverlay() {
+  const box = overlay.value
+  if (!box) return
+  const sel = selection.value
+  if (!chart || !sel) {
+    box.style.display = 'none'
+    return
+  }
+  const a = pixelAtTime(chart, sel[0])
+  const b = pixelAtTime(chart, sel[1])
+  if (a === null || b === null) {
+    box.style.display = 'none'
+    return
+  }
+  const left = Math.max(aligned.value ? ALIGNED_GRID_LEFT : 58, Math.min(a, b))
+  const right = Math.min(chart.getWidth() - (aligned.value ? ALIGNED_GRID_RIGHT : 22), Math.max(a, b))
+  if (right <= left) {
+    box.style.display = 'none'
+    return
+  }
+  box.style.display = 'block'
+  box.style.left = `${left}px`
+  box.style.width = `${right - left}px`
 }
 
 onMounted(() => {
   chart = echarts.init(el.value!, undefined, { renderer: 'canvas' })
   render()
+  placeOverlay()
   // Dashboard panels can change width without a window resize (for example when
   // the host-status panel appears after the initial data request). Observe the
   // actual chart container so ECharts never keeps its old full-width canvas and
   // gets clipped by the new grid column.
-  resizeObserver = new ResizeObserver(() => chart?.resize())
+  resizeObserver = new ResizeObserver(() => {
+    chart?.resize()
+    placeOverlay()
+  })
   resizeObserver.observe(el.value!)
   window.addEventListener('resize', resize)
 })
@@ -426,24 +548,57 @@ onBeforeUnmount(() => {
   resizeObserver?.disconnect()
   resizeObserver = null
   chart?.dispose()
+  chart = null
 })
 
 // `locale` re-renders axis labels/legends/tooltips on language switch; `theme`
 // re-renders the chart chrome palette on light/dark switch.
 watch(
-  () => [props.metrics, props.rangeSec, props.xMin, props.xMax, locale.value, theme.value],
-  render,
+  () => [props.metrics, props.rangeSec, props.xMin, props.xMax, props.bands, locale.value, theme.value],
+  () => {
+    render()
+    placeOverlay()
+  },
   { deep: true },
 )
+
+// Its OWN watcher, shallow, and deliberately not in the list above: that one is
+// deep and re-runs setOption(opt, true), so a selection in it would rebuild every
+// chart on the page on every pointer event of a drag.
+watch(selection, placeOverlay)
 </script>
 
 <template>
-  <div ref="el" class="chart" :style="{ height: chartHeight }"></div>
+  <div class="chart-wrap">
+    <!-- The crosshair is the standing hint that a drag selects a span, so it is
+         shown only where one actually does. -->
+    <div ref="el" class="chart" :class="{ selectable }" :style="{ height: chartHeight }"></div>
+    <div ref="overlay" class="selection" aria-hidden="true"></div>
+  </div>
 </template>
 
 <style scoped>
+.chart-wrap {
+  position: relative;
+}
 .chart {
   width: 100%;
   height: 280px;
+}
+.chart.selectable {
+  cursor: crosshair;
+}
+.selection {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  display: none;
+  pointer-events: none;
+  /* The interaction accent rather than a colour of its own: this marks what the
+     reader picked, and it must not be mistaken for one of the shaded bands
+     underneath, which describe what the game did. */
+  background: color-mix(in oklab, var(--color-accent) 14%, transparent);
+  border-left: 1px solid color-mix(in oklab, var(--color-accent) 55%, transparent);
+  border-right: 1px solid color-mix(in oklab, var(--color-accent) 55%, transparent);
 }
 </style>

@@ -1866,6 +1866,10 @@ export default {
     deleteIrreversible: 'This cannot be undone.',
     deleteWhileRunning:
       'A run in progress cannot be deleted. The agent is still uploading this session, so the server would write the run back within seconds — holding only what was recorded after the deletion. It becomes deletable once the game exits and the run ends.',
+    autoRefreshOn: 'Auto-refresh: on',
+    autoRefreshOff: 'Auto-refresh: off',
+    autoRefreshHint:
+      'Re-reads this run every 5 seconds. Off by default: a refresh re-reads the whole session, and on a live run it advances the right edge of every chart. Worth turning on for a finished run too — the agent uploads on its own schedule, so the last seconds often arrive after the run has ended.',
     backToList: 'Back to runs',
     notFound: 'Run not found',
     notFoundHint: 'It may have been deleted, or aged out of retention.',
@@ -1935,9 +1939,7 @@ export default {
       cpu_split: 'CPU frame breakdown',
       gpu_split: 'GPU frame breakdown',
       latency: 'Display latency estimate',
-      gpu_tel: 'Whole-GPU telemetry',
       proc_vram: 'Process video memory',
-      busiest_core: 'Busiest logical core',
     },
     capDesc: {
       displayed: 'Follows each frame through to the screen, so displayed and dropped counts and the real on-screen rhythm are known.',
@@ -1950,9 +1952,7 @@ export default {
       cpu_split: 'Splits every frame’s CPU time into the work the game did and the time it spent waiting. A frame interval says the second was slow; the split says which side held it up.',
       gpu_split: 'Per-frame GPU queueing, active and idle time, plus the presentation path around Present. Taken from the frame events and scoped to this game process, not to the whole card.',
       latency: 'Per-frame estimate of frame start → on screen, plus how far the game’s own pacing drifted from the display’s. An estimate rather than a measured end-to-end input latency, and its accuracy depends on the presentation mode.',
-      gpu_tel: 'Polls the whole adapter’s utilization and memory once a second. The card, not this process — a card at 100% while this game’s own GPU time stays low is something else taking it. Requires the agent’s game.gpu.read permission.',
       proc_vram: 'Reads the game process’s own dedicated video memory, and the budget the OS grants it, once a second. Kept apart from the whole-card figure because a full card says nothing about who filled it. Requires the agent’s game.gpu.read permission.',
-      busiest_core: 'Reads per-core utilization once a second and reports the busiest one. A single-threaded game pins one core while the machine-wide average stays comfortable, and the average is what hides it.',
     },
     source: {
       presentmon_service: 'Intel PresentMon service',
@@ -2038,12 +2038,77 @@ export default {
     latencyChart: 'Display latency estimate and animation error (one point per second)',
     latencyCaption:
       'Display latency is an estimate, not a measured end-to-end input latency, and how good an estimate depends on the presentation mode above — an independent flip is measured far more tightly than a composed copy. Animation error is the gap between the game’s own pacing and what the screen showed (absolute value): it is what to read when the frame rate looks fine but the motion does not.',
+    // Figures for a span the reader dragged out. The three FPS figures come from
+    // summing the selected seconds' histograms, never from averaging their
+    // per-second statistics — which is why there is no mean frame time or p95
+    // here, and why the slowest single frame IS offered: a maximum combines
+    // across seconds and an order statistic does not.
+    selection: {
+      hint: 'Drag sideways across any chart to select a stretch of time. Every chart highlights the same seconds, and the figures for them appear here. Click a chart, or press Escape, to clear.',
+      title: 'Selected stretch',
+      titleAll: 'Whole session',
+      spanHint: 'How long the stretch these figures cover is. With nothing selected that is the whole session, including any time the game spent presenting nothing.',
+      clear: 'Clear',
+      span: 'Selected',
+      frameSeconds: 'Seconds with frames',
+      frameSecondsFoot: 'Out of {span}s selected. The difference is time the game presented nothing.',
+      worstFrame: 'Slowest frame',
+      worstFrameFoot: 'The slowest single frame in the stretch. A maximum is the one order statistic that combines across seconds, which is why no percentile is offered beside it — those come from the frame distribution, and the FPS figures above are how it is read.',
+      stutterExcess: '{ms} ms lost to hitches',
+      stutterExcessUnknown: 'No second in this stretch was watched for hitches.',
+      hostCpuMean: 'Machine CPU, mean',
+      hostCpuMeanFoot: 'A share of the whole machine, averaged over the selected seconds. Averaging is valid here and not for the frame-time percentiles above: a percentage is a rate over intervals of equal length, while a percentile is an order statistic over a population that cannot be recombined from summaries.',
+      hostCpuPeak: 'Busiest core, peak',
+      hostGpuPeak: 'GPU utilization, peak',
+      hostMemPeak: 'Machine memory, peak',
+      cpuClockMin: 'CPU clock, lowest',
+      gpuClockMin: 'GPU core clock, lowest',
+      gpuMemClockMin: 'Video memory clock, lowest',
+      clockMinFoot: 'The lowest clock seen in this stretch, not the average or the peak. A peak says the hardware was capable of it, which is not the question when the frame rate has just dropped — a clock that fell here is the answer.',
+      hostNotRecorded: 'No machine-level reading was recorded for these seconds.',
+      noFrames: 'No second in this stretch carried frames.',
+      tooFewFrames: 'This stretch holds too few frames for the figure to mean anything. A 1% low over a couple of hundred frames is one slow frame, not a statistic.',
+      layoutUnknown: 'A second in this stretch used a frame-time histogram layout this console does not recognise, so the FPS figures are not computed — a distribution missing an unknown share of its frames is not this stretch’s.',
+      gapBackground: 'Not in front',
+      gapNoFrames: 'In front, no frames',
+      empty: 'This stretch covers no loaded seconds of the run. It may be outside the run, or past the six hours this page loaded.',
+    },
+    // The stretches the game presented nothing in, shaded on every chart. Two
+    // reasons rather than one because the conclusions are opposite: nobody was
+    // playing, versus the player sat there waiting.
+    gapLegend:
+      'Shaded stretches are seconds this game presented no frames at all — {kinds}. They are shaded on every chart on this page, so a blank in the frame lines and a blank in the network lines can be told apart from data that is simply missing.',
+    gapLegendBackground: 'grey for time the game was not in front (alt-tabbed or minimised)',
+    gapLegendNoFrames: 'blue for time it was in front and still drew nothing (loading, shader compilation, a paused menu)',
+    gapLegendUnknown: 'unlabelled for a reason this console does not recognise',
+    gapBackgroundTip: 'Not in front for {seconds}s — alt-tabbed or minimised. Nobody was playing; the figures either side of this are not describing a stall.',
+    gapNoFramesTip: 'In front and drawing nothing for {seconds}s — loading, compiling shaders, or sitting in a menu. The player was waiting.',
+    gapUnknownTip: 'No frames for {seconds}s, for a reason this console does not recognise. The agent may be newer than this console.',
+    // The machine underneath the run. These come from a stream keyed by the agent
+    // and the second rather than by this run, which is why they get their own
+    // section heading and their own "why is this missing" sentence.
+    hostTitle: 'The machine',
+    hostHint:
+      'What the whole machine was doing, second by second, over the same window. Recorded independently of any game, so it covers the seconds this run has no frame data for — a minimised game, a loading screen — which is where the charts above go blank and this is the only thing left to read.',
+    hostCpuChart: 'Machine CPU (one point per second)',
+    hostCpuCaption:
+      'The whole machine, not this game process. Both lines are drawn because either alone misleads: a single-threaded game pins one core at 100% while a sixteen-thread machine reads 6% busy, so the average says the box is idle while the game is starved and the busiest core says it is saturated while fifteen cores sit free. The gap between the lines is the finding. The axis is pinned to 0–100.',
+    hostMemChart: 'Machine memory (one point per second)',
+    hostMemCaption:
+      'Physical memory in use across the whole machine, against what is installed. The capacity line is what makes the other readable — 12 GB in use means opposite things on a 16 GB and a 32 GB machine.',
     gpuUtilChart: 'GPU utilization, whole card (one point per second)',
     gpuUtilCaption:
       'The whole adapter, not this game process. A card near 100% while the process’s own GPU time above stays low is something else on the machine taking it. The axis is pinned to 0–100.',
     gpuMemChart: 'Video memory, whole card (one point per second)',
     gpuMemCaption:
-      'Dedicated memory used and total on the whole card — not what this game is holding, which is the next chart.',
+      'Dedicated memory used and total on the whole card — not what this game is holding, which is charted with the run above.',
+    hostTruncated:
+      'This run is long enough that only the first 24 hours of machine readings were loaded, so the curves below stop partway across the axis. That is the request limit, not a machine that went quiet.',
+    clockChart: 'Clocks (one point per second)',
+    clockCaption:
+      'All three on one axis because the reading is the comparison between them: a frame rate that fell while the GPU core clock fell with it is a card that ran out of headroom, and one that fell while every clock held is something else. The CPU’s nominal maximum is drawn flat for reference — a current clock above it is boost working, not an error. The GPU clocks need the game.gpu.read permission; the CPU clock does not.',
+    hostUnavailable:
+      'No machine-level readings were recorded over this window. They are not part of a run, so the capture source above says nothing about them: either the agent is too old to send them, or the seconds have aged out of the retention window.',
     procVramChart: 'Game process video memory (one point per second)',
     procVramCaption:
       'The dedicated video memory this game process holds. The budget is what the OS allows this process, and it explains memory pressure better than the card’s nominal capacity: as used approaches it, paging starts costing frames.',
@@ -2058,9 +2123,6 @@ export default {
       'This run recorded no {series}, so there are no charts for them — rather than lines sitting flat at 0. The run itself was captured at the Diagnostic depth and the other diagnostic charts are above: what is missing all comes from the graphics card, and needs the game.gpu.read permission granted and effective on this agent — or the machine may publish no GPU telemetry at all. Changing the capture depth will not help; check that permission on this agent instead.',
     diagUnavailablePartial:
       'This run recorded no {series}, so there are no charts for them — rather than lines sitting flat at 0. This run was captured at the Diagnostic depth and the other diagnostic charts are above, so the depth is not the problem: these particular sources did not come up on this machine. The GPU figures among them need the game.gpu.read permission granted and effective on this agent; the rest depend on whether the machine offers the reading at all. Changing the capture depth will not help.',
-    busiestCoreChart: 'Busiest logical core (one point per second)',
-    busiestCoreCaption:
-      'The busiest of all logical cores. A single thread pinning one core leaves the machine-wide average looking comfortable; this line is what that average hides. The axis is pinned to 0–100.',
 
     seriesPresented: 'Presented',
     seriesDisplayed: 'Displayed',
@@ -2091,7 +2153,14 @@ export default {
     seriesGpuMemSize: 'Whole-GPU memory capacity',
     seriesProcVramUsed: 'Process video memory used',
     seriesProcVramBudget: 'Process video memory budget',
-    seriesBusiestCore: 'Busiest logical core',
+    seriesHostCpuTotal: 'All cores',
+    seriesHostCpuBusiest: 'Busiest core',
+    seriesHostMemUsed: 'In use',
+    seriesHostMemTotal: 'Installed',
+    seriesCpuClock: 'CPU',
+    seriesCpuClockMax: 'CPU nominal max',
+    seriesGpuClock: 'GPU core',
+    seriesGpuMemClock: 'Video memory',
     seriesNotRecorded:
       'The source declares {series} but no second of this run carried it, so the line is absent from the chart rather than sitting flat at 0.',
     seriesNotRecordedSegment:

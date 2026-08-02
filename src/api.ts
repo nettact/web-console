@@ -1407,17 +1407,22 @@ export const CAP_STUTTER = 'stutter'
 export const CAP_PROC_CPU = 'proc_cpu'
 export const CAP_PROC_MEM = 'proc_mem'
 // The diagnostic capabilities, declared only by a run captured under a 'diag'
-// profile. They are six rather than one because they come from four different
-// acquisition paths — frame events, adapter telemetry, a per-process video
-// memory query and a per-core counter read — and a machine can support any
-// subset. Collapsing them would make one unavailable driver hide five readings
-// that were there.
+// profile. They are four rather than one because they come from two different
+// acquisition paths — frame events and a per-process video memory query — and a
+// machine can support one and not the other. Collapsing them would make one
+// unavailable driver hide three readings that were there.
+//
+// There is deliberately no capability for the machine-level readings. Those are
+// not a property of a run: they are keyed by (agent, second), collected for
+// seconds no run covers, and one second of them is read by every run that
+// overlaps it. Whether to chart them is answered by looking for a non-null
+// reading in the window — which is a stronger answer than a capability anyway,
+// since a capability says the sensor meant to collect something and a value says
+// it did.
 export const CAP_CPU_SPLIT = 'cpu_split'
 export const CAP_GPU_SPLIT = 'gpu_split'
 export const CAP_LATENCY = 'latency'
-export const CAP_GPU_TEL = 'gpu_tel'
 export const CAP_PROC_VRAM = 'proc_vram'
-export const CAP_BUSIEST_CORE = 'busiest_core'
 
 // Whole-run figures, derived server-side by summing the run's frame-time
 // histograms. The FPS figures are null when the run held too few frames for them
@@ -1543,8 +1548,8 @@ export interface GameProcRes {
 // The frame-derived blocks (cpu_split, gpu_split, lat) are milliseconds and are
 // within-second statistics over the same frames `ft` describes: a p95 here
 // belongs to this second and averaging a run's p95s does not produce the run's.
-// gpu_tel and proc_vram are the other kind — single readings taken once at the
-// second boundary.
+// proc_vram is the other kind — a single reading taken once at the second
+// boundary.
 
 // Each frame's CPU time split into the work the game did and the time it spent
 // waiting. The frame interval says a second was slow; this says which side was
@@ -1558,7 +1563,8 @@ export interface GameCPUSplit {
 // The frame's GPU side, from the queue in front of it to the present that ends
 // it. Scoped to the tracked PROCESS — these come from the frame events, not from
 // adapter telemetry — so `busy_avg` here is this game's work, not the card's
-// total load. GameGPUTel is the other half of that comparison.
+// total load. GameGPUTel on the machine stream is the other half of that
+// comparison.
 export interface GameGPUSplit {
   latency_avg: number // frame start → GPU work start
   time_avg: number // GPU total duration per frame
@@ -1580,22 +1586,8 @@ export interface GameLatency {
   anim_err_avg: number // |animation error|; the source is signed, the absolute value is recorded
   anim_err_p95: number
 }
-// Whole-GPU telemetry polled once a second. Deliberately the ADAPTER's figures
-// and not the tracked process's: a card at 100% while this game's own gpu_split
-// shows it idling is something else on the machine taking the card — a
-// conclusion neither number reaches alone. Every label for these must say
-// whole-GPU, or the reader attributes the card's load to the game.
-//
-// The inner fields are independently nullable, breaking the group-atomic rule
-// above, because which telemetry a driver publishes varies by vendor and by
-// metric. A card reporting utilization but not memory is an ordinary card.
-export interface GameGPUTel {
-  util_pct?: number | null // whole-GPU utilization 0-100 (NOT this process)
-  mem_used?: number | null // whole-GPU dedicated memory used, bytes
-  mem_size?: number | null // dedicated memory capacity, bytes
-}
-// The game process's own dedicated video memory, in bytes. It answers what
-// gpu_tel.mem_used cannot: a full card says nothing about whether this game is
+// The game process's own dedicated video memory, in bytes. It answers what the
+// whole-card figure cannot: a full card says nothing about whether this game is
 // the one filling it. `budget` is optional because the OS does not always expose
 // a per-process budget, and `used` without it is still the measurement.
 export interface GameProcVRAM {
@@ -1616,14 +1608,111 @@ export interface GameBucket {
   cpu_split?: GameCPUSplit | null
   gpu_split?: GameGPUSplit | null
   lat?: GameLatency | null
-  gpu_tel?: GameGPUTel | null
   proc_vram?: GameProcVRAM | null
-  // The busiest logical core, % 0-100. It stands apart from proc_res because it
-  // describes the MACHINE, not the process: a single-threaded game pins one core
-  // while proc_res.cpu_pct — a share of all cores — reads low, and that gap is
-  // the finding.
-  busiest_core_pct?: number | null
   quality?: string[]
+}
+
+// ---- the machine underneath the run ----
+
+// Whole-GPU telemetry polled once a second. Deliberately the ADAPTER's figures
+// and not any process's: a card at 100% while a game's own gpu_split shows it
+// idling is something else on the machine taking the card — a conclusion neither
+// number reaches alone. Every label for these must say whole-GPU, or the reader
+// attributes the card's load to the game.
+//
+// The inner fields are independently nullable, because which telemetry a driver
+// publishes varies by vendor and by metric. A card reporting utilization but not
+// memory is an ordinary card.
+export interface GameGPUTel {
+  util_pct?: number | null // whole-GPU utilization 0-100 (NOT this process)
+  mem_used?: number | null // whole-GPU dedicated memory used, bytes
+  mem_size?: number | null // dedicated memory capacity, bytes
+  // The card's two clocks, MHz. Two of them because they throttle for different
+  // reasons and independently: the core drops on power and thermal limits while
+  // memory holds through most of that. A frame rate that fell alongside the core
+  // clock is a card that ran out of headroom; one that fell while both clocks
+  // held is not.
+  core_mhz?: number | null
+  mem_mhz?: number | null
+}
+// The processor's clock, MHz. Both figures or neither: one call returns them.
+//
+// `current_mhz` is the HIGHEST clock any logical core is at rather than a mean —
+// processors boost a few cores well past the all-core clock and the game's own
+// thread is often one of them, so an average reports a processor coasting while
+// the thread that matters is at its ceiling. `max_mhz` is the nominal maximum,
+// which is what makes the other readable; a current figure ABOVE it is boost
+// working, not an error.
+export interface GameHostCPUClock {
+  current_mhz: number
+  max_mhz: number
+}
+// The machine's processor load. Both figures or neither: one counter read is
+// differenced into the two, so a machine that answered has both.
+//
+// They are charted together because either alone misleads. A single-threaded
+// game pins one core at 100% while a sixteen-thread machine reads 6% busy: the
+// total alone says the box is idle while the game is starved, and the busiest
+// alone says it is saturated while fifteen cores sit free. The GAP is the
+// finding, and a gap is only visible when both are drawn.
+export interface GameHostCPU {
+  total_pct: number // busy share of every logical core, 0-100
+  busiest_pct: number // busiest single logical core, 0-100
+}
+// The machine's physical memory. `total` travels every second because it is what
+// makes `used` readable: 12 GB in use means opposite things on a 16 GB and a
+// 32 GB machine.
+export interface GameHostMem {
+  used: number // bytes in use
+  total: number // bytes installed
+}
+// One second of MACHINE-level readings, keyed by the agent and the second rather
+// than by a run.
+//
+// A run detail reads the window its own [started_at, ended_at] covers, so two
+// runs overlapping a second read the same record — and a second no run covers is
+// still recorded. That is the point of the split: the seconds a game drew nothing
+// in, which produce no bucket at all, are exactly the ones where the machine's
+// side is the only thing there is to look at.
+//
+// Every block is independently null because their sources fail apart: a machine
+// whose driver publishes no adapter telemetry still reports its CPU.
+export interface GameHostSecond {
+  ts: string
+  cpu: GameHostCPU | null
+  // Separate from `cpu` because the two come from different calls that fail
+  // independently: one differences performance counters, the other reads power
+  // management.
+  cpu_clock: GameHostCPUClock | null
+  mem: GameHostMem | null
+  gpu: GameGPUTel | null
+  quality?: string[]
+}
+
+// ---- interruptions ----
+
+// Which of the two silences a frameless stretch was. The remedies are opposite,
+// which is why they are two codes and not one: 'background' is time nobody was
+// playing and the figures around it must not be read as a stall, while
+// 'no_frames' is the player sitting in front of the game waiting for it.
+//
+// The vocabulary is the sensor's and is open. A code this build does not know
+// must render as an unlabelled band rather than be dropped — the stretch
+// happened either way, and hiding it puts back the blank the record removes.
+export const GAP_BACKGROUND = 'background'
+export const GAP_NO_FRAMES = 'no_frames'
+
+// One stretch of a run that produced no frames.
+//
+// `ended_at` may fall AFTER the run's own end, and is served that way on purpose:
+// a run ends at its last frame, and a game left minimized for fifty minutes
+// afterwards is exactly what separates "stopped playing" from "walked away".
+export interface GameGap {
+  id: string
+  run_id: string
+  reason: string
+  started_at: string
+  ended_at: string
 }
 
 // ---- game profiles ----
@@ -1837,6 +1926,25 @@ export const api = {
     if (opts.limit) p.set('limit', String(opts.limit))
     const qs = p.toString()
     return req<GameBucket[]>('GET', `/api/v1/game-runs/${encodeURIComponent(id)}/buckets${qs ? '?' + qs : ''}`)
+  },
+  // One run's frameless stretches, unwindowed. There is one row per interruption
+  // rather than per second, so even an evening spent mostly alt-tabbed is a
+  // handful — and a stretch that begins before the charted segment or ends after
+  // it has to arrive whole, or a fifty-minute absence is reported as however much
+  // of it happened to be on screen.
+  gameRunGaps: (id: string) =>
+    req<GameGap[]>('GET', `/api/v1/game-runs/${encodeURIComponent(id)}/gaps`),
+  // The machine's own seconds over a window. Agent-scoped rather than run-scoped
+  // because the stream is: it is keyed by (agent, second), it exists for seconds
+  // no run covers, and two runs overlapping a second read the same rows. A run
+  // detail passes its own [started_at, ended_at].
+  hostSeconds: (agentID: string, opts: { since?: number; until?: number; limit?: number } = {}) => {
+    const p = new URLSearchParams()
+    if (opts.since) p.set('since', String(opts.since))
+    if (opts.until) p.set('until', String(opts.until))
+    if (opts.limit) p.set('limit', String(opts.limit))
+    const qs = p.toString()
+    return req<GameHostSecond[]>('GET', `/api/v1/agents/${encodeURIComponent(agentID)}/host-seconds${qs ? '?' + qs : ''}`)
   },
   deleteGameRun: (id: string) => req<unknown>('DELETE', `/api/v1/game-runs/${encodeURIComponent(id)}`),
   // Game profiles are site-scoped; editing one re-pushes the site's game config to

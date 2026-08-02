@@ -8,7 +8,7 @@
 // measure something reports nothing, and the whole-run FPS figures are declined
 // outright for a run too short to support them, so the cells go through GameValue
 // rather than defaulting to 0.
-import { computed, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRoute, RouterLink } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { api, type Agent, type GameProfile, type GameRun, type GameRunFilter } from '../api'
@@ -80,14 +80,18 @@ async function loadProfiles() {
   }
 }
 
-async function loadRuns() {
+// quiet is for the background refresh: it reloads the same list without
+// announcing itself. The visible loading state belongs to a request the reader
+// made — flipping the refresh button to "loading" once every five seconds says
+// the page is busy when it is only alive.
+async function loadRuns(opts: { quiet?: boolean } = {}) {
   const mine = ++seq
   if (!agentId.value) {
     runs.value = []
     total.value = 0
     return
   }
-  loading.value = true
+  if (!opts.quiet) loading.value = true
   try {
     const since = Math.floor(Date.now() / 1000) - rangeSec.value
     const page = await api.gameRuns(agentId.value, { since, limit: LIMIT, runs: filter.value })
@@ -97,10 +101,28 @@ async function loadRuns() {
     error.value = ''
     loaded.value = true
   } catch (e) {
-    if (mine === seq) error.value = String((e as Error).message || e)
+    // A background tick that fails leaves the list exactly as it was, with no
+    // banner. The next tick is five seconds away and will either succeed or not;
+    // a red alert appearing and vanishing on its own every five seconds tells a
+    // reader less than the stale-but-whole list already does. A refresh the
+    // reader ASKED for still reports, because they are waiting on an answer.
+    if (mine === seq && !opts.quiet) error.value = String((e as Error).message || e)
   } finally {
-    if (mine === seq) loading.value = false
+    if (mine === seq && !opts.quiet) loading.value = false
   }
+}
+
+// Every five seconds, the list catches up with what the agents have uploaded.
+//
+// Suppressed while anything else owns the list: a request already in flight (the
+// tick would race its own predecessor), a delete being carried out, and a delete
+// waiting to be confirmed — that dialog names a run, and the row it names should
+// not move or vanish underneath the question.
+const REFRESH_MS = 5000
+let timer: number | undefined
+function tick() {
+  if (loading.value || busy.value || pendingDelete.value) return
+  loadRuns({ quiet: true })
 }
 
 function onAgentChange() {
@@ -161,6 +183,10 @@ onMounted(async () => {
   // everything, and re-requesting the runs afterwards would flash the wrong set.
   await Promise.all([loadAgents(), loadProfiles()])
   await loadRuns()
+  timer = window.setInterval(tick, REFRESH_MS)
+})
+onBeforeUnmount(() => {
+  if (timer) window.clearInterval(timer)
 })
 </script>
 
@@ -180,8 +206,8 @@ onMounted(async () => {
         <select id="game-agent" v-model="agentId" @change="onAgentChange">
           <option v-for="a in agents" :key="a.id" :value="a.id">{{ agentLabel(a) }} ({{ a.platform }})</option>
         </select>
-        <RangePicker v-model="rangeSec" @change="loadRuns" />
-        <button class="btn" :disabled="loading" @click="loadRuns">
+        <RangePicker v-model="rangeSec" @change="loadRuns()" />
+        <button class="btn" :disabled="loading" @click="loadRuns()">
           {{ loading ? t('common.loading') : t('common.refresh') }}
         </button>
       </div>

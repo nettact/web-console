@@ -1,18 +1,18 @@
 import { describe, it, expect } from 'vitest'
 import {
-  CAP_BUSIEST_CORE,
   CAP_CPU_SPLIT,
   CAP_DISPLAYED,
   CAP_FRAME_TYPE,
   CAP_GPU_SPLIT,
-  CAP_GPU_TEL,
   CAP_LATENCY,
   CAP_PRESENT_META,
   CAP_PROC_CPU,
   CAP_PROC_MEM,
   CAP_PROC_VRAM,
   CAP_STUTTER,
+  GAP_BACKGROUND,
   type GameBucket,
+  type GameGap,
   type GameRun,
 } from '../api'
 import {
@@ -20,6 +20,7 @@ import {
   bucketsTruncated,
   chartFloor,
   diagAbsence,
+  gapMarkerTimes,
   DIAG_CAPS,
   isRunning,
   missingCause,
@@ -68,10 +69,11 @@ describe('missingCause', () => {
     expect(missingCause('procWs', [CAP_PROC_MEM])).toEqual({ kind: 'notRecorded' })
   })
 
-  // The diagnostic depth is six capabilities and not one, because they come from
-  // four different acquisition paths and a machine can support any subset. A run
-  // whose driver publishes no adapter telemetry still has its frame breakdown,
-  // and the blank where the GPU chart would be has to say which of the two it is.
+  // The diagnostic depth is four capabilities and not one, because they come from
+  // two different acquisition paths and a machine can support one and not the
+  // other. A run whose driver exposes no per-process video memory still has its
+  // frame breakdown, and the blank where the VRAM chart would be has to say
+  // which of the two it is.
   it('names the diagnostic capability behind each family', () => {
     const base = [CAP_DISPLAYED, CAP_STUTTER]
     expect(missingCause('cpuSplit', base)).toEqual({ kind: 'source', cap: CAP_CPU_SPLIT })
@@ -79,19 +81,15 @@ describe('missingCause', () => {
     expect(missingCause('presentChain', base)).toEqual({ kind: 'source', cap: CAP_GPU_SPLIT })
     expect(missingCause('displayLatency', base)).toEqual({ kind: 'source', cap: CAP_LATENCY })
     expect(missingCause('animError', base)).toEqual({ kind: 'source', cap: CAP_LATENCY })
-    expect(missingCause('gpuUtil', base)).toEqual({ kind: 'source', cap: CAP_GPU_TEL })
-    expect(missingCause('gpuMem', base)).toEqual({ kind: 'source', cap: CAP_GPU_TEL })
     expect(missingCause('procVram', base)).toEqual({ kind: 'source', cap: CAP_PROC_VRAM })
-    expect(missingCause('busiestCore', base)).toEqual({ kind: 'source', cap: CAP_BUSIEST_CORE })
   })
 
-  // The whole-card telemetry and the game's own video memory are different
+  // The GPU-side frame breakdown and the game's own video memory are different
   // readings from different queries, and conflating them is exactly the error
-  // the labels on those two charts exist to prevent.
-  it('does not let whole-GPU telemetry answer for the process figures', () => {
-    expect(missingCause('procVram', [CAP_GPU_TEL])).toEqual({ kind: 'source', cap: CAP_PROC_VRAM })
-    expect(missingCause('gpuUtil', [CAP_PROC_VRAM])).toEqual({ kind: 'source', cap: CAP_GPU_TEL })
-    expect(missingCause('busiestCore', [CAP_PROC_CPU])).toEqual({ kind: 'source', cap: CAP_BUSIEST_CORE })
+  // the labels on those charts exist to prevent.
+  it('does not let one GPU-sourced capability answer for the other', () => {
+    expect(missingCause('procVram', [CAP_GPU_SPLIT])).toEqual({ kind: 'source', cap: CAP_PROC_VRAM })
+    expect(missingCause('gpuSplit', [CAP_PROC_VRAM])).toEqual({ kind: 'source', cap: CAP_GPU_SPLIT })
   })
 
   // A declared diag capability whose seconds came back empty is a different
@@ -99,8 +97,7 @@ describe('missingCause', () => {
   // leaves behind mid-run, and it must not be reported as a missing sensor.
   it('separates a declared diagnostic capability from a missing one', () => {
     expect(missingCause('cpuSplit', [CAP_CPU_SPLIT])).toEqual({ kind: 'notRecorded' })
-    expect(missingCause('gpuUtil', [CAP_GPU_TEL])).toEqual({ kind: 'notRecorded' })
-    expect(missingCause('busiestCore', [CAP_BUSIEST_CORE])).toEqual({ kind: 'notRecorded' })
+    expect(missingCause('procVram', [CAP_PROC_VRAM])).toEqual({ kind: 'notRecorded' })
   })
 
   // A null 1% low says the run was too short to support the figure. Blaming a
@@ -135,7 +132,7 @@ describe('observes', () => {
   // CPU/GPU breakdown reads as a game that used no GPU time.
   it('draws no diagnostic chart for a run that declared none of it', () => {
     const base = [CAP_DISPLAYED, CAP_FRAME_TYPE, CAP_PRESENT_META, CAP_STUTTER, CAP_PROC_CPU, CAP_PROC_MEM]
-    for (const f of ['cpuSplit', 'gpuSplit', 'presentChain', 'displayLatency', 'gpuUtil', 'procVram', 'busiestCore'] as const) {
+    for (const f of ['cpuSplit', 'gpuSplit', 'presentChain', 'displayLatency', 'procVram'] as const) {
       expect(observes(f, base), f).toBe(false)
     }
   })
@@ -147,10 +144,7 @@ describe('observes', () => {
     expect(observes('cpuSplit', caps)).toBe(true)
     expect(observes('presentChain', caps)).toBe(true)
     expect(observes('displayLatency', caps)).toBe(true)
-    expect(observes('gpuUtil', caps)).toBe(false)
-    expect(observes('gpuMem', caps)).toBe(false)
     expect(observes('procVram', caps)).toBe(false)
-    expect(observes('busiestCore', caps)).toBe(false)
   })
 })
 
@@ -173,29 +167,20 @@ describe('diagAbsence', () => {
     expect(diagAbsence([])).toBe('tier')
   })
 
-  // The run WAS captured at the diagnostic depth and the GPU-sourced pair is
+  // The run WAS captured at the diagnostic depth and the GPU-sourced reading is
   // exactly what is missing — game.gpu.read not granted or not effective, or a
-  // machine that publishes no GPU telemetry. Re-selecting the tier fixes nothing.
-  it('blames the GPU permission when only the GPU-sourced pair is missing', () => {
-    expect(diagAbsence([...BASE, CAP_CPU_SPLIT, CAP_GPU_SPLIT, CAP_LATENCY, CAP_BUSIEST_CORE])).toBe('gpu')
-  })
-
-  // Either GPU capability alone counts: a source can publish adapter telemetry
-  // without being able to answer the per-process video memory query.
-  it('treats one absent GPU capability the same way', () => {
-    const caps = [...BASE, CAP_CPU_SPLIT, CAP_GPU_SPLIT, CAP_LATENCY, CAP_BUSIEST_CORE, CAP_GPU_TEL]
-    expect(diagAbsence(caps)).toBe('gpu')
-    expect(diagAbsence([...caps.filter((c) => c !== CAP_GPU_TEL), CAP_PROC_VRAM])).toBe('gpu')
+  // machine that exposes no per-process video memory. Re-selecting the tier fixes
+  // nothing.
+  it('blames the GPU permission when only the GPU-sourced reading is missing', () => {
+    expect(diagAbsence([...BASE, CAP_CPU_SPLIT, CAP_GPU_SPLIT, CAP_LATENCY])).toBe('gpu')
   })
 
   // A diagnostic run missing something that has nothing to do with the GPU: a
   // source that did not initialize. Still not a tier problem, so the notice must
   // not offer the tier as the fix.
   it('reports a partly-initialized diagnostic run without blaming the depth', () => {
-    expect(diagAbsence([...BASE, CAP_CPU_SPLIT, CAP_GPU_SPLIT, CAP_LATENCY, CAP_GPU_TEL, CAP_PROC_VRAM])).toBe(
-      'partial',
-    )
-    expect(diagAbsence([...BASE, CAP_CPU_SPLIT, CAP_BUSIEST_CORE])).toBe('partial')
+    expect(diagAbsence([...BASE, CAP_CPU_SPLIT, CAP_GPU_SPLIT, CAP_PROC_VRAM])).toBe('partial')
+    expect(diagAbsence([...BASE, CAP_CPU_SPLIT, CAP_PROC_VRAM])).toBe('partial')
   })
 
   // The boundary between 'tier' and the other two: a single diagnostic
@@ -445,5 +430,73 @@ describe('qualityFlags', () => {
   // stop halfway down the axis.
   it('surfaces a flag that only appears part-way through the run', () => {
     expect(qualityFlags([bucket(), bucket(), bucket({ quality: ['diag_degraded'] })])).toEqual(['diag_degraded'])
+  })
+})
+
+describe('gapMarkerTimes', () => {
+  const gap = (from: string, to: string, reason = GAP_BACKGROUND): GameGap => ({
+    id: `${from}-${to}`,
+    run_id: 'r1',
+    reason,
+    started_at: from,
+    ended_at: to,
+  })
+
+  // The defect these exist for: a band with no points under it cannot be
+  // hovered, because an axis tooltip is anchored to data and reports the nearest
+  // point's time — which for a pointer inside the band is a time outside it.
+  it('places a point on every second a gap covers', () => {
+    const ts = gapMarkerTimes([gap('2026-08-02T10:00:00Z', '2026-08-02T10:00:05Z')])
+    expect(ts.map((t) => new Date(t).toISOString())).toEqual([
+      '2026-08-02T10:00:01.000Z',
+      '2026-08-02T10:00:02.000Z',
+      '2026-08-02T10:00:03.000Z',
+      '2026-08-02T10:00:04.000Z',
+      '2026-08-02T10:00:05.000Z',
+    ])
+  })
+
+  // Half-open, matching what a band claims and what a bucket timestamp means:
+  // the instant the gap starts is the close of a second that HAD frames, and a
+  // placeholder there would put a null on top of a real measurement.
+  it('does not claim the instant the gap started', () => {
+    const ts = gapMarkerTimes([gap('2026-08-02T10:00:00Z', '2026-08-02T10:00:02Z')])
+    expect(ts[0]).toBe(Date.parse('2026-08-02T10:00:01Z'))
+  })
+
+  // Six hours minimized is twenty thousand points per line on fourteen charts,
+  // for a stretch whose answer is one sentence that does not vary second to
+  // second.
+  it('coarsens rather than growing without bound', () => {
+    const ts = gapMarkerTimes([gap('2026-08-02T10:00:00Z', '2026-08-02T16:00:00Z')], 100)
+    expect(ts.length).toBeLessThanOrEqual(101)
+    expect(ts.length).toBeGreaterThan(90)
+    // Still ON second boundaries — a placeholder between them would report a
+    // time no record could ever have.
+    for (const t of ts) expect(t % 1000).toBe(0)
+  })
+
+  // A short band must stay hoverable even when some other gap on the same run
+  // forced the step wide. A band nobody can interrogate is the original defect
+  // back again, and it does not matter that it is only back for one band.
+  it('gives even the shortest gap a point when the step is wide', () => {
+    const ts = gapMarkerTimes(
+      [gap('2026-08-02T10:00:00Z', '2026-08-02T16:00:00Z'), gap('2026-08-02T17:00:00Z', '2026-08-02T17:00:01Z')],
+      100,
+    )
+    expect(ts).toContain(Date.parse('2026-08-02T17:00:01Z'))
+  })
+
+  // Nothing to plot rather than something wrong: a reversed or unparseable
+  // interval is a record this build cannot read, and inventing points from it
+  // would put placeholder nulls across seconds that may hold real data.
+  it('ignores intervals it cannot read', () => {
+    expect(
+      gapMarkerTimes([
+        gap('2026-08-02T10:00:05Z', '2026-08-02T10:00:00Z'),
+        gap('not a time', '2026-08-02T10:00:00Z'),
+        gap('2026-08-02T10:00:00Z', '2026-08-02T10:00:00Z'),
+      ]),
+    ).toEqual([])
   })
 })

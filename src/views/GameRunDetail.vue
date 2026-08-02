@@ -9,7 +9,7 @@
 // 0 would invent an observation: a flawless run that dropped nothing, or a game
 // that stuttered to a standstill. So a missing value is a dash carrying its
 // reason, and a series the source can never fill is not plotted at all.
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter, RouterLink } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import {
@@ -22,7 +22,11 @@ import {
   CAP_PROC_CPU,
   CAP_PROC_MEM,
   CAP_STUTTER,
+  GAP_BACKGROUND,
+  GAP_NO_FRAMES,
   type GameBucket,
+  type GameGap,
+  type GameHostSecond,
   type GameRun,
 } from '../api'
 import ConfirmDialog from '../components/ConfirmDialog.vue'
@@ -32,6 +36,8 @@ import GameStatCards from '../components/game/GameStatCards.vue'
 import GameValue from '../components/game/GameValue.vue'
 import NetworkTimeline from '../components/game/NetworkTimeline.vue'
 import { useGameMeta } from '../composables/useGameMeta'
+import type { ChartBand } from '../lib/chartBands'
+import { covers as coversSelection, type TimeSelection } from '../composables/useChartSelection'
 import { useMetricMeta } from '../composables/useMetricMeta'
 import {
   bucketsAbsence,
@@ -39,21 +45,23 @@ import {
   chartFloor,
   diagAbsence,
   DIAG_CAPS,
+  gapMarkerTimes,
   isRunning,
   missingCause,
   observes,
   presentCause,
   qualityFlags,
+  selectionStats,
   seriesHasValue,
   stutterMarkState,
   stutterPerMinute,
   stutterSeconds,
   type GameCard,
-  type GameChartMark,
   type GameChartSeries,
   type GameField,
   type GamePoint,
 } from '../lib/gameRun'
+import { fmtByUnit } from '../lib/format'
 import { pushToast } from '../toasts'
 
 const { t } = useI18n()
@@ -80,11 +88,27 @@ const {
 // exactly the kind of quiet lie this feature exists to avoid.
 const BUCKET_LIMIT = 6 * 3600
 
+// A day of machine seconds — the server's own maximum for the endpoint.
+//
+// Higher than the bucket limit, and not by oversight. Machine seconds are
+// recorded for every second the sensor is watching anything, INCLUDING the ones
+// with no frames, so a run left minimised overnight holds far more of them than
+// it holds buckets. Sizing this to the bucket limit would clip exactly the runs
+// the machine data was added for: the chart window covers the whole run, and the
+// curves would stop partway across it with nothing on screen saying why.
+const HOST_LIMIT = 86400
+
 const SITE = 'site_default'
 
 const runId = computed(() => String(route.params.id || ''))
 const run = ref<GameRun | null>(null)
 const buckets = ref<GameBucket[]>([])
+// The machine's own seconds over this run's window, and the stretches in which
+// the game presented nothing. Neither is per-run data: the machine seconds are
+// keyed by (agent, second) and merely read here, and the gaps are the run's but
+// exist precisely where its buckets do not.
+const hostSeconds = ref<GameHostSecond[]>([])
+const gaps = ref<GameGap[]>([])
 // The run's profile, when it still exists — only for the monitors it links, which
 // decide what the network section charts. The name comes off the run itself, so a
 // deleted profile still labels the run correctly.
@@ -102,21 +126,69 @@ const reason = (field: GameField) => missingText(missingCause(field, caps.value)
 // without the token a late reply either restores the run the reader navigated away
 // from or pairs the run on screen with the other one's seconds.
 let seq = 0
+// Whether a load is out. The token above keeps a late reply from landing on the
+// wrong run, which is a different job: this one keeps the five-second tick from
+// stacking requests behind one slow read of a long session.
+let inFlight = false
 
-async function load() {
+// quiet is for the background refresh: it re-reads the same run without
+// announcing itself.
+//
+// The visible loading state replaces the WHOLE page with one line of text, which
+// is right for a reader who has just arrived and wrong every five seconds after
+// that — the charts they were reading would blink out and back on a timer. So a
+// quiet pass leaves the page standing and swaps the data underneath it.
+async function load(opts: { quiet?: boolean } = {}) {
   const mine = ++seq
   const id = runId.value
   if (!id) return
-  loading.value = true
-  notFound.value = false
-  error.value = ''
+  // A background tick defers to a read already out; a refresh the reader pressed
+  // does not. The token above makes the older reply harmless either way, and a
+  // button that silently does nothing because of a tick nobody can see is worse
+  // than one duplicate request.
+  if (opts.quiet && inFlight) return
+  inFlight = true
+  if (!opts.quiet) {
+    loading.value = true
+    notFound.value = false
+    error.value = ''
+  }
   try {
     const r = await api.gameRun(id)
     const b = await api.gameRunBuckets(id, { limit: BUCKET_LIMIT })
     if (mine !== seq) return
     run.value = r
     buckets.value = b
+    hostSeconds.value = []
+    gaps.value = []
     profileMonitorIds.value = []
+    // The machine's seconds and the run's silences are both supporting evidence:
+    // failing to read either leaves the frame charts intact rather than failing
+    // the page. An agent too old to send them is the ordinary case for both.
+    //
+    // Settled independently rather than awaited together, because they are read
+    // independently: the gaps shade every chart and the machine seconds draw
+    // four of their own, so one failing must not take the other down. Promise.all
+    // would discard a successful result alongside a rejected one — a gaps
+    // endpoint that 404s would blank the machine charts, which have nothing to do
+    // with it.
+    //
+    // The window is the run's own. `until` is exclusive server-side, so a live
+    // run asks up to now and a finished one one second past its end — otherwise
+    // the second the run ended in would be the one second of machine data the
+    // chart is missing.
+    const until = r.ended_at ? new Date(r.ended_at).getTime() : Date.now()
+    const [h, g] = await Promise.allSettled([
+      api.hostSeconds(r.agent_id, {
+        since: Math.floor(new Date(r.started_at).getTime() / 1000),
+        until: Math.floor(until / 1000) + 1,
+        limit: HOST_LIMIT,
+      }),
+      api.gameRunGaps(id),
+    ])
+    if (mine !== seq) return
+    if (h.status === 'fulfilled') hostSeconds.value = h.value
+    if (g.status === 'fulfilled') gaps.value = g.value
     // The profile's linked monitors are a nice-to-have for the network section:
     // failing to read them falls back to the agent's own monitors rather than
     // failing the page.
@@ -131,15 +203,25 @@ async function load() {
     }
   } catch (e) {
     if (mine !== seq) return
-    // A deleted run — and one belonging to another site — is a 404 from both
-    // calls. That is a missing page, not a failure to reach the server.
+    // A background tick that fails changes nothing on screen. Tearing the run
+    // down would replace a page the reader is using with an error raised by a
+    // request they never made, and five seconds later the next tick may well
+    // succeed — so the stale-but-whole page stands and says nothing.
+    //
+    // The one exception is a run that has gone: a 404 on a refresh means it was
+    // deleted from somewhere else, and continuing to show it is the one outcome
+    // worse than an interruption.
     if (e instanceof ApiError && e.status === 404) notFound.value = true
+    else if (opts.quiet) return
     else error.value = String((e as Error).message || e)
     run.value = null
     buckets.value = []
+    hostSeconds.value = []
+    gaps.value = []
     profileMonitorIds.value = []
   } finally {
-    if (mine === seq) loading.value = false
+    inFlight = false
+    if (mine === seq && !opts.quiet) loading.value = false
   }
 }
 
@@ -190,11 +272,11 @@ const summaryCards = computed<GameCard[]>(() => {
       // The duration beside it is measured to ended_at, and last_seen_at can sit
       // well before that when tracking stopped without closing a second — footing
       // the figure with the later moment would make the card contradict itself.
-      foot: r.ended_at ? t('gameRuns.durationFoot', { time: fmtTime(r.ended_at) }) : t('gameRuns.durationRunningFoot'),
+      hint: r.ended_at ? t('gameRuns.durationFoot', { time: fmtTime(r.ended_at) }) : t('gameRuns.durationRunningFoot'),
     },
-    { key: 'mean', label: t('gameRuns.meanFps'), value: fps(s.mean_fps), unit: 'FPS', reason: reason('fpsStat'), foot: t('gameRuns.meanFpsFoot') },
-    { key: 'low1', label: t('gameRuns.low1'), value: fps(s.low_1pct_fps), unit: 'FPS', reason: reason('fpsStat'), foot: t('gameRuns.low1Foot') },
-    { key: 'low01', label: t('gameRuns.low01'), value: fps(s.low_0_1pct_fps), unit: 'FPS', reason: reason('fpsStat'), foot: t('gameRuns.low01Foot') },
+    { key: 'mean', label: t('gameRuns.meanFps'), value: fps(s.mean_fps), unit: 'FPS', reason: reason('fpsStat'), hint: t('gameRuns.meanFpsFoot') },
+    { key: 'low1', label: t('gameRuns.low1'), value: fps(s.low_1pct_fps), unit: 'FPS', reason: reason('fpsStat'), hint: t('gameRuns.low1Foot') },
+    { key: 'low01', label: t('gameRuns.low01'), value: fps(s.low_0_1pct_fps), unit: 'FPS', reason: reason('fpsStat'), hint: t('gameRuns.low01Foot') },
   ]
 })
 
@@ -207,20 +289,20 @@ const frameCards = computed<GameCard[]>(() => {
   const dropRate =
     s.dropped === null || s.presented === 0 ? null : `${((s.dropped / s.presented) * 100).toFixed(2)}%`
   return [
-    { key: 'presented', label: t('gameRuns.presented'), value: fmtCount(s.presented), foot: t('gameRuns.presentedFoot') },
+    { key: 'presented', label: t('gameRuns.presented'), value: fmtCount(s.presented), hint: t('gameRuns.presentedFoot') },
     {
       key: 'displayed',
       label: t('gameRuns.displayed'),
       value: s.displayed === null ? null : fmtCount(s.displayed),
       reason: reason('displayed'),
-      foot: t('gameRuns.displayedFoot'),
+      hint: t('gameRuns.displayedFoot'),
     },
     {
       key: 'dropped',
       label: t('gameRuns.dropped'),
       value: s.dropped === null ? null : fmtCount(s.dropped),
       reason: reason('dropped'),
-      foot: dropRate === null ? t('gameRuns.droppedFoot') : t('gameRuns.droppedRateFoot', { rate: dropRate }),
+      hint: dropRate === null ? t('gameRuns.droppedFoot') : t('gameRuns.droppedRateFoot', { rate: dropRate }),
     },
   ]
 })
@@ -241,7 +323,7 @@ const stutterCards = computed<GameCard[]>(() => {
       label: t('gameRuns.stutterCount'),
       value: r.stutter_count === null ? null : fmtCount(r.stutter_count),
       reason: why,
-      foot: t('gameRuns.stutterCountFoot'),
+      hint: t('gameRuns.stutterCountFoot'),
     },
     {
       key: 'stutterExcess',
@@ -251,7 +333,7 @@ const stutterCards = computed<GameCard[]>(() => {
       value: r.stutter_excess_ms === null ? null : fmtCount(Math.round(r.stutter_excess_ms)),
       unit: 'ms',
       reason: why,
-      foot: t('gameRuns.stutterExcessFoot'),
+      hint: t('gameRuns.stutterExcessFoot'),
     },
     {
       key: 'stutterRate',
@@ -261,7 +343,7 @@ const stutterCards = computed<GameCard[]>(() => {
       // A count that exists but has no rate is a run with no measured duration,
       // which the capability tooltip would misdescribe as an absent detector.
       reason: r.stutter_count === null ? why : t('gameRuns.stutterRateNoDuration'),
-      foot: t('gameRuns.stutterRateFoot'),
+      hint: t('gameRuns.stutterRateFoot'),
     },
   ]
 })
@@ -338,8 +420,38 @@ const bucketsNote = computed(() => (run.value ? bucketsAbsenceText(bucketsAbsenc
 
 // ---- charts ----
 const at = (b: GameBucket) => new Date(b.ts).getTime()
+
+// The x positions every bucket-derived chart plots against: one row per second
+// there is a bucket for, plus a valueless row for the seconds a gap covers.
+//
+// The gap rows are what make a shaded band hoverable. An axis tooltip is
+// anchored to data, so without them the pointer inside a band snapped out to the
+// band's edge and the sentence explaining the band — looked up by time — never
+// appeared; see gapMarkerTimes. They carry no value because there is none: those
+// seconds happened and were not measured, which is the same thing the gap record
+// says and the same null every other unmeasured figure on this page uses.
+//
+// Built once and shared by every series rather than merged per series: the sort
+// is the expensive part and the answer does not differ between them.
+//
+// Host-derived charts do NOT use this. Machine telemetry is collected right
+// through a gap by design, so those seconds already have rows, and inventing
+// empty ones beside them would assert a hole that is not there.
+const chartRows = computed<{ ts: number; b: GameBucket | null }[]>(() => {
+  const rows: { ts: number; b: GameBucket | null }[] = buckets.value.map((b) => ({ ts: at(b), b }))
+  const taken = new Set(rows.map((r) => r.ts))
+  for (const ts of gapMarkerTimes(gaps.value)) {
+    // A gap second has no bucket by definition, so this only ever fires after a
+    // clock step has made two records claim one instant. The bucket wins: it has
+    // something to say.
+    if (!taken.has(ts)) rows.push({ ts, b: null })
+  }
+  rows.sort((x, y) => x.ts - y.ts)
+  return rows
+})
+
 const points = (pick: (b: GameBucket) => number | null | undefined): GamePoint[] =>
-  buckets.value.map((b) => [at(b), pick(b) ?? null])
+  chartRows.value.map((r) => [r.ts, r.b ? (pick(r.b) ?? null) : null])
 
 // A bucket is one closed second, so a frame count IS a rate — no division, and no
 // invented denominator for a partial second.
@@ -377,9 +489,10 @@ const fpsCaption = computed(() => {
 // THAT chart because a stutter is a long frame: the band and the P99 spike under
 // it are the same event, and seeing them together is what tells a reader whether
 // a tall p99 was one bad frame or a second of them.
-const stutterMarks = computed<GameChartMark[]>(() => {
+const stutterMarks = computed<ChartBand[]>(() => {
   if (!observes('stutter', caps.value)) return []
   return stutterSeconds(buckets.value).map((s) => ({
+    kind: 'stutter' as const,
     from: s.from,
     to: s.to,
     // A continuation second carries cost but no event of its own — the freeze
@@ -390,6 +503,51 @@ const stutterMarks = computed<GameChartMark[]>(() => {
         ? t('gameRuns.stutterMarkTip', { count: s.count, ms: Math.round(s.excessMs) })
         : t('gameRuns.stutterMarkTipCont', { ms: Math.round(s.excessMs) }),
   }))
+})
+
+// The stretches the game presented nothing in, shaded on EVERY chart rather
+// than on one.
+//
+// That is the whole point of them. A blank stretch appears identically on the
+// frame charts, the machine charts and the network timeline, and a reader
+// looking at any one of them has to be able to tell "the game was minimized"
+// from "the data is missing". Shading it in one place would answer the question
+// only for whoever happened to be looking at that chart.
+//
+// A reason this build does not recognize is still drawn, unlabelled. The stretch
+// happened either way, and hiding it puts back the blank the record removes.
+const gapBands = computed<ChartBand[]>(() =>
+  gaps.value.map((g) => {
+    const from = new Date(g.started_at).getTime()
+    const to = new Date(g.ended_at).getTime()
+    const seconds = Math.max(1, Math.round((to - from) / 1000))
+    if (g.reason === GAP_BACKGROUND) {
+      return { kind: 'gapBackground' as const, from, to, text: t('gameRuns.gapBackgroundTip', { seconds }) }
+    }
+    if (g.reason === GAP_NO_FRAMES) {
+      return { kind: 'gapNoFrames' as const, from, to, text: t('gameRuns.gapNoFramesTip', { seconds }) }
+    }
+    return { kind: 'gapUnknown' as const, from, to, text: t('gameRuns.gapUnknownTip', { seconds }) }
+  }),
+)
+
+// Every chart shades the gaps; the frame-time chart additionally shades the
+// seconds that hitched, because a stutter IS a long frame and the band and the
+// P99 spike under it are the same event.
+const allBands = computed<ChartBand[]>(() => gapBands.value)
+const frameTimeBands = computed<ChartBand[]>(() => [...gapBands.value, ...stutterMarks.value])
+
+// What the shading means, said once above the charts rather than repeated in
+// every caption. Only the kinds actually present are explained: a legend
+// entry for a band that is not on screen sends a reader hunting for it.
+const gapLegend = computed(() => {
+  const kinds = new Set(gapBands.value.map((b) => b.kind))
+  const parts: string[] = []
+  if (kinds.has('gapBackground')) parts.push(t('gameRuns.gapLegendBackground'))
+  if (kinds.has('gapNoFrames')) parts.push(t('gameRuns.gapLegendNoFrames'))
+  if (kinds.has('gapUnknown')) parts.push(t('gameRuns.gapLegendUnknown'))
+  if (!parts.length) return ''
+  return t('gameRuns.gapLegend', { kinds: parts.join(t('gameRuns.listSep')) })
 })
 
 // An unshaded chart has several meanings and only one of them is "the run was
@@ -506,16 +664,6 @@ const latencySeries = computed<GameChartSeries[]>(() => [
   { key: 'animAvg', label: t('gameRuns.seriesAnimErrAvg'), color: '#a78bfa', data: points((b) => b.lat?.anim_err_avg) },
   { key: 'animP95', label: t('gameRuns.seriesAnimErrP95'), color: '#f472b6', data: points((b) => b.lat?.anim_err_p95) },
 ])
-// Whole-adapter telemetry. Every label on these two charts says so, because the
-// figure the reader will otherwise take away is "the game used 98% of the GPU" —
-// a claim this reading cannot make about any single process.
-const gpuUtilSeries = computed<GameChartSeries[]>(() => [
-  { key: 'util', label: t('gameRuns.seriesGpuUtil'), color: '#34d399', data: points((b) => b.gpu_tel?.util_pct) },
-])
-const gpuMemSeries = computed<GameChartSeries[]>(() => [
-  { key: 'used', label: t('gameRuns.seriesGpuMemUsed'), color: '#38bdf8', data: points((b) => b.gpu_tel?.mem_used) },
-  { key: 'size', label: t('gameRuns.seriesGpuMemSize'), color: '#94a3b8', data: points((b) => b.gpu_tel?.mem_size) },
-])
 // The game's own dedicated video memory against the budget the OS grants it.
 // Budget is optional even on a source that reports usage, so the caption names
 // it when it is missing rather than leaving a legend entry with no line.
@@ -523,18 +671,13 @@ const procVramSeries = computed<GameChartSeries[]>(() => [
   { key: 'used', label: t('gameRuns.seriesProcVramUsed'), color: '#38bdf8', data: points((b) => b.proc_vram?.used) },
   { key: 'budget', label: t('gameRuns.seriesProcVramBudget'), color: '#94a3b8', data: points((b) => b.proc_vram?.budget) },
 ])
-const busiestCoreSeries = computed<GameChartSeries[]>(() => [
-  { key: 'busiest', label: t('gameRuns.seriesBusiestCore'), color: '#f472b6', data: points((b) => b.busiest_core_pct) },
-])
 
 const showCpuSplit = computed(() => observes('cpuSplit', caps.value))
 // The presentation chain travels in the GPU breakdown block, so one capability
 // decides both charts.
 const showGpuSplit = computed(() => observes('gpuSplit', caps.value))
 const showLatency = computed(() => observes('displayLatency', caps.value))
-const showGpuTel = computed(() => observes('gpuUtil', caps.value))
 const showProcVram = computed(() => observes('procVram', caps.value))
-const showBusiestCore = computed(() => observes('busiestCore', caps.value))
 
 const cpuSplitCaption = computed(() => chartCaption(cpuSplitSeries.value, t('gameRuns.cpuSplitCaption')))
 const gpuSplitCaption = computed(() => chartCaption(gpuSplitSeries.value, t('gameRuns.gpuSplitCaption')))
@@ -542,12 +685,102 @@ const presentChainCaption = computed(() =>
   chartCaption(presentChainSeries.value, t('gameRuns.presentChainCaption')),
 )
 const latencyCaption = computed(() => chartCaption(latencySeries.value, t('gameRuns.latencyCaption')))
+const procVramCaption = computed(() => chartCaption(procVramSeries.value, t('gameRuns.procVramCaption')))
+
+// ---- the machine underneath the run ----
+//
+// These come from a different stream and are drawn on a different rule from
+// everything above. They are keyed by (agent, second) rather than by this run, so
+// they exist for the seconds the game drew nothing in — the alt-tabbed minute,
+// the loading screen — which is exactly where the frame charts go blank and a
+// reader most wants to know what the box was doing.
+//
+// Whether to draw one is therefore NOT a capability question. There is no run
+// capability that could promise or deny them, so the test is whether the window
+// actually holds a reading: NULL means not measured, and a series of nothing but
+// nulls means the machine never answered. That is a stronger test than a
+// capability anyway — a capability says the sensor meant to collect something.
+const hostAt = (h: GameHostSecond) => new Date(h.ts).getTime()
+const hostPoints = (pick: (h: GameHostSecond) => number | null | undefined): GamePoint[] =>
+  hostSeconds.value.map((h) => [hostAt(h), pick(h) ?? null])
+
+// The two CPU figures are drawn together because either alone misleads. A
+// single-threaded game pins one core at 100% while a sixteen-thread machine
+// reads 6% busy: the total alone says the box is idle while the game is starved,
+// and the busiest alone says it is saturated while fifteen cores sit free. The
+// GAP between the lines is the finding.
+const hostCpuSeries = computed<GameChartSeries[]>(() => [
+  { key: 'total', label: t('gameRuns.seriesHostCpuTotal'), color: '#38bdf8', data: hostPoints((h) => h.cpu?.total_pct) },
+  { key: 'busiest', label: t('gameRuns.seriesHostCpuBusiest'), color: '#f472b6', data: hostPoints((h) => h.cpu?.busiest_pct) },
+])
+// Installed capacity is drawn beside what is in use, because it is what makes
+// the level readable: 12 GB in use means opposite things on a 16 GB and a 32 GB
+// machine, and a flat capacity line is what a reader measures the other against.
+const hostMemSeries = computed<GameChartSeries[]>(() => [
+  { key: 'used', label: t('gameRuns.seriesHostMemUsed'), color: '#38bdf8', data: hostPoints((h) => h.mem?.used) },
+  { key: 'total', label: t('gameRuns.seriesHostMemTotal'), color: '#94a3b8', data: hostPoints((h) => h.mem?.total) },
+])
+// Whole-adapter telemetry. Every label on these two charts says so, because the
+// figure the reader will otherwise take away is "the game used 98% of the GPU" —
+// a claim this reading cannot make about any single process.
+const gpuUtilSeries = computed<GameChartSeries[]>(() => [
+  { key: 'util', label: t('gameRuns.seriesGpuUtil'), color: '#34d399', data: hostPoints((h) => h.gpu?.util_pct) },
+])
+const gpuMemSeries = computed<GameChartSeries[]>(() => [
+  { key: 'used', label: t('gameRuns.seriesGpuMemUsed'), color: '#38bdf8', data: hostPoints((h) => h.gpu?.mem_used) },
+  { key: 'size', label: t('gameRuns.seriesGpuMemSize'), color: '#94a3b8', data: hostPoints((h) => h.gpu?.mem_size) },
+])
+
+// The clocks, all three on one chart.
+//
+// Together rather than apart because the reading is a comparison: a frame rate
+// that fell while the GPU core clock fell with it is a card that ran out of
+// headroom, and one that fell while every clock held is something else entirely.
+// Splitting them across three charts would put the three lines a reader has to
+// compare on three different axes.
+//
+// The processor's nominal maximum is drawn as a flat reference rather than left
+// to a caption, because that is what makes the current clock mean something: a
+// line at 3.2 GHz is a processor coasting or one pinned at its ceiling, and only
+// the pair says which. A current line ABOVE it is boost, not an error.
+const clockSeries = computed<GameChartSeries[]>(() => [
+  { key: 'cpu', label: t('gameRuns.seriesCpuClock'), color: '#f472b6', data: hostPoints((h) => h.cpu_clock?.current_mhz) },
+  { key: 'cpuMax', label: t('gameRuns.seriesCpuClockMax'), color: '#94a3b8', data: hostPoints((h) => h.cpu_clock?.max_mhz) },
+  { key: 'gpuCore', label: t('gameRuns.seriesGpuClock'), color: '#34d399', data: hostPoints((h) => h.gpu?.core_mhz) },
+  { key: 'gpuMem', label: t('gameRuns.seriesGpuMemClock'), color: '#a78bfa', data: hostPoints((h) => h.gpu?.mem_mhz) },
+])
+
+const drawn = (series: readonly GameChartSeries[]) => series.some((s) => seriesHasValue(s.data))
+const showHostCpu = computed(() => drawn(hostCpuSeries.value))
+const showHostMem = computed(() => drawn(hostMemSeries.value))
+const showGpuTel = computed(() => drawn(gpuUtilSeries.value) || drawn(gpuMemSeries.value))
+const showClocks = computed(() => drawn(clockSeries.value))
+
+const hostCpuCaption = computed(() => chartCaption(hostCpuSeries.value, t('gameRuns.hostCpuCaption')))
+const hostMemCaption = computed(() => chartCaption(hostMemSeries.value, t('gameRuns.hostMemCaption')))
 const gpuUtilCaption = computed(() => chartCaption(gpuUtilSeries.value, t('gameRuns.gpuUtilCaption')))
 const gpuMemCaption = computed(() => chartCaption(gpuMemSeries.value, t('gameRuns.gpuMemCaption')))
-const procVramCaption = computed(() => chartCaption(procVramSeries.value, t('gameRuns.procVramCaption')))
-const busiestCoreCaption = computed(() =>
-  chartCaption(busiestCoreSeries.value, t('gameRuns.busiestCoreCaption')),
-)
+const clockCaption = computed(() => chartCaption(clockSeries.value, t('gameRuns.clockCaption')))
+
+// Nothing at all from the machine stream. It is a different sentence from an
+// empty chart: the readings are not a run capability, so the capture-source panel
+// above says nothing about them and a reader has no other way to learn why the
+// section is absent. The likeliest causes are an agent too old to send them and a
+// window whose seconds have aged out of the retention.
+const hostUnavailable = computed(() => {
+  if (showHostCpu.value || showHostMem.value || showGpuTel.value || showClocks.value) return ''
+  return t('gameRuns.hostUnavailable')
+})
+
+// A run whose machine seconds hit the request cap. The curves then cover the
+// first day of a longer window while the axis spans all of it, so they stop
+// partway across and the chart looks like a machine that went quiet.
+//
+// It is its own note rather than the buckets' `truncated`, because the two clip
+// at different points: a run left minimised overnight holds a day of machine
+// seconds and only minutes of frames, so the frame charts are complete on
+// exactly the run where these are not.
+const hostTruncated = computed(() => hostSeconds.value.length >= HOST_LIMIT)
 
 // A run recorded at the base depth loses six chart rows at once, and six
 // unexplained gaps between the frame charts and the network timeline read as a
@@ -572,6 +805,242 @@ const diagUnavailable = computed(() => {
   return t('gameRuns.diagUnavailablePartial', { series })
 })
 
+// ---- the selected span ----
+//
+// One ref, owned here and prop-drilled into every chart, which is what makes the
+// highlight appear on all of them at once. It matches the chartWindow precedent
+// exactly and introduces no state mechanism to a codebase that has deliberately
+// avoided one — and its lifetime is the page's, so walking to another run does
+// not carry a selection along with it.
+const selection = ref<TimeSelection>(null)
+watch(runId, () => (selection.value = null))
+
+// Which cards the panel below has, decided by what this RUN holds rather than by
+// what the current selection covers.
+//
+// That distinction is the whole of it. Deciding per selection made the card set
+// grow and shrink as the pointer moved — dragging across a gap added two cards,
+// dragging past the first machine second added seven — so the grid reflowed on
+// every mousemove, the panel changed height, and the charts underneath moved out
+// from under the pointer that was drawing the selection.
+//
+// It is also the rule the rest of this page already follows: a figure the data
+// cannot support is a dash carrying its reason, never a removed row. A selection
+// holding no machine second says so in the card; it does not delete it.
+const hasHostData = computed(() => hostSeconds.value.length > 0)
+const hasClockData = computed(() =>
+  hostSeconds.value.some((h) => h.cpu_clock != null || h.gpu?.core_mhz != null || h.gpu?.mem_mhz != null),
+)
+const hasGapData = computed(() => gaps.value.length > 0)
+
+// The span the panel reports on: the reader's selection, or everything loaded.
+//
+// The panel is permanent rather than appearing with the first drag, so it needs
+// something to say when nothing is selected — and "the whole session" is the
+// answer that makes the same figures comparable against a stretch picked out of
+// it. It also means the panel never changes height, which is the point: one that
+// appeared on drag start pushed the charts down under the pointer drawing the
+// selection.
+//
+// The whole-session span is NOT chartWindow. A gap can end after the run's last
+// frame, and a live run's machine seconds run past it too; the axis clips both,
+// and the figures should not. Reporting a fifty-minute absence as however much
+// of it the charts happened to draw is the same mistake as clipping the band.
+const statsSpan = computed<[number, number]>(() => {
+  if (selection.value) return selection.value
+  const ms = (iso: string) => new Date(iso).getTime()
+  let [lo, hi] = chartWindow.value
+  // Buckets and machine seconds arrive in time order, so the two ends are the
+  // whole extent. The floor reaches a second further back because a span is
+  // half-open at the start — a record exactly at `lo` would fall outside it.
+  const ends = <T extends { ts: string }>(xs: readonly T[]) =>
+    xs.length ? ([ms(xs[0].ts) - 1000, ms(xs[xs.length - 1].ts)] as const) : null
+  for (const e of [ends(buckets.value), ends(hostSeconds.value)]) {
+    if (e) {
+      lo = Math.min(lo, e[0])
+      hi = Math.max(hi, e[1])
+    }
+  }
+  // Gaps are ordered by start, but a long one can end after a later short one
+  // does, so the end has to be searched rather than taken from the last.
+  for (const g of gaps.value) {
+    lo = Math.min(lo, ms(g.started_at))
+    hi = Math.max(hi, ms(g.ended_at))
+  }
+  return [lo, hi]
+})
+
+const selectionCards = computed<GameCard[]>(() => {
+  if (!run.value) return []
+  const s = selectionStats(statsSpan.value, buckets.value, hostSeconds.value, gaps.value)
+  const fps = (v: number | null): string | null => (v === null ? null : fmtFps(v))
+  // Why a figure is absent, said once per family. The FPS three share a reason
+  // and it is not "the source could not measure it": either the span holds too
+  // few frames for the fraction to mean anything, or a second in it used a
+  // histogram layout this console cannot read.
+  const fpsReason = s.layoutUnknown ? t('gameRuns.selection.layoutUnknown') : t('gameRuns.selection.tooFewFrames')
+  const cards: GameCard[] = [
+    {
+      key: 'span',
+      label: t('gameRuns.selection.span'),
+      value: fmtRunDuration(s.spanSeconds),
+      hint: t('gameRuns.selection.spanHint'),
+    },
+    {
+      key: 'frameSeconds',
+      label: t('gameRuns.selection.frameSeconds'),
+      value: fmtCount(s.frameSeconds),
+      hint: t('gameRuns.selection.frameSecondsFoot', { span: s.spanSeconds }),
+    },
+    { key: 'mean', label: t('gameRuns.meanFps'), value: fps(s.meanFps), unit: 'FPS', reason: fpsReason },
+    { key: 'low1', label: t('gameRuns.low1'), value: fps(s.low1PctFps), unit: 'FPS', reason: fpsReason },
+    { key: 'low01', label: t('gameRuns.low01'), value: fps(s.low01PctFps), unit: 'FPS', reason: fpsReason },
+    {
+      key: 'worst',
+      label: t('gameRuns.selection.worstFrame'),
+      value: s.worstFrameMs === null ? null : `${s.worstFrameMs.toFixed(1)}`,
+      unit: 'ms',
+      reason: t('gameRuns.selection.noFrames'),
+      hint: t('gameRuns.selection.worstFrameFoot'),
+    },
+    { key: 'presented', label: t('gameRuns.presented'), value: fmtCount(s.presented) },
+  ]
+  if (observes('stutter', caps.value)) {
+    cards.push({
+      key: 'stutter',
+      label: t('gameRuns.stutterCount'),
+      value: s.stutterCount === null ? null : fmtCount(s.stutterCount),
+      reason: reason('stutter'),
+      // Always a sentence, never sometimes-absent. A foot that appears and
+      // disappears takes a line with it, which changes the row's height for the
+      // same reason a changing card count changed the grid's.
+      hint:
+        s.stutterExcessMs === null
+          ? t('gameRuns.selection.stutterExcessUnknown')
+          : t('gameRuns.selection.stutterExcess', { ms: Math.round(s.stutterExcessMs) }),
+    })
+  }
+  // The machine's side of the same span. Present whenever the RUN has machine
+  // seconds, even where the selection covers none of them — a card that came and
+  // went with the pointer is what made the panel jump.
+  if (hasHostData.value) {
+    cards.push(
+      {
+        key: 'hostCpu',
+        label: t('gameRuns.selection.hostCpuMean'),
+        value: s.hostCpuMeanPct === null ? null : s.hostCpuMeanPct.toFixed(1),
+        unit: '%',
+        reason: t('gameRuns.selection.hostNotRecorded'),
+        hint: t('gameRuns.selection.hostCpuMeanFoot'),
+      },
+      {
+        key: 'hostCpuPeak',
+        label: t('gameRuns.selection.hostCpuPeak'),
+        value: s.hostCpuPeakPct === null ? null : s.hostCpuPeakPct.toFixed(1),
+        unit: '%',
+        reason: t('gameRuns.selection.hostNotRecorded'),
+      },
+      {
+        key: 'hostGpuPeak',
+        label: t('gameRuns.selection.hostGpuPeak'),
+        value: s.hostGpuPeakPct === null ? null : s.hostGpuPeakPct.toFixed(1),
+        unit: '%',
+        reason: t('gameRuns.selection.hostNotRecorded'),
+      },
+      {
+        key: 'hostMemPeak',
+        label: t('gameRuns.selection.hostMemPeak'),
+        value: s.hostMemPeakUsed === null ? null : fmtByUnit('bytes', s.hostMemPeakUsed),
+        reason: t('gameRuns.selection.hostNotRecorded'),
+      },
+    )
+  }
+  // The clocks, reported as the LOWEST seen in the span rather than the mean or
+  // the peak. A peak says the hardware was capable of it, which is never the
+  // question when a reader has just dragged out a stretch where the frame rate
+  // dropped; the floor is.
+  if (hasClockData.value) {
+    const mhz = (v: number | null) => (v === null ? null : Math.round(v).toString())
+    cards.push(
+      {
+        key: 'cpuMin',
+        label: t('gameRuns.selection.cpuClockMin'),
+        value: mhz(s.cpuMinMHz),
+        unit: 'MHz',
+        reason: t('gameRuns.selection.hostNotRecorded'),
+        hint: t('gameRuns.selection.clockMinFoot'),
+      },
+      {
+        key: 'gpuMin',
+        label: t('gameRuns.selection.gpuClockMin'),
+        value: mhz(s.gpuMinMHz),
+        unit: 'MHz',
+        reason: t('gameRuns.selection.hostNotRecorded'),
+      },
+      {
+        key: 'gpuMemMin',
+        label: t('gameRuns.selection.gpuMemClockMin'),
+        value: mhz(s.gpuMemMinMHz),
+        unit: 'MHz',
+        reason: t('gameRuns.selection.hostNotRecorded'),
+      },
+    )
+  }
+  // Interruptions, shown whenever the run had any at all — including as a zero
+  // for a span that holds none.
+  //
+  // A zero IS the measurement here, not an absence: the gaps are all loaded, so
+  // "no time was spent out of the game in this stretch" is something the page
+  // knows rather than something it failed to observe. That is what makes it
+  // right to keep the card rather than hide it, quite apart from the reflow.
+  if (hasGapData.value) {
+    cards.push(
+      {
+        key: 'gapBackground',
+        label: t('gameRuns.selection.gapBackground'),
+        value: fmtRunDuration(s.gapBackgroundSeconds),
+      },
+      {
+        key: 'gapNoFrames',
+        label: t('gameRuns.selection.gapNoFrames'),
+        value: fmtRunDuration(s.gapNoFramesSeconds),
+      },
+    )
+  }
+  return cards
+})
+
+// A span the reader dragged over seconds this page has NOTHING for — past the
+// six-hour clip, or before the run began.
+//
+// All three sources are consulted, not just the buckets. Selecting an alt-tab is
+// the case that makes this matter: by definition it holds no bucket, and it is
+// also exactly the span whose machine curves and interruption breakdown a reader
+// dragged it out to read. A bucket-only test would compute those figures and then
+// hide them behind "nothing here", which is both wrong and the opposite of the
+// reason gaps are recorded at all.
+const selectionEmpty = computed(() => {
+  const sel = selection.value
+  if (!sel) return false
+  if (buckets.value.some((b) => coversSelection(sel, new Date(b.ts).getTime()))) return false
+  if (hostSeconds.value.some((h) => coversSelection(sel, new Date(h.ts).getTime()))) return false
+  // A gap OVERLAPPING the span counts, rather than one starting inside it: a
+  // selection wholly inside a fifty-minute absence contains no gap boundary at
+  // all, and that is the most ordinary case there is.
+  return !gaps.value.some(
+    (g) => new Date(g.started_at).getTime() < sel[1] && new Date(g.ended_at).getTime() > sel[0],
+  )
+})
+
+// The panel's single subtitle line. It is always exactly one line, whatever it
+// says, which is what lets the panel keep one height across every state.
+const selectionNote = computed(() => {
+  if (!selection.value) return t('gameRuns.selection.hint')
+  if (selectionEmpty.value) return t('gameRuns.selection.empty')
+  const [from, to] = selection.value
+  return `${fmtTime(new Date(from).toISOString())} → ${fmtTime(new Date(to).toISOString())}`
+})
+
 // ---- delete ----
 const askDelete = ref(false)
 async function confirmDelete() {
@@ -590,8 +1059,33 @@ async function confirmDelete() {
   }
 }
 
-onMounted(load)
-watch(runId, load)
+// ---- refreshing ----
+//
+// Off until asked for, on every run including one still being recorded.
+//
+// Refreshing this page is not cheap — it re-reads the run, its seconds, its
+// silences and the machine's seconds beside them — and it moves what is under
+// the reader's pointer: on a live run the axis's right edge is now, so every
+// pass shifts fourteen charts. Neither is something to start doing to someone
+// who only opened a page. The state the toggle holds is theirs from the first
+// press and nothing takes it back, which is the whole reason it is a button
+// rather than a rule about running sessions.
+const REFRESH_MS = 5000
+const autoRefresh = ref(false)
+
+let timer: number | undefined
+onMounted(() => {
+  load()
+  timer = window.setInterval(() => {
+    if (autoRefresh.value) load({ quiet: true })
+  }, REFRESH_MS)
+})
+onBeforeUnmount(() => {
+  if (timer) window.clearInterval(timer)
+})
+// The toggle carries across, unreset: it is a decision about how the reader
+// wants to work, not a fact about the run they happen to be on.
+watch(runId, () => load())
 </script>
 
 <template>
@@ -640,6 +1134,18 @@ watch(runId, load)
                uploading the live session and the server upserts the row straight
                back, so the delete would appear to work and then hand back the
                same run holding only its last few seconds. -->
+          <button class="btn" :disabled="loading" @click="load()">
+            {{ t('common.refresh') }}
+          </button>
+          <button
+            class="btn auto-refresh"
+            :class="{ active: autoRefresh }"
+            :aria-pressed="autoRefresh"
+            @click="autoRefresh = !autoRefresh"
+          >
+            {{ autoRefresh ? t('gameRuns.autoRefreshOn') : t('gameRuns.autoRefreshOff') }}
+          </button>
+          <InfoTip :text="t('gameRuns.autoRefreshHint')" />
           <button class="btn btn-danger" :disabled="busy || running" @click="askDelete = true">
             {{ t('common.delete') }}
           </button>
@@ -700,6 +1206,38 @@ watch(runId, load)
         </p>
       </section>
 
+      <!-- What the shading means, said once. It belongs above the charts rather
+           than in each caption because the bands are on ALL of them — that is
+           the point of them: a blank stretch looks identical on the frame
+           charts, the machine charts and the network timeline, and a reader
+           looking at any one has to be able to tell "the game was minimised"
+           from "the data is missing". -->
+      <p v-if="gapLegend" class="hint">{{ gapLegend }}</p>
+
+      <!-- The figures for whatever the reader has picked out, or for the whole
+           session when they have picked nothing.
+
+           Permanent rather than appearing with the first drag, and above the
+           charts rather than below them: it has to be on screen while the
+           selection is still being adjusted, and a panel that appeared at drag
+           start pushed the charts down under the pointer drawing on them. Every
+           part of it holds one fixed height for the same reason — the card set
+           comes from the run rather than the span, the explanations hover, and
+           the note below is one line in all three of its states. -->
+      <section class="card selection-panel">
+        <div class="selection-head">
+          <h2>{{ selection ? t('gameRuns.selection.title') : t('gameRuns.selection.titleAll') }}</h2>
+          <!-- Hidden rather than removed when there is nothing to clear, so the
+               header keeps its height. visibility also takes it out of the tab
+               order, which a disabled button that does nothing would not. -->
+          <button type="button" class="btn ghost" :class="{ hidden: !selection }" @click="selection = null">
+            {{ t('gameRuns.selection.clear') }}
+          </button>
+        </div>
+        <p class="hint selection-note">{{ selectionNote }}</p>
+        <GameStatCards :cards="selectionCards" />
+      </section>
+
       <template v-if="buckets.length">
         <div class="card chart-card">
           <GameRunChart
@@ -708,6 +1246,8 @@ watch(runId, load)
             :series="fpsSeries"
             :x-min="chartWindow[0]"
             :x-max="chartWindow[1]"
+            :bands="allBands"
+            v-model:selection="selection"
           />
           <p v-if="fpsCaption" class="chart-caption">{{ fpsCaption }}</p>
         </div>
@@ -717,7 +1257,8 @@ watch(runId, load)
             :title="t('gameRuns.frameTimeChart')"
             unit="ms"
             :series="frameTimeSeries"
-            :marks="stutterMarks"
+            :bands="frameTimeBands"
+            v-model:selection="selection"
             :x-min="chartWindow[0]"
             :x-max="chartWindow[1]"
           />
@@ -735,6 +1276,8 @@ watch(runId, load)
             :series="cpuSplitSeries"
             :x-min="chartWindow[0]"
             :x-max="chartWindow[1]"
+            :bands="allBands"
+            v-model:selection="selection"
           />
           <p class="chart-caption">{{ cpuSplitCaption }}</p>
         </div>
@@ -746,6 +1289,8 @@ watch(runId, load)
             :series="gpuSplitSeries"
             :x-min="chartWindow[0]"
             :x-max="chartWindow[1]"
+            :bands="allBands"
+            v-model:selection="selection"
           />
           <p class="chart-caption">{{ gpuSplitCaption }}</p>
         </div>
@@ -757,6 +1302,8 @@ watch(runId, load)
             :series="presentChainSeries"
             :x-min="chartWindow[0]"
             :x-max="chartWindow[1]"
+            :bands="allBands"
+            v-model:selection="selection"
           />
           <p class="chart-caption">{{ presentChainCaption }}</p>
         </div>
@@ -772,6 +1319,8 @@ watch(runId, load)
             :series="latencySeries"
             :x-min="chartWindow[0]"
             :x-max="chartWindow[1]"
+            :bands="allBands"
+            v-model:selection="selection"
           />
           <p class="chart-caption">{{ latencyCaption }}</p>
         </div>
@@ -788,6 +1337,8 @@ watch(runId, load)
             :y-max="100"
             :x-min="chartWindow[0]"
             :x-max="chartWindow[1]"
+            :bands="allBands"
+            v-model:selection="selection"
           />
           <p class="chart-caption">{{ procCpuCaption }}</p>
         </div>
@@ -799,41 +1350,15 @@ watch(runId, load)
             :series="procMemSeries"
             :x-min="chartWindow[0]"
             :x-max="chartWindow[1]"
+            :bands="allBands"
+            v-model:selection="selection"
           />
           <p class="chart-caption">{{ procMemCaption }}</p>
         </div>
 
-        <!-- Whole-GPU, and the title says so. Pinned to 0-100 for the same
-             reason the process CPU chart is: the share IS the meaning, and a
-             card at 12% auto-scaled to fill the plot draws the same picture as
-             one at 95%. -->
-        <div v-if="showGpuTel" class="card chart-card">
-          <GameRunChart
-            :title="t('gameRuns.gpuUtilChart')"
-            unit="%"
-            :series="gpuUtilSeries"
-            :y-min="0"
-            :y-max="100"
-            :x-min="chartWindow[0]"
-            :x-max="chartWindow[1]"
-          />
-          <p class="chart-caption">{{ gpuUtilCaption }}</p>
-        </div>
-
-        <div v-if="showGpuTel" class="card chart-card">
-          <GameRunChart
-            :title="t('gameRuns.gpuMemChart')"
-            unit="bytes"
-            :series="gpuMemSeries"
-            :x-min="chartWindow[0]"
-            :x-max="chartWindow[1]"
-          />
-          <p class="chart-caption">{{ gpuMemCaption }}</p>
-        </div>
-
         <!-- The other video-memory question, and a separate reading: what this
              game is holding, against the budget the OS grants it. A full card
-             above says nothing about which process filled it. -->
+             says nothing about which process filled it. -->
         <div v-if="showProcVram" class="card chart-card">
           <GameRunChart
             :title="t('gameRuns.procVramChart')"
@@ -841,27 +1366,105 @@ watch(runId, load)
             :series="procVramSeries"
             :x-min="chartWindow[0]"
             :x-max="chartWindow[1]"
+            :bands="allBands"
+            v-model:selection="selection"
           />
           <p class="chart-caption">{{ procVramCaption }}</p>
-        </div>
-
-        <div v-if="showBusiestCore" class="card chart-card">
-          <GameRunChart
-            :title="t('gameRuns.busiestCoreChart')"
-            unit="%"
-            :series="busiestCoreSeries"
-            :y-min="0"
-            :y-max="100"
-            :x-min="chartWindow[0]"
-            :x-max="chartWindow[1]"
-          />
-          <p class="chart-caption">{{ busiestCoreCaption }}</p>
         </div>
 
         <p v-if="procUnavailable" class="hint notice">{{ procUnavailable }}</p>
         <p v-if="diagUnavailable" class="hint notice">{{ diagUnavailable }}</p>
       </template>
       <p v-else class="hint notice">{{ bucketsNote }}</p>
+
+      <!-- The machine underneath the run.
+           Outside the buckets template on purpose: these seconds are the agent's
+           rather than this run's, so a run whose own seconds aged out — or one
+           spent mostly minimized, which produces no buckets at all — can still be
+           read against what the box was doing. -->
+      <h2 class="section-title">{{ t('gameRuns.hostTitle') }}</h2>
+      <p class="hint">{{ t('gameRuns.hostHint') }}</p>
+      <p v-if="hostTruncated" class="hint notice">{{ t('gameRuns.hostTruncated') }}</p>
+
+      <div v-if="showHostCpu" class="card chart-card">
+        <!-- Pinned to 0-100 because the figure is a share of the whole machine:
+             auto-scaling a box at 12% to fill the plot would draw the same
+             picture as one at 90%. -->
+        <GameRunChart
+          :title="t('gameRuns.hostCpuChart')"
+          unit="%"
+          :series="hostCpuSeries"
+          :y-min="0"
+          :y-max="100"
+          :x-min="chartWindow[0]"
+          :x-max="chartWindow[1]"
+          :bands="allBands"
+            v-model:selection="selection"
+        />
+        <p class="chart-caption">{{ hostCpuCaption }}</p>
+      </div>
+
+      <div v-if="showHostMem" class="card chart-card">
+        <GameRunChart
+          :title="t('gameRuns.hostMemChart')"
+          unit="bytes"
+          :series="hostMemSeries"
+          :x-min="chartWindow[0]"
+          :x-max="chartWindow[1]"
+          :bands="allBands"
+            v-model:selection="selection"
+        />
+        <p class="chart-caption">{{ hostMemCaption }}</p>
+      </div>
+
+      <!-- Whole-GPU, and the title says so. Pinned to 0-100 for the same reason
+           the machine CPU chart is. -->
+      <div v-if="showGpuTel" class="card chart-card">
+        <GameRunChart
+          :title="t('gameRuns.gpuUtilChart')"
+          unit="%"
+          :series="gpuUtilSeries"
+          :y-min="0"
+          :y-max="100"
+          :x-min="chartWindow[0]"
+          :x-max="chartWindow[1]"
+          :bands="allBands"
+            v-model:selection="selection"
+        />
+        <p class="chart-caption">{{ gpuUtilCaption }}</p>
+      </div>
+
+      <div v-if="showGpuTel" class="card chart-card">
+        <GameRunChart
+          :title="t('gameRuns.gpuMemChart')"
+          unit="bytes"
+          :series="gpuMemSeries"
+          :x-min="chartWindow[0]"
+          :x-max="chartWindow[1]"
+          :bands="allBands"
+            v-model:selection="selection"
+        />
+        <p class="chart-caption">{{ gpuMemCaption }}</p>
+      </div>
+
+      <!-- All three clocks on one axis, because the reading is the comparison
+           between them: a frame rate that fell while the GPU core clock fell
+           with it is a card out of headroom, and one that fell while every clock
+           held is something else. -->
+      <div v-if="showClocks" class="card chart-card">
+        <GameRunChart
+          :title="t('gameRuns.clockChart')"
+          unit="MHz"
+          :series="clockSeries"
+          :x-min="chartWindow[0]"
+          :x-max="chartWindow[1]"
+          :bands="allBands"
+          v-model:selection="selection"
+        />
+        <p class="chart-caption">{{ clockCaption }}</p>
+      </div>
+
+      <p v-if="hostUnavailable" class="hint notice">{{ hostUnavailable }}</p>
 
       <!-- Joint diagnosis: the same window, the same agent, the network side of
            it. Charted whether or not the frame charts have anything — a run whose
@@ -871,6 +1474,8 @@ watch(runId, load)
         :start-ms="chartWindow[0]"
         :end-ms="chartWindow[1]"
         :monitor-ids="profileMonitorIds"
+        :bands="allBands"
+            v-model:selection="selection"
       />
 
       <ConfirmDialog
@@ -979,6 +1584,15 @@ watch(runId, load)
   display: flex;
   align-items: center;
   gap: var(--space-xs);
+  flex-wrap: wrap;
+}
+/* The pressed state of the auto-refresh toggle. It reads its own state in words
+ * as well, because colour alone would leave the button saying "auto-refresh"
+ * whether it was on or off — and the whole question this button answers is
+ * which. */
+.auto-refresh.active {
+  border-color: var(--color-success);
+  color: var(--color-success);
 }
 .notice {
   margin-bottom: var(--space-sm);
@@ -1016,9 +1630,18 @@ watch(runId, load)
 .panel :deep(.stat-grid) {
   margin: 0 18px;
 }
+/* As many columns as fit. Each entry is a name and one of two words, so a row
+ * to itself left most of the width blank and pushed the eleven of them into a
+ * column taller than the panel above it — a reader checking whether one
+ * capability was collected had to scroll past the other ten.
+ *
+ * min(100%, 260px) rather than a bare 260px: below that width the track would
+ * be wider than the grid and the pills would overflow the panel instead of
+ * falling back to the single column they had before. */
 .cap-list {
   display: grid;
-  gap: var(--space-2xs);
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 260px), 1fr));
+  gap: var(--space-2xs) var(--space-xs);
   margin: 0 18px var(--space-sm);
   padding: 0;
   list-style: none;
@@ -1127,6 +1750,33 @@ watch(runId, load)
 }
 .page-message p {
   margin-bottom: var(--space-sm);
+}
+
+.selection-panel {
+  padding: var(--space-md);
+}
+.selection-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-sm);
+  margin-bottom: var(--space-sm);
+}
+.selection-head h2 {
+  margin: 0;
+  font-size: 1rem;
+}
+.selection-head .btn.hidden {
+  visibility: hidden;
+}
+.selection-note {
+  /* One line, always. The three things this can say are all short, and letting
+     a long one wrap would put the height back on the panel's list of moving
+     parts. */
+  margin: 0 0 var(--space-sm);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 @media (max-width: 768px) {

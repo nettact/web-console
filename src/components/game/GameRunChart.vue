@@ -17,7 +17,9 @@ import { escapeHtml } from '../../lib/escapeHtml'
 import { chartColor, oklchToRgb } from '../../lib/chartColor'
 import { ALIGNED_GRID_LEFT, ALIGNED_GRID_RIGHT } from '../../lib/chartGrid'
 import { fmtByUnit, isByteUnit } from '../../lib/format'
-import type { GameChartMark, GameChartSeries, GamePoint } from '../../lib/gameRun'
+import { bandAt, mergeBands, type BandKind, type ChartBand } from '../../lib/chartBands'
+import { pixelAtTime, useChartSelection, type TimeSelection } from '../../composables/useChartSelection'
+import type { GameChartSeries, GamePoint } from '../../lib/gameRun'
 
 const props = defineProps<{
   title: string
@@ -32,8 +34,9 @@ const props = defineProps<{
   yMin?: number
   yMax?: number
   // Spans to shade behind the lines, each carrying the sentence its tooltip
-  // adds for the seconds it covers.
-  marks?: GameChartMark[]
+  // adds for the seconds it covers, and the kind that decides its colour. The
+  // kinds do not merge into one another — see lib/chartBands.
+  bands?: ChartBand[]
   // The run's window (epoch ms). Pinning it keeps every chart on the page — these
   // frame charts and the network timeline below them — on one identical time
   // axis, so a spike at the same x really is the same moment. It also stops a run
@@ -63,9 +66,29 @@ const chartTheme = computed(() => {
     axisLine: chartColor('--color-chart-axis', isLight ? 'rgba(15, 23, 42, 0.22)' : 'rgba(255, 255, 255, 0.24)'),
     tooltipBg: isLight ? 'rgba(255, 255, 255, 0.97)' : 'rgba(15, 20, 30, 0.92)',
     tooltipText: isLight ? '#10192a' : '#e8eef8',
-    mark: chartColor('--color-warning', isLight ? '#b45309' : '#fbbf24'),
+    // One colour per band kind. A stutter is a fault and reads as a warning; a
+    // gap is not — the game was minimized or loading, and shading that in the
+    // same amber would have every alt-tab look like a problem.
+    //
+    // The two gap kinds differ from each other too, because their conclusions
+    // are opposite: 'background' is time nobody was playing and the figures
+    // around it must not be read as a stall, while 'no_frames' is the player
+    // sitting there waiting, which is the one worth investigating.
+    stutter: chartColor('--color-warning', isLight ? '#b45309' : '#fbbf24'),
+    gapBackground: chartColor('--color-chart-label', isLight ? '#4a5768' : '#b7c3d4'),
+    gapNoFrames: chartColor('--color-info', isLight ? '#0369a1' : '#38bdf8'),
   }
 })
+
+// How strongly each kind is shaded. The gaps are fainter than a stutter on
+// purpose: they cover long stretches, and a band an hour wide at a stutter's
+// opacity would dominate a chart whose subject is the lines on top of it.
+const BAND_ALPHA: Record<BandKind, number> = {
+  stutter: 0.16,
+  gapBackground: 0.1,
+  gapNoFrames: 0.12,
+  gapUnknown: 0.1,
+}
 
 const scaled = computed(() => isByteUnit(props.unit))
 
@@ -73,27 +96,40 @@ const fmtTime = (ms: number) => new Date(ms).toLocaleString(toDateLocale(locale.
 const fmtValue = (v: number) =>
   scaled.value ? fmtByUnit(props.unit, v) : `${Number.isInteger(v) ? v : v.toFixed(1)} ${props.unit}`
 
-// The shaded span covering an instant, if any. Spans are half-open at the start
-// so two touching seconds do not both claim the boundary.
-const markAt = (ms: number) => props.marks?.find((m) => ms > m.from && ms <= m.to)
+// The colour a kind is drawn in, resolved to a concrete RGB with its alpha
+// applied — ECharts renders to canvas and cannot read a design token.
+function bandFill(kind: BandKind): string {
+  const ct = chartTheme.value
+  const base = kind === 'stutter' ? ct.stutter : kind === 'gapNoFrames' ? ct.gapNoFrames : ct.gapBackground
+  return echarts.color.modifyAlpha(base, BAND_ALPHA[kind]) ?? base
+}
 
-// Touching or overlapping spans are merged before they are drawn. The tooltip
-// still reads from the unmerged list, so a run that stuttered through a whole
-// minute renders one band rather than sixty while each second keeps its own
-// figures.
-function mergedMarks(): [number, number][] {
-  const out: [number, number][] = []
-  for (const m of [...(props.marks ?? [])].sort((a, b) => a.from - b.from)) {
-    const last = out[out.length - 1]
-    if (last && m.from <= last[1]) last[1] = Math.max(last[1], m.to)
-    else out.push([m.from, m.to])
-  }
-  return out
+// Every band as one flat list of markArea items, each carrying its own colour.
+//
+// ECharts hangs a markArea off a series and a chart gets one, so the kinds share
+// it and are told apart by a per-item itemStyle rather than by having a markArea
+// each. Merging happens within a kind only — a stutter must never absorb the
+// alt-tab beside it — which is what mergeBands is for.
+function markAreaData() {
+  return mergeBands(props.bands ?? []).flatMap(({ kind, spans }) =>
+    spans.map(([from, to]) => [{ xAxis: from, itemStyle: { color: bandFill(kind) } }, { xAxis: to }]),
+  )
 }
 
 // A tooltip row for a second with no measurement says so, because an omitted row
 // reads as "nothing happened" rather than "nothing was observed".
 function tooltip(params: { axisValue: number; seriesName: string; marker: string; value: GamePoint }[]): string {
+  // Read from the UNMERGED list, so a run that stuttered through a minute draws
+  // one band and still explains each second individually.
+  const hit = bandAt(props.bands, params[0].axisValue)
+  const note = hit?.text ? `<br/><span style="opacity:0.85">${escapeHtml(hit.text)}</span>` : ''
+  // Inside a gap every line is a dash, and a column of them buries the one
+  // sentence that is actually the answer. The rows go, and only where the band
+  // has something to say instead: a second that is blank for any other reason
+  // still lists its series, because there "no value" IS the finding.
+  if (note && params.every((p) => p.value[1] === null)) {
+    return `${fmtTime(params[0].axisValue)}${note}`
+  }
   const rows = params
     .map((p) => {
       const raw = p.value[1]
@@ -101,8 +137,6 @@ function tooltip(params: { axisValue: number; seriesName: string; marker: string
       return `${p.marker}${escapeHtml(p.seriesName)}<span style="float:right;margin-left:20px;font-weight:600">${disp}</span>`
     })
     .join('<br/>')
-  const hit = markAt(params[0].axisValue)
-  const note = hit ? `<br/><span style="opacity:0.85">${escapeHtml(hit.text)}</span>` : ''
   return `${fmtTime(params[0].axisValue)}<br/>${rows}${note}`
 }
 
@@ -110,8 +144,7 @@ function render() {
   if (!chart) return
   const ct = chartTheme.value
   const multi = props.series.length > 1
-  const bands = mergedMarks()
-  const markFill = echarts.color.modifyAlpha(ct.mark, 0.16) ?? ct.mark
+  const areas = markAreaData()
   chart.setOption(
     {
       title: {
@@ -170,17 +203,11 @@ function render() {
           type: 'line' as const,
           showSymbol: false,
           // The bands belong to the chart, not to a line, but ECharts hangs
-          // markArea off a series — so the first one carries them and they are
-          // silent, which keeps them out of the axis tooltip's own hit testing.
-          ...(i === 0 && bands.length
-            ? {
-                markArea: {
-                  silent: true,
-                  itemStyle: { color: markFill },
-                  data: bands.map(([from, to]) => [{ xAxis: from }, { xAxis: to }]),
-                },
-              }
-            : {}),
+          // markArea off a series — so the first one carries them all and they
+          // are silent, which keeps them out of the axis tooltip's own hit
+          // testing. Colour rides on each item rather than on the markArea,
+          // because one markArea has to carry several kinds.
+          ...(i === 0 && areas.length ? { markArea: { silent: true, data: areas } } : {}),
           // Frame data is one point per second and genuinely spiky; smoothing it
           // would round off the stutters the chart exists to show.
           smooth: false,
@@ -205,12 +232,62 @@ function render() {
 
 function resize() {
   chart?.resize()
+  placeOverlay()
+}
+
+// ---- the shared time selection ----
+//
+// Drag horizontally on any chart and every chart on the page highlights the same
+// span. The highlight is this div, positioned in pixels — NOT a markArea and not
+// an ECharts brush, because either would mean a full setOption on every chart on
+// every pointermove. See composables/useChartSelection for the rest of the
+// argument.
+const selection = defineModel<TimeSelection>('selection', { default: null })
+
+const overlay = ref<HTMLDivElement>()
+
+useChartSelection({ el: () => el.value, chart: () => chart, selection })
+
+// placeOverlay positions the highlight over the selected span, clamped to the
+// plot rectangle so it never paints over the axis labels.
+//
+// It is the only thing a drag runs. It writes three style properties and touches
+// no chart option, which is what keeps thirteen mirrored charts cheap.
+function placeOverlay() {
+  const box = overlay.value
+  if (!box) return
+  const sel = selection.value
+  if (!chart || !sel) {
+    box.style.display = 'none'
+    return
+  }
+  const a = pixelAtTime(chart, sel[0])
+  const b = pixelAtTime(chart, sel[1])
+  if (a === null || b === null) {
+    box.style.display = 'none'
+    return
+  }
+  const left = Math.max(aligned.value ? ALIGNED_GRID_LEFT : 58, Math.min(a, b))
+  const right = Math.min(chart.getWidth() - (aligned.value ? ALIGNED_GRID_RIGHT : 22), Math.max(a, b))
+  if (right <= left) {
+    // The span is entirely outside this chart's window. Hidden rather than
+    // clamped to a sliver, which would claim a selection that is not there.
+    box.style.display = 'none'
+    return
+  }
+  box.style.display = 'block'
+  box.style.left = `${left}px`
+  box.style.width = `${right - left}px`
 }
 
 onMounted(() => {
   chart = echarts.init(el.value!, undefined, { renderer: 'canvas' })
   render()
-  resizeObserver = new ResizeObserver(() => chart?.resize())
+  placeOverlay()
+  resizeObserver = new ResizeObserver(() => {
+    chart?.resize()
+    placeOverlay()
+  })
   resizeObserver.observe(el.value!)
   window.addEventListener('resize', resize)
 })
@@ -220,6 +297,7 @@ onBeforeUnmount(() => {
   resizeObserver?.disconnect()
   resizeObserver = null
   chart?.dispose()
+  chart = null
 })
 
 watch(
@@ -231,22 +309,56 @@ watch(
     props.xMax,
     props.yMin,
     props.yMax,
-    props.marks,
+    props.bands,
     locale.value,
     theme.value,
   ],
-  render,
+  () => {
+    render()
+    // The axis may have moved under the highlight, so it is repositioned after
+    // the re-render rather than left where the old geometry put it.
+    placeOverlay()
+  },
   { deep: true },
 )
+
+// Its OWN watcher, shallow, and deliberately not part of the list above. That
+// list is deep and re-runs setOption(opt, true); adding the selection to it would
+// turn one drag into fourteen full chart rebuilds per pointer event.
+watch(selection, placeOverlay)
 </script>
 
 <template>
-  <div ref="el" class="chart"></div>
+  <div class="chart-wrap">
+    <div ref="el" class="chart"></div>
+    <!-- pointer-events: none so it never intercepts the drag that draws it, nor
+         the hover that drives the axis tooltip underneath. -->
+    <div ref="overlay" class="selection" aria-hidden="true"></div>
+  </div>
 </template>
 
 <style scoped>
+.chart-wrap {
+  position: relative;
+}
 .chart {
   width: 100%;
   height: 280px;
+  /* The only standing hint that a drag does something. The caption above the
+     charts says so once; this says it wherever the pointer happens to be. */
+  cursor: crosshair;
+}
+.selection {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  display: none;
+  pointer-events: none;
+  /* The interaction accent rather than a colour of its own: this marks what the
+     reader picked, and it must not be mistaken for one of the shaded bands
+     underneath, which describe what the game did. */
+  background: color-mix(in oklab, var(--color-accent) 14%, transparent);
+  border-left: 1px solid color-mix(in oklab, var(--color-accent) 55%, transparent);
+  border-right: 1px solid color-mix(in oklab, var(--color-accent) 55%, transparent);
 }
 </style>

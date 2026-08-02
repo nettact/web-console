@@ -20,6 +20,8 @@ import { computed, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { api, type ProbeTarget, type Sample, type SeriesInfo } from '../../api'
 import MetricChart from '../MetricChart.vue'
+import type { ChartBand } from '../../lib/chartBands'
+import type { TimeSelection } from '../../composables/useChartSelection'
 import { useMetricMeta } from '../../composables/useMetricMeta'
 import { kindColor } from '../../lib/metricMeta'
 import { targetLabel } from '../../lib/targetLabels'
@@ -33,7 +35,20 @@ const props = defineProps<{
   // profile links none, or the profile has since been deleted — in every one of
   // those cases the section falls back to the agent's own gateway/ICMP monitors.
   monitorIds: string[]
+  // The run's frameless stretches, shaded here as well as on the frame charts.
+  // A blank in an RTT line and a blank in a frame-rate line look identical, and
+  // "the game was minimised" has to be readable from either.
+  bands?: ChartBand[]
 }>()
+
+// The page's shared time selection, passed straight through to every chart below.
+//
+// It is declared here rather than left to bubble because a model does not fall
+// through a component: without this the network charts would each keep a private
+// selection, so a drag on a frame chart would highlight nothing down here and a
+// drag down here would highlight nothing up there — which is the one thing the
+// feature is for.
+const selection = defineModel<TimeSelection>('selection', { default: null })
 
 const { t } = useI18n()
 const { metricLabel } = useMetricMeta()
@@ -360,7 +375,15 @@ watch(
 
     <template v-else>
       <div class="card chart-card" v-for="c in charts" :key="c.id">
-        <MetricChart :title="c.title" :metrics="c.metrics" :x-min="startMs" :x-max="endMs" />
+        <MetricChart
+          :title="c.title"
+          :metrics="c.metrics"
+          :x-min="startMs"
+          :x-max="endMs"
+          :bands="bands"
+          selectable
+          v-model:selection="selection"
+        />
         <p v-if="!someData(c.metrics)" class="empty-line hint">{{ t('metrics.noDataRange') }}</p>
       </div>
 
