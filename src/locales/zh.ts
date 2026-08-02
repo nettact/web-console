@@ -2644,11 +2644,12 @@ export default {
   },
 
   // 硬性「平台/构建不支持」类受阻权限的可用平台说明（按权限 id 查找）。缺失时
-  // 解决方案弹窗回落到通用说明。Windows 与 Linux 均已实现这些能力；Linux 上需要
-  // CAP_NET_RAW（root 自带，容器需 --cap-add NET_RAW）；macOS 版尚未实现。
+  // 解决方案弹窗回落到通用说明。Windows 与 Linux 均已实现这些能力；Linux 上裸 socket
+  // 需要 CAP_NET_RAW（root 自带；容器要 --user 0:0 加 --cap-add NET_RAW，因为镜像不带
+  // 文件能力，只加 --cap-add 对非 root 进程无效）；macOS 版尚未实现。
   permissionPlatforms: {
-    probe_icmp: 'Windows 与 Linux 版 Agent 已实现 ICMP 探测。Linux 上通常无需提权（走无特权 ping socket，取决于 net.ipv4.ping_group_range）；该 sysctl 被关闭时需 CAP_NET_RAW 或以 root 运行。macOS 版尚未实现。',
-    network_gateway_probe: '网关探测即对默认网关做 ICMP 探测，可用性与 ICMP 探测完全一致：Windows 与 Linux 已实现且通常无需提权，macOS 版尚未实现。',
+    probe_icmp: 'Windows 与 Linux 版 Agent 已实现 ICMP 探测（macOS 版尚未实现）。Linux 上不一定要提权：无特权 ping socket 即可，前提是 net.ipv4.ping_group_range 覆盖当前进程的 gid。裸机上多数发行版默认开着；容器里正相反——新网络命名空间的内核默认值是 “1 0”（空区间），dockerd 不会改它，所以非 root 容器两条路都没有。给容器加 --sysctl net.ipv4.ping_group_range="0 2147483647"，或让它以 root/CAP_NET_RAW 运行。',
+    network_gateway_probe: '网关探测即对默认网关做 ICMP 探测，可用性与 ICMP 探测完全一致：Windows 与 Linux 已实现，macOS 版尚未实现。Linux 上同样是 ping socket 就够，容器里则需要先用 --sysctl 打开 net.ipv4.ping_group_range。',
     network_neighbor_read: 'Windows 与 Linux 版 Agent 已实现邻居表读取（Linux 走 netlink，无需特权）；macOS 版尚未实现。',
     network_neighbor_hostname_read: 'Windows 与 Linux 版 Agent 已实现邻居主机名解析；macOS 版尚未实现。',
     diagnostic_traceroute_icmp: 'Windows 与 Linux 版 Agent 已实现 ICMP 路径诊断。与 ICMP 探测不同，它必须收到中间跳的 Time-Exceeded，因此 Linux 上必须有 CAP_NET_RAW 或以 root 运行（无特权 ping socket 收不到这类报文）。macOS 版尚未实现。',

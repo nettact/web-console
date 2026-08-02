@@ -2666,11 +2666,13 @@ export default {
 
   // Platform-availability note for a hard "unsupported" block, looked up by
   // permission id. Missing = the dialog falls back to a generic explanation. The
-  // Windows and Linux builds implement these; on Linux they need CAP_NET_RAW
-  // (root has it; containers need --cap-add NET_RAW). macOS does not yet.
+  // Windows and Linux builds implement these; a raw socket on Linux needs
+  // CAP_NET_RAW (root has it; a container needs --user 0:0 AND --cap-add NET_RAW,
+  // since the image carries no file capability and --cap-add alone does nothing
+  // for a non-root process). macOS does not yet.
   permissionPlatforms: {
-    probe_icmp: 'The Windows and Linux Agent builds implement ICMP probing. On Linux it usually needs no privilege at all (an unprivileged ping socket, subject to net.ipv4.ping_group_range); only when that sysctl is switched off does it require CAP_NET_RAW or root. The macOS build does not implement it yet.',
-    network_gateway_probe: 'Gateway probing is an ICMP echo to the default gateway, so it tracks ICMP availability exactly: implemented on Windows and Linux and usually needing no privilege, not yet on macOS.',
+    probe_icmp: 'The Windows and Linux Agent builds implement ICMP probing (macOS does not yet). Linux does not always need privilege: an unprivileged ping socket works whenever net.ipv4.ping_group_range covers the process gid. Most distributions leave it open on bare metal; inside a container the opposite holds — the kernel starts every network namespace at "1 0" (an empty range) and dockerd does not change it, so a non-root container has neither path. Add --sysctl net.ipv4.ping_group_range="0 2147483647" to the container, or run it as root / with CAP_NET_RAW.',
+    network_gateway_probe: 'Gateway probing is an ICMP echo to the default gateway, so it tracks ICMP availability exactly: implemented on Windows and Linux, not yet on macOS. A ping socket is enough on Linux too, but inside a container that socket first has to be opened with --sysctl net.ipv4.ping_group_range.',
     network_neighbor_read: 'The Windows and Linux Agent builds implement neighbor-table reads (Linux uses netlink and needs no privilege). The macOS build does not implement it yet.',
     network_neighbor_hostname_read: 'The Windows and Linux Agent builds implement neighbor hostname resolution. The macOS build does not implement it yet.',
     diagnostic_traceroute_icmp: 'The Windows and Linux Agent builds implement ICMP path diagnostics. Unlike ICMP probing it must receive intermediate Time-Exceeded replies, so on Linux it does require CAP_NET_RAW or root — an unprivileged ping socket never sees them. The macOS build does not implement it yet.',
