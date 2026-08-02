@@ -350,7 +350,7 @@ ul.interface-list li {
 }
 .notice.warn {
   color: var(--color-warning-text);
-  background: var(--warning-soft);
+  background: color-mix(in oklch, var(--color-warning) 14%, transparent);
   border-color: color-mix(in oklch, var(--color-warning) 30%, transparent);
 }
 .notice.small {

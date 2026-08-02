@@ -283,8 +283,8 @@ function attemptAt(hop: TraceReportView['hops'][number], idx: number) {
   font-size: 12.5px;
   line-height: 1.5;
   color: var(--color-warning-text);
-  background: var(--warning-soft);
-  border: 1px solid rgba(251, 191, 36, 0.3);
+  background: color-mix(in oklch, var(--color-warning) 14%, transparent);
+  border: 1px solid color-mix(in oklch, var(--color-warning) 30%, transparent);
   border-radius: var(--radius-sm);
 }
 .table-wrap {

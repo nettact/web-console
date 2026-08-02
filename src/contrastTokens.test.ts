@@ -1,5 +1,9 @@
 // @ts-expect-error The production tsconfig intentionally omits Node globals; Vitest runs this file in Node.
 import { readFileSync } from 'node:fs'
+// Aliased on purpose: Vite rewrites the literal `new URL(..., import.meta.url)` pattern into an asset
+// URL (http://localhost/...), which readFileSync rejects. A different identifier keeps it a plain URL.
+// @ts-expect-error The production tsconfig intentionally omits Node globals; Vitest runs this file in Node.
+import { URL as NodeURL } from 'node:url'
 import { describe, expect, it } from 'vitest'
 import appSource from './App.vue?raw'
 import channelAddSource from './components/ChannelAddForm.vue?raw'
@@ -21,7 +25,7 @@ import dashboardSource from './views/Dashboard.vue?raw'
 type Oklch = { l: number; c: number; h: number }
 type LinearRgb = [number, number, number]
 
-const css = readFileSync(new URL('../tokens.css', import.meta.url), 'utf8')
+const css = readFileSync(new NodeURL('../tokens.css', import.meta.url), 'utf8')
 
 function tokenBlock(selector: string) {
   const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
