@@ -2804,6 +2804,10 @@ export default {
       found: 'Capture itself is working — this GPU or its driver publishes no telemetry to read.',
       fix: 'There is nothing to install: the machine simply has nothing to report. Only an adapter or driver that publishes this telemetry will produce readings.',
     },
+    not_licensed: {
+      found: 'The sensor component found no active Microsoft Store license for NetTact, so it declines to collect. Nothing on this machine’s capture stack is missing or broken — Intel PresentMon is not the problem.',
+      fix: 'Install NetTact from the Microsoft Store (or purchase it if the trial has ended), then restart the Agent. Installing other software will not help.',
+    },
   },
 
   selector: {

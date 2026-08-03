@@ -2776,6 +2776,10 @@ export default {
       found: '采集本身是正常的——是这块显卡或它的驱动不发布可读的遥测数据。',
       fix: '没有任何东西需要安装：这台机器就是没有可上报的数据。只有发布该遥测的显卡或驱动才会有读数。',
     },
+    not_licensed: {
+      found: '传感组件未检测到 NetTact 的有效 Microsoft Store 许可，因此拒绝采集。这台机器的采集环境没有任何缺失或故障——与 Intel PresentMon 无关。',
+      fix: '请从 Microsoft Store 安装 NetTact（试用已结束则需购买），然后重启 Agent。安装其他软件对此没有帮助。',
+    },
   },
 
   selector: {

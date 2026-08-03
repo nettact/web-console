@@ -67,6 +67,12 @@ const REASON_CATEGORY = new Map<string, RemediationCategory>([
   ['session_lost', 'agent_sensor'],
   ['unsupported_os', 'unsupported'],
   ['gpu_telemetry_unavailable', 'unsupported'],
+  // The Store-edition sensor refusing to collect without a Microsoft Store
+  // license. Nothing on the machine's capture stack is missing or broken —
+  // there is nothing to install, start, or elevate — so it routes with the
+  // "nothing to install anywhere" group; the reason text carries the actual
+  // remedy (install/purchase from the Store).
+  ['not_licensed', 'unsupported'],
 ])
 
 // What the console actually knows about the cause. Three states, not two:
