@@ -824,22 +824,15 @@ function fmtAge(seconds: number | null): string {
 
 const primaryWifi = computed(() => wifiRows.value.find((adapter) => adapter.connected) ?? wifiRows.value[0] ?? null)
 // The Agent resolves the OS default gateway with the same logic used by the
-// gateway monitor. Match that gateway back to its interface instead of choosing
-// the first name-sorted adapter that happens to expose any gateway: several
-// connected adapters may each have one, while only one owns default egress.
+// gateway monitor and names the interface it belongs to, so that name is the
+// join key — never the gateway address. Several adapters can carry the same
+// gateway: a disconnected Wi-Fi adapter keeps a stale route to the LAN gateway
+// its wired sibling now owns, and matching by address picked that down adapter
+// and reported the whole path as failed on a host with no Wi-Fi in use.
 const defaultRouteInterface = computed(() => {
-  const adapters = ifaceData.value?.interfaces ?? []
-  const route = ifaceData.value?.default_route
-  if (!route) return null
-
-  const gatewayMatches = route.gateway
-    ? adapters.filter((adapter) => adapter.gateway === route.gateway)
-    : []
-  return gatewayMatches.find((adapter) => adapter.name === route.interface)
-    ?? gatewayMatches.find((adapter) => adapter.up)
-    ?? gatewayMatches[0]
-    ?? adapters.find((adapter) => adapter.name === route.interface)
-    ?? null
+  const name = ifaceData.value?.default_route?.interface
+  if (!name) return null
+  return (ifaceData.value?.interfaces ?? []).find((adapter) => adapter.name === name) ?? null
 })
 const pathInterfaceKind = computed<'wifi' | 'wired' | 'unknown'>(() => {
   const adapter = defaultRouteInterface.value

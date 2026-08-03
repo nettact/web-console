@@ -212,6 +212,36 @@ describe('Dashboard network adapter list', () => {
     expect(wrapper!.get('.path-diagnosis').text()).not.toContain('default egress interface')
   })
 
+  it('ignores a disconnected adapter holding a stale route to the same gateway', async () => {
+    vi.setSystemTime(new Date('2026-07-13T01:00:30Z'))
+    // The wired NIC owns default egress; the unplugged Wi-Fi adapter kept a
+    // stale route to that same gateway. Joining the route by gateway address
+    // named the down adapter and failed the whole path on a wired host.
+    const staleWifiRoute: AgentInterfaces = {
+      wifi: { state: 'ok', sampled_at: '2026-07-13T01:00:00Z', stale: false },
+      default_route: { gateway: '192.168.66.1', interface: 'Ethernet' },
+      interfaces: [
+        {
+          name: 'Ethernet', addrs: ['192.168.66.21/24'], gateway: '192.168.66.1',
+          dns: [], up: true, is_wireless: false, updated_at: '2026-07-13T01:00:00Z',
+        },
+        {
+          ...connected.interfaces[0],
+          name: 'WLAN', up: false, gateway: '192.168.66.1',
+          wifi: { ...connected.interfaces[0].wifi!, state: 'disconnected', ssid: '' },
+        },
+      ],
+    }
+
+    await render(staleWifiRoute)
+
+    const node = wrapper!.findAll('.path-node')[1]
+    expect(node.text()).toContain('Ethernet')
+    expect(node.text()).toContain('Normal')
+    expect(node.text()).not.toContain('WLAN')
+    expect(wrapper!.get('.path-diagnosis').text()).not.toContain('default egress interface')
+  })
+
   it('shows Wi-Fi details when the wireless adapter owns the default route', async () => {
     vi.setSystemTime(new Date('2026-07-13T01:00:30Z'))
     const wirelessDefault: AgentInterfaces = {
