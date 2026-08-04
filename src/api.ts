@@ -23,7 +23,7 @@ export interface ListenStatus {
 // off, so its absence means "show no update UI at all".
 export interface UpdateInfo {
   // How this install upgrades: 'store' (Microsoft Store desktop build), 'desktop'
-  // (download-center desktop build) or 'server' (standalone server-lite). It only
+  // (download-center desktop build) or 'server' (standalone NetTact Server). It only
   // changes the wording of the download action, never its destination.
   install_type: 'store' | 'desktop' | 'server'
   current_version: string
