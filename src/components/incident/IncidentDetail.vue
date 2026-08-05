@@ -24,6 +24,7 @@ import { toDateLocale } from '../../i18n'
 import { useIncidentLabels, severityTone } from '../../composables/useIncidentLabels'
 import { useMetricMeta } from '../../composables/useMetricMeta'
 import { usePolling } from '../../composables/usePolling'
+import { openEventStream } from '../../lib/sse'
 import SnapshotSection from './SnapshotSection.vue'
 import TraceCard from './TraceCard.vue'
 import FluctuationsTable from '../FluctuationsTable.vue'
@@ -41,8 +42,17 @@ function presenceOf(agentId: string): 'online' | 'offline' | '' {
   if (!row) return ''
   return row.presence === 'online' ? 'online' : 'offline'
 }
-const { sevLabel, layerLabel, kindLabel, resolveReasonLabel, comparatorSymbol, comparatorLabel } =
-  useIncidentLabels()
+const {
+  sevLabel,
+  layerLabel,
+  kindLabel,
+  resolveReasonLabel,
+  comparatorSymbol,
+  comparatorLabel,
+  attributionSentence,
+  clueLabel,
+  cluePolarity,
+} = useIncidentLabels()
 const { metricLabel, probeReasonLabel } = useMetricMeta()
 
 const detail = ref<IncidentDetail | null>(null)
@@ -68,6 +78,21 @@ const error = ref('')
 
 const incident = computed(() => detail.value?.incident ?? null)
 const members = computed(() => detail.value?.members ?? [])
+// The typed evidence behind the incident's attribution sentence, if any.
+const attrClues = computed(() => incident.value?.attribution_evidence ?? [])
+// A short "here is the sentence" — empty means no attribution, so the drawer
+// falls back to the layer pill and only shows the advisory when evidence is thin.
+const attributionLine = computed(() =>
+  incident.value ? attributionSentence(incident.value.attribution ?? '', attrClues.value) : '',
+)
+// The advisory hint is shown only when the evidence itself says it would help
+// (no gateway or reference target to compare) and the fault is still open.
+const showAttributionHint = computed(
+  () =>
+    incident.value?.state === 'open' &&
+    !attributionLine.value &&
+    attrClues.value.some((c) => c.kind === 'no_reference'),
+)
 // Count of distinct targets STILL failing right now — computed server-side from
 // live detector state, deliberately not derived from the member count, whose
 // evidence is immutable.
@@ -170,6 +195,7 @@ const poller = usePolling(load, { intervalMs: 4000 })
 const dialog = ref<HTMLElement | null>(null)
 const closeBtn = ref<HTMLButtonElement | null>(null)
 let lastFocused: HTMLElement | null = null
+let offIncidentSSE: (() => void) | undefined
 
 function focusable(): HTMLElement[] {
   if (!dialog.value) return []
@@ -208,10 +234,26 @@ onMounted(() => {
   window.addEventListener('keydown', onKeydown, true)
   nextTick(() => closeBtn.value?.focus())
   poller.start()
+  // INCIDENT-003: the drawer's poller goes idle once nothing is collecting, but a
+  // sibling confirm/resolve on the same Agent or a landing trace can still change
+  // THIS incident's attribution (the server broadcasts incident.changed for it).
+  // Restart the poller so the conclusion does not sit stale until the drawer is
+  // reopened; onOpen converges after a reconnect, which does not replay the
+  // missed event. All refreshes go through the poller's single-flight, so a
+  // start() that races an in-flight tick is queued rather than dropped, and the
+  // stream is closed on unmount so nothing can restart the loop afterwards.
+  const stream = openEventStream({
+    onOpen: () => poller.start(),
+    onIncident: (ev) => {
+      if (ev.incident_id && ev.incident_id === props.incidentId) poller.start()
+    },
+  })
+  offIncidentSSE = () => stream.close()
 })
 onBeforeUnmount(() => {
   window.removeEventListener('keydown', onKeydown, true)
   poller.stop()
+  offIncidentSSE?.()
   lastFocused?.focus?.()
 })
 </script>
@@ -261,6 +303,23 @@ onBeforeUnmount(() => {
             {{ t('incidents.detail.abnormalTargets', { n: abnormalTargetCount }) }}
           </span>
         </div>
+        <!-- INCIDENT-003: the one-line "where is the problem most likely" with its
+             evidence. Always visible when an attribution exists; every conclusion
+             ships its ✓/✗ clues, never a bare claim. -->
+        <div v-if="attributionLine" class="attribution" role="note">
+          <p class="attribution-sentence">{{ attributionLine }}</p>
+          <ul class="attribution-clues">
+            <li
+              v-for="(c, i) in attrClues"
+              :key="c.kind + '-' + i"
+              class="clue"
+              :class="cluePolarity(c.kind)"
+            >{{ clueLabel(c) }}</li>
+          </ul>
+        </div>
+        <p v-else-if="showAttributionHint" class="notice" role="note">
+          {{ t('incidents.attribution.advisory.no_reference') }}
+        </p>
         <dl class="facts">
           <div><dt>{{ t('incidents.detail.openedAt') }}</dt><dd>{{ fmtDateTime(incident.opened_at) }}</dd></div>
           <div v-if="incident.resolved_at">
@@ -729,6 +788,45 @@ onBeforeUnmount(() => {
   border-radius: var(--radius-input);
   padding: var(--space-2xs) var(--space-xs);
   margin: var(--space-xs) 0;
+}
+.attribution {
+  margin: var(--space-2xs) 0 var(--space-sm);
+  padding: var(--space-xs) var(--space-sm);
+  background: var(--surface-2);
+  border: var(--rule-hair) solid var(--color-rule);
+  border-radius: var(--radius-input);
+}
+.attribution-sentence {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: var(--text-md);
+  font-weight: 600;
+  line-height: 1.35;
+  color: var(--color-ink);
+}
+.attribution-clues {
+  list-style: none;
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2xs);
+  margin: var(--space-2xs) 0 0;
+  padding: 0;
+}
+/* A clue chip's ✓/✗ mark is the primary signal; colour is an enhancement only. */
+.clue {
+  font-size: var(--text-xs);
+  padding: var(--space-3xs) var(--space-2xs);
+  border-radius: var(--radius-input);
+  border: var(--rule-hair) solid var(--color-rule);
+  color: var(--color-ink-2);
+}
+.clue.ok {
+  color: var(--color-success);
+  border-color: color-mix(in srgb, var(--color-success) 35%, var(--color-rule));
+}
+.clue.fail {
+  color: var(--color-danger-text);
+  border-color: color-mix(in srgb, var(--color-danger) 35%, var(--color-rule));
 }
 .timeline {
   list-style: none;

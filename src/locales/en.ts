@@ -375,7 +375,7 @@ export default {
     thLayer: 'Layer',
     thState: 'State',
     thTitle: 'Fault',
-    thSuspectedLayer: 'Suspected layer',
+    thSuspectedLayer: 'Suspected location',
     thSeverity: 'Severity',
     thSummary: 'Summary',
     thStartTime: 'First seen',
@@ -446,6 +446,61 @@ export default {
       dns: 'DNS',
       service: 'Service',
       wireless: 'Wireless',
+    },
+    // INCIDENT-003: one-line "where is the problem most likely" attribution. The
+    // sentence values must stay verbatim-equal to notification/attribution.go.
+    attribution: {
+      loc: {
+        router: 'Router',
+        isp: 'ISP line',
+        dns: 'DNS',
+        proxy: 'Proxy',
+        service: 'Remote service',
+        device: 'This computer',
+      },
+      sentence: {
+        router:
+          "Gateway unreachable — the problem is most likely at the router (or this machine's link to it).",
+        isp: 'Gateway probe OK but multiple public targets are unreachable — the problem is most likely on the ISP line.',
+        dns: 'Name lookups are failing while direct-IP probes succeed — the problem is most likely at DNS.',
+        proxy:
+          'Multiple probes through a proxy failed on the egress path — the problem is most likely at that proxy (or the link to it).',
+        proxy_one:
+          'A probe through a proxy failed on the egress path — the problem is most likely at that proxy (or the link to it).',
+        proxy_tunnel:
+          'Multiple probes through a tunnel failed on the egress path — the problem is most likely at that tunnel (or the link to it).',
+        proxy_tunnel_one:
+          'A probe through a tunnel failed on the egress path — the problem is most likely at that tunnel (or the link to it).',
+        service_responded:
+          'The target is reachable but returns errors — the network link is fine, the problem is most likely at the remote service itself.',
+        service:
+          'Other targets are fine and only this service is failing — the problem is most likely at the remote service.',
+        device: 'The problem is most likely at this computer.',
+      },
+      clue: {
+        gateway_down: 'gateway unreachable',
+        gateway_ok: 'gateway probe OK',
+        gateway_unconfirmed: 'gateway failing (unconfirmed)',
+        concurrent_public_failures: '{count} public targets failing at once',
+        dns_fail: '{count} DNS failures',
+        ip_ok: 'direct-IP probes OK',
+        only_target_failing: 'only this target is failing',
+        others_ok: '{count} other targets OK',
+        no_reference: 'no gateway or reference target to compare',
+        target_responded: 'target answered — network link OK',
+        proxy_fail: '{count} probes via proxy “{name}” failed on the egress path',
+        proxy_fail_one: 'a probe via proxy “{name}” failed on the egress path',
+        direct_ok: 'direct targets OK',
+        via_proxy: 'this target is probed via a proxy',
+        trace_died_in_lan: 'traceroute never left the local network',
+        trace_public_then_lost: 'traceroute lost after public hop {name}',
+        trace_reached: 'traceroute reached the target',
+        trace_proxy_unreachable: 'proxy address unreachable',
+        trace_proxy_reachable: 'proxy address reachable',
+      },
+      advisory: {
+        no_reference: 'Adding a gateway or public reference target gives a more accurate location.',
+      },
     },
     kind: {
       fault: {

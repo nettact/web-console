@@ -4,13 +4,36 @@
 // visible token instead of a blank. Shared by the incident detail, snapshot and
 // trace components so the vocabulary stays in one place.
 import { useI18n } from 'vue-i18n'
+import type { AttributionClue } from '../api'
+import { useMetricMeta } from './useMetricMeta'
 
 // Comparator → math symbol (locale-independent; a screen-reader label is provided
 // separately via comparatorLabel).
 const CMP_SYMBOL: Record<string, string> = { gt: '>', gte: '≥', lt: '<', lte: '≤', eq: '=' }
 
+// Attribution clue polarity: ok renders a ✓, fail a ✗, info no mark. Mirrors
+// notification.CluePolarity in server-core; a clue the console does not know
+// degrades to info (no mark, no hidden data).
+const CLUE_POLARITY: Record<string, 'ok' | 'fail' | 'info'> = {
+  gateway_ok: 'ok',
+  ip_ok: 'ok',
+  others_ok: 'ok',
+  direct_ok: 'ok',
+  target_responded: 'ok',
+  trace_reached: 'ok',
+  trace_proxy_reachable: 'ok',
+  gateway_down: 'fail',
+  concurrent_public_failures: 'fail',
+  dns_fail: 'fail',
+  only_target_failing: 'fail',
+  reason: 'fail',
+  proxy_fail: 'fail',
+  trace_died_in_lan: 'fail',
+}
+
 export function useIncidentLabels() {
   const { t, te } = useI18n()
+  const { probeReasonLabel } = useMetricMeta()
   // Translate `key`, else show the raw code (or an em dash when empty).
   const tr = (key: string, raw: string) => (raw && te(key) ? t(key) : raw || '—')
 
@@ -76,6 +99,40 @@ export function useIncidentLabels() {
     comparatorSymbol: (c: string) => CMP_SYMBOL[c] ?? c,
     comparatorLabel: (c: string) => tr(`incidents.cmp.${c}`, c),
     errorClassLabel: (c: string) => tr(`incidents.snap.errorClass.${c}`, c),
+
+    // INCIDENT-003 attribution: the user-language position label, the one-line
+    // sentence ('' when there is no attribution — the caller then falls back to
+    // the layer wording), and one clue as a short line with ✓/✗.
+    attributionLabel: (loc: string) => tr(`incidents.attribution.loc.${loc}`, loc),
+    attributionSentence: (loc: string, clues: AttributionClue[]) => {
+      let key = `incidents.attribution.sentence.${loc}`
+      if (loc === 'proxy') {
+        const proxyClue = clues.find((c) => c.kind === 'proxy_fail')
+        if (proxyClue?.type === 'wireguard') key += '_tunnel'
+        if (proxyClue?.count === 1) key += '_one'
+      }
+      if (loc === 'service' && clues.some((c) => c.kind === 'target_responded')) {
+        key += '_responded'
+      }
+      return loc && te(key) ? t(key) : ''
+    },
+    clueLabel: (c: AttributionClue) => {
+      const pol = CLUE_POLARITY[c.kind]
+      const mark = pol === 'ok' ? '✓ ' : pol === 'fail' ? '✗ ' : ''
+      // The reason clue reuses the probe-reason translation (there is no
+      // separate clue.reason key on purpose).
+      if (c.kind === 'reason') return mark + probeReasonLabel(c.reason_code ?? 0)
+      const singular = c.kind === 'proxy_fail' && c.count === 1
+      const key = `incidents.attribution.clue.${c.kind}${singular ? '_one' : ''}`
+      // Unknown kinds degrade to the raw code with info polarity — the composable's
+      // fallback contract — so a server/console vocabulary drift shows a visible
+      // token instead of a blank chip.
+      if (!te(key)) return c.kind
+      let s = t(key, { count: c.count ?? 0, name: c.name ?? '' })
+      if (c.targets?.length) s += ` (${c.targets.join(', ')})`
+      return mark + s
+    },
+    cluePolarity: (kind: string) => CLUE_POLARITY[kind] ?? 'info',
   }
 }
 

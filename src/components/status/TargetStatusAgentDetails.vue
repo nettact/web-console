@@ -2,11 +2,12 @@
 import { ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
-import type { TargetAgentStatusRow, TargetStatusRow } from '../../api'
+import type { TargetAgentStatusRow, TargetFaultRef, TargetStatusRow } from '../../api'
 import { formatAvailability } from '../../lib/targetStatus'
 import { toDateLocale } from '../../i18n'
 import { notifications } from '../../notifications'
 import { serverInfo, ensureServerInfo } from '../../serverInfo'
+import { useIncidentLabels } from '../../composables/useIncidentLabels'
 import MonitorStateBadge from './MonitorStateBadge.vue'
 import PermissionChips from './PermissionChips.vue'
 import PermissionRemediationDialog from './PermissionRemediationDialog.vue'
@@ -19,6 +20,13 @@ const props = defineProps<{
 
 const router = useRouter()
 const { t, te, locale } = useI18n()
+const { attributionSentence, clueLabel } = useIncidentLabels()
+
+// The owning incident's one-line "where is the problem most likely", or '' when
+// there is no attribution (the panel then stays on the frozen title alone).
+function faultSentence(f: TargetFaultRef): string {
+  return attributionSentence(f.attribution ?? '', f.attribution_evidence ?? [])
+}
 
 // Remediation dialog for a clicked missing permission. A missing permission on a
 // target×agent pair is permission_blocked (not granted) unless the pair's whole
@@ -204,6 +212,15 @@ function openHistory(agentID: string): void {
         <div class="fault-main">
           <strong>{{ agent.fault.title }}</strong>
           <span class="severity" :class="`severity-${agent.fault.severity}`">{{ severityLabel(agent.fault.severity) }}</span>
+          <p v-if="faultSentence(agent.fault)" class="attribution-line">{{ faultSentence(agent.fault) }}</p>
+          <!-- Clues only render with the sentence they belong to; an incident whose
+               evidence is insufficient (e.g. only a no_reference advisory) keeps the
+               title-only fallback instead of an orphaned clue chip. -->
+          <ul v-if="faultSentence(agent.fault) && agent.fault.attribution_evidence?.length" class="attribution-clues">
+            <li v-for="(c, i) in agent.fault.attribution_evidence" :key="c.kind + '-' + i" class="clue">
+              {{ clueLabel(c) }}
+            </li>
+          </ul>
         </div>
         <div class="fault-meta">
           <span>{{ t('targetStatus.confirmSince', { time: fmtTime(agent.fault.observed_at) }) }}</span>
@@ -313,6 +330,33 @@ function openHistory(agentID: string): void {
 .fault-panel.is-confirming { border-left-color: var(--warning); background: var(--warning-soft); }
 .fault-main { gap: 7px; flex-wrap: wrap; }
 .fault-main strong { font-size: 11.5px; }
+/* The attribution sentence and its clue chips sit on their own full-width rows
+   inside the flex .fault-main, so the panel's 3-column grid stays intact. */
+.attribution-line {
+  flex-basis: 100%;
+  margin: 1px 0 0;
+  font-size: 11.5px;
+  font-weight: 600;
+  line-height: 1.4;
+  color: var(--color-ink);
+}
+.attribution-clues {
+  flex-basis: 100%;
+  list-style: none;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin: 0;
+  padding: 0;
+}
+.attribution-clues .clue {
+  font-size: 10.5px;
+  padding: 1px 6px;
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--color-rule);
+  color: var(--text-dim);
+  background: var(--surface-2);
+}
 .severity { padding: 1px 6px; border-radius: var(--radius-pill); color: var(--text-dim); font-size: 9.5px; background: var(--surface-2); }
 .severity-error,
 .severity-critical { color: var(--color-danger-text); }

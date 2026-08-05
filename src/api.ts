@@ -408,6 +408,11 @@ export interface TargetFaultRef {
   title: string
   observed_at: string
   confirmed_at: string
+  // Attribution of the owning incident: a user-language position code ('router' |
+  // 'isp' | 'dns' | 'proxy' | 'service' | 'device', '' when none) plus the typed
+  // evidence behind it.
+  attribution?: string
+  attribution_evidence?: AttributionClue[]
 }
 // One target's status as seen from one applicable Agent. The three dimensions are
 // independent: a pair may be execution_state=pending with probe_state=no_data.
@@ -684,6 +689,19 @@ export interface Device {
 // ---- Incidents (INCIDENT-001), immutable snapshots (INCIDENT-002) and shared
 // traceroute reports (DIAG-001) ----
 
+// One typed piece of evidence behind an incident attribution (INCIDENT-003).
+// Mirrors notification.AttributionClue on the Go side; keep the two in step.
+// `kind` is one of the server's Clue* codes; `count`/`targets`/`name`/`type`/
+// `reason_code` are the parameters a clue carries.
+export interface AttributionClue {
+  kind: string
+  count?: number
+  targets?: string[]
+  name?: string
+  type?: string
+  reason_code?: number
+}
+
 // One incident: a group-aware, stable fault lifecycle. `state` is 'open' |
 // 'resolved'; `resolve_reason` distinguishes a genuine recovery ('recovered')
 // from a configuration-driven termination ('configuration_changed'). Member
@@ -713,6 +731,11 @@ export interface Incident {
   // whole (ALERT-001). Both notify counts can then be 0 while everyone WAS told,
   // so the list reads this before concluding "recorded only".
   storm_id?: string
+  // INCIDENT-003: user-language "problem most likely at …" position and the typed
+  // evidence behind it. '' attribution means insufficient evidence — the UI falls
+  // back to the layer wording.
+  attribution?: string
+  attribution_evidence?: AttributionClue[]
   opened_at: string
   resolved_at: string | null
 }

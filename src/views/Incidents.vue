@@ -19,7 +19,7 @@ import { onSSE } from '../lib/sse'
 const { t, locale } = useI18n()
 const route = useRoute()
 const router = useRouter()
-const { sevLabel, layerLabel } = useIncidentLabels()
+const { sevLabel, layerLabel, attributionLabel } = useIncidentLabels()
 
 const incidents = ref<Incident[]>([])
 const summary = ref({ open: 0, opened_24h: 0, resolved_24h: 0, top_layer: '' })
@@ -398,7 +398,7 @@ onBeforeUnmount(() => {
               </td>
               <td><span class="badge" :class="severityTone(i.severity)">{{ sevLabel(i.severity) }}</span></td>
               <td>{{ i.group_name || '—' }}</td>
-              <td>{{ layerLabel(i.suspected_layer) }}</td>
+              <td>{{ i.attribution ? attributionLabel(i.attribution) : layerLabel(i.suspected_layer) }}</td>
               <td class="mono">{{ i.active_member_count }} / {{ i.member_count }}</td>
               <td class="hint">{{ fmtDateTime(i.opened_at) }}</td>
               <td class="hint mono">{{ duration(i) }}</td>

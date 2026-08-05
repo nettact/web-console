@@ -33,6 +33,10 @@ export function usePolling(task: () => Promise<boolean | number>, opts: PollingO
   let inFlight = false
   let stopped = false
   let backoff = base
+  // A start() that arrives while a tick is in flight is a refresh request that
+  // must not be silently dropped: the completing run sees it and schedules
+  // another pass rather than going idle on the pre-request result.
+  let pending = false
 
   function clear() {
     if (timer !== undefined) {
@@ -46,28 +50,41 @@ export function usePolling(task: () => Promise<boolean | number>, opts: PollingO
     timer = window.setTimeout(run, ms)
   }
   async function run() {
-    if (stopped || inFlight) return
+    if (stopped) return
+    if (inFlight) return // a start() that arrived mid-flight stays pending
     inFlight = true
+    pending = false
     try {
       const active = await task()
       inFlight = false
       backoff = base
       if (stopped) return
+      // A refresh requested while this tick ran wins over everything the task
+      // reported — in particular over a numeric sleep (a pending notification
+      // delay can span minutes, and the incident.changed that arrived means the
+      // drawer's state moved and should not sit stale that long).
+      if (pending) {
+        schedule(base)
+        return
+      }
       // A number is an explicit "look again at roughly this time"; true is the
       // base cadence; false goes idle until the caller restarts the loop.
       if (typeof active === 'number') schedule(Math.max(base, active))
       else if (active) schedule(base)
     } catch {
       inFlight = false
+      if (stopped) return
       backoff = Math.min(backoff * 1.8, maxBackoff)
       schedule(backoff) // keep retrying so a blip doesn't strand the loop
     }
   }
 
   // Run one tick immediately, then let run() decide whether to keep ticking.
-  // Safe to call repeatedly (e.g. when a new selection needs a fresh loop).
+  // Safe to call repeatedly (e.g. when a new selection needs a fresh loop, or
+  // when an external event signals the data changed and a refresh is wanted).
   function start() {
     stopped = false
+    pending = true
     schedule(0)
   }
   function stop() {
