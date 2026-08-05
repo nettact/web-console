@@ -822,6 +822,8 @@ export default {
     report: {
       title: 'Incident Diagnostic Report',
       exportPdf: 'Export PDF',
+      exporting: 'Generating PDF…',
+      exportFailed: 'Export failed, please try again.',
       headingMulti: '{first}; {n} targets affected in total',
       snapshotIncomplete: 'Snapshot status is {status}; the exported report may miss live evidence.',
       back: 'Back',

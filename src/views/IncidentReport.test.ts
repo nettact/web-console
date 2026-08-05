@@ -33,6 +33,15 @@ const serverInfoMock = vi.hoisted(() => ({
 }))
 vi.mock('../serverInfo', () => serverInfoMock)
 
+// The export rasterizes real DOM with html2canvas/jsPDF, which jsdom cannot do;
+// stub the generator so the wiring (button → call with the report element and a
+// filename) is what is under test.
+const reportPdfMock = vi.hoisted(() => ({
+  generateReportPdf: vi.fn().mockResolvedValue(undefined),
+  reportFilename: vi.fn((title: string, _date: Date) => `NetTact-${title || 'report'}.pdf`),
+}))
+vi.mock('../lib/reportPdf', () => reportPdfMock)
+
 import IncidentReport from './IncidentReport.vue'
 import { i18n, setLocale } from '../i18n'
 import type { FaultSignal } from '../api'
@@ -273,6 +282,8 @@ beforeEach(() => {
   setLocale('zh')
   seed()
   router = makeRouter()
+  reportPdfMock.generateReportPdf.mockReset().mockResolvedValue(undefined)
+  reportPdfMock.reportFilename.mockReset().mockImplementation((title: string, _d: Date) => `NetTact-${title || 'report'}.pdf`)
 })
 
 afterEach(() => {
@@ -508,6 +519,29 @@ describe('IncidentReport', () => {
     // render as "连接成功 0".
     expect(text).toContain('请求被拒绝')
     expect(text).not.toContain('连接成功')
+  })
+
+  it('downloads a PDF directly instead of opening a print dialog', async () => {
+    const wrapper = await mountReport()
+    const btn = wrapper.find('.toolbar .btn.primary')
+
+    // While the (stubbed) generator is in flight the button shows progress and
+    // is disabled; a second click is ignored.
+    let release!: () => void
+    reportPdfMock.generateReportPdf.mockReturnValue(new Promise<void>((r) => (release = r)))
+    await btn.trigger('click')
+    expect(btn.text()).toContain('生成 PDF…')
+    expect(btn.attributes('disabled')).toBeDefined()
+    expect(reportPdfMock.generateReportPdf).toHaveBeenCalledTimes(1)
+
+    const [el, name] = reportPdfMock.generateReportPdf.mock.calls[0]
+    expect(name).toMatch(/\.pdf$/)
+    expect((el as HTMLElement).classList.contains('report')).toBe(true)
+
+    release()
+    await flushPromises()
+    expect(btn.text()).toContain('导出 PDF')
+    expect(btn.attributes('disabled')).toBeUndefined()
   })
 
   it('shows an error state instead of the report when the incident cannot be read', async () => {

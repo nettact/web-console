@@ -6,12 +6,11 @@
 // server fact already visible in the incident detail drawer; the report just
 // assembles them for people who do not use NetTact.
 //
-// PDF export is the browser's own Print → Save as PDF. The server / desktop app
-// is a single Go binary and bundles no headless renderer, so there is no
-// server-side PDF path; the print stylesheet below is the whole export pipeline,
-// and the toolbar is the only part hidden on print — what you see is what you
-// get. v1 shares the exported PDF file; in-app anonymous share links are out of
-// scope (see the todo).
+// PDF export rasterizes the report client-side (html2canvas + jsPDF, loaded
+// lazily) and downloads a real multi-page PDF — no browser print dialog, which
+// would invite picking a real printer or hunting for "Save as PDF". The print
+// stylesheet below remains only for a manual Ctrl+P. v1 shares the exported PDF
+// file; in-app anonymous share links are out of scope (see the todo).
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
@@ -25,6 +24,8 @@ import { useMetricMeta } from '../composables/useMetricMeta'
 import { toDateLocale } from '../i18n'
 import { fmtBytes } from '../lib/format'
 import { formatAvailability } from '../lib/targetStatus'
+import { generateReportPdf, reportFilename } from '../lib/reportPdf'
+import { pushToast } from '../toasts'
 import type { FaultSignal, ProbeRound, SnapshotEntry, TimelineEntry, TraceReportView } from '../api'
 
 const route = useRoute()
@@ -277,8 +278,23 @@ function goBack() {
   if (window.history.length > 1) router.back()
   else router.push('/incidents')
 }
-function exportPdf() {
-  window.print()
+
+// Direct PDF download: rasterize the report and save the file, with no browser
+// print dialog (users would otherwise be offered a real printer and have to
+// hunt for "Save as PDF"). The libraries are loaded lazily on first use.
+const reportEl = ref<HTMLElement | null>(null)
+const exporting = ref(false)
+async function exportPdf() {
+  if (exporting.value || !data.value || !reportEl.value) return
+  exporting.value = true
+  try {
+    await generateReportPdf(reportEl.value, reportFilename(reportHeading.value, new Date()))
+  } catch (e) {
+    pushToast({ tone: 'danger', title: t('incidents.report.exportFailed') })
+    console.error('report pdf export failed', e)
+  } finally {
+    exporting.value = false
+  }
 }
 </script>
 
@@ -288,8 +304,13 @@ function exportPdf() {
     <header class="toolbar">
       <button type="button" class="btn" @click="goBack">← {{ t('incidents.report.back') }}</button>
       <h1>{{ t('incidents.report.title') }}</h1>
-      <button type="button" class="btn primary" :disabled="loading || !!error || !data" @click="exportPdf">
-        {{ t('incidents.report.exportPdf') }}
+      <button
+        type="button"
+        class="btn primary"
+        :disabled="loading || !!error || !data || exporting"
+        @click="exportPdf"
+      >
+        {{ exporting ? t('incidents.report.exporting') : t('incidents.report.exportPdf') }}
       </button>
     </header>
 
@@ -300,7 +321,7 @@ function exportPdf() {
       <button type="button" class="btn" @click="goBack">← {{ t('incidents.report.back') }}</button>
     </div>
 
-    <article v-else-if="data" class="report">
+    <article v-else-if="data" ref="reportEl" class="report">
       <header class="report-head">
         <div class="brand">NetTact</div>
         <h1>{{ reportHeading }}</h1>
@@ -732,7 +753,9 @@ function exportPdf() {
   --chip-open: #b3261e;
   --chip-open-bg: #fdf3f2;
   --chip-open-bd: #e5b9b5;
-  max-width: 840px;
+  /* A4 width (794px at 96dpi): the sheet is a document, and pinning it here means
+     the export capture needs no layout shift on desktop. */
+  max-width: 794px;
   margin: 0 auto;
   padding: 40px 52px 32px;
   border: var(--rule-hair, 1px) solid var(--rule-2);
@@ -1126,17 +1149,27 @@ th.ttl {
 /* Narrow screens: the timeline's three fixed columns need more than a phone
    viewport once sheet padding is accounted for, and the document clips
    horizontal overflow — so stack the fields instead of letting the message
-   column be pushed off-screen. Tables already scroll via .table-scroll. */
+   column be pushed off-screen. Tables already scroll via .table-scroll. The
+   body:not(.export-capture) guard exempts the brief PDF-capture window, which
+   pins the report to the A4 desktop layout. */
 @media (max-width: 640px) {
-  .report {
+  body:not(.export-capture) .report {
     padding: 24px 18px 20px;
     border-radius: 10px;
   }
-  .timeline li {
+  body:not(.export-capture) .timeline li {
     grid-template-columns: minmax(0, 1fr);
     gap: 2px;
     padding-block: 4px;
   }
+}
+
+/* During PDF capture the tables must render fully: an overflow-x container
+   would be captured WITH its scrollbar and clip whatever does not fit its
+   visible box, silently dropping table content from the exported PDF. At A4
+   width the report's tables wrap to fit, so the scroll is unneeded. */
+body.export-capture .table-scroll {
+  overflow: visible;
 }
 
 @media print {

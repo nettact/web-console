@@ -819,6 +819,8 @@ export default {
     report: {
       title: '故障诊断报告',
       exportPdf: '导出 PDF',
+      exporting: '生成 PDF…',
+      exportFailed: '导出失败，请重试。',
       headingMulti: '{first}；共 {n} 个受影响目标',
       snapshotIncomplete: '快照状态为「{status}」，导出的报告可能缺少现场证据。',
       back: '返回',
