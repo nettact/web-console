@@ -721,6 +721,17 @@ const updateLatestLabel = computed(() => {
 const updateActionLabel = computed(() =>
   updateInfo.value?.install_type === 'store' ? t('update.openStore') : t('update.download'),
 )
+// When a Watchtower sidecar manages this install there is no manual download to
+// offer, and the default hint ("you confirm the install yourself") would be a
+// lie. Swap both for the auto-update wording.
+const updateSettingsHint = computed(() =>
+  updateInfo.value?.auto_update ? t('update.settingsHintAuto') : t('update.settingsHint'),
+)
+const updateAutoScheduleLabel = computed(() => {
+  const u = updateInfo.value
+  if (!u?.auto_update) return ''
+  return u.update_schedule ? t('update.autoScheduleCron', { cron: u.update_schedule }) : t('update.autoSchedule')
+})
 // The switch applies immediately (there is no Save button here), so a toast
 // carries the feedback and a failed write rolls the local state back.
 const updateNoticeOff = computed({
@@ -831,7 +842,10 @@ onMounted(() => {
     <section class="panel" v-if="updateInfo">
       <div class="panel-head"><h3>{{ t('update.settingsTitle') }}</h3></div>
       <div class="panel-body">
-        <p class="hint">{{ t('update.settingsHint') }}</p>
+        <p class="hint">{{ updateSettingsHint }}</p>
+        <p v-if="updateAutoScheduleLabel" class="hint">
+          {{ updateAutoScheduleLabel }}
+        </p>
         <p class="hint">
           {{ t('update.currentVersion') }}: <span class="mono">{{ updateInfo.current_version || '—' }}</span>
         </p>
@@ -841,7 +855,9 @@ onMounted(() => {
             {{ updateLatestLabel }}
           </span>
         </p>
-        <div v-if="updateInfo.update_available" class="row field-row">
+        <!-- Auto-updating installs have nothing for the operator to click: the
+             sidecar pulls and recreates on its own schedule. -->
+        <div v-if="updateInfo.update_available && !updateInfo.auto_update" class="row field-row">
           <a
             class="btn btn-primary"
             :href="updateInfo.download_url"

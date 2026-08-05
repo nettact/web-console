@@ -39,6 +39,12 @@ export interface UpdateInfo {
   download_url: string
   // Newest agent release, used to flag agents left behind. Omitted when unknown.
   latest_agent_version?: string
+  // Whether a Watchtower sidecar manages this install. When true the console says
+  // "will update itself" and offers no manual download action.
+  auto_update: boolean
+  // The 6-field cron the sidecar runs on (host-local time), e.g. "0 30 3 * * *".
+  // Empty when auto-update is off.
+  update_schedule?: string
   checked_at: string
 }
 export interface ServerInfo {

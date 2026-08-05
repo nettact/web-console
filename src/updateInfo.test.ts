@@ -28,6 +28,7 @@ const update = (extra: Partial<UpdateInfo> = {}): UpdateInfo => ({
   update_available: true,
   product_checked: true,
   download_url: 'https://d.nettact.org/',
+  auto_update: false,
   checked_at: '2026-07-31T12:00:00Z',
   ...extra,
 })

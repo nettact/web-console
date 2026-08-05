@@ -2968,11 +2968,17 @@ export default {
     bannerText: 'NetTact {version} 已发布，可以升级了',
     // Store 只报「有更新」、报不出版本号时的替代文案。
     bannerTextUnnamed: 'NetTact 有新版本可以升级了',
+    // 由 Watchtower 旁车自动更新的实例，横幅改为说明会自动更新，不再提供下载。
+    bannerTextAuto: 'NetTact {version} 将自动更新',
+    bannerTextAutoUnnamed: 'NetTact 有新版本，将自动更新',
     bannerDismiss: '关闭提示',
     download: '前往下载',
     openStore: '打开 Microsoft Store',
     settingsTitle: '软件更新',
-    settingsHint: '每天自动检查一次是否有新版本；下载和安装始终由你手动确认，不会自动更新。',
+    settingsHint: '每天自动检查一次是否有新版本。此实例由你手动更新，下载和安装始终由你确认。',
+    settingsHintAuto: '此实例由 Watchtower 旁车自动更新，下载与重启按它的计划进行，无需你手动操作。',
+    autoSchedule: '每晚在宿主机本地凌晨自动更新。',
+    autoScheduleCron: '按计划自动更新：{cron}（宿主机本地时间）。',
     currentVersion: '当前版本',
     latestVersion: '最新版本',
     upToDate: '已是最新版本',

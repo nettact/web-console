@@ -121,9 +121,16 @@ async function dismissBanner(): Promise<void> {
 // ---- update banner ----
 // A Store install can report an update it cannot name, so the message has a
 // version-less variant. The link always goes to the server-provided URL; the
-// install type only decides whether it reads "Open Microsoft Store".
+// install type only decides whether it reads "Open Microsoft Store". An install
+// managed by a Watchtower sidecar updates itself, so it says so instead of
+// offering a download.
 const updateText = computed(() => {
-  const v = serverInfo.update?.latest_version?.trim()
+  const u = serverInfo.update
+  if (u?.auto_update) {
+    const v = u.latest_version?.trim()
+    return v ? t('update.bannerTextAuto', { version: v }) : t('update.bannerTextAutoUnnamed')
+  }
+  const v = u?.latest_version?.trim()
   return v ? t('update.bannerText', { version: v }) : t('update.bannerTextUnnamed')
 })
 const updateActionLabel = computed(() =>
@@ -292,7 +299,10 @@ async function dismissUpdate(): Promise<void> {
 
       <div v-if="showUpdateBanner && serverInfo.update" class="setup-banner update-banner">
         <span class="setup-banner-text">{{ updateText }}</span>
+        <!-- Auto-updating installs have nothing to download; the sidecar handles
+             it. Only the dismiss stays, so the banner reads as news. -->
         <a
+          v-if="!serverInfo.update.auto_update"
           class="btn btn-primary btn-sm"
           :href="serverInfo.update.download_url"
           target="_blank"

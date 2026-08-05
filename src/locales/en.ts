@@ -3000,11 +3000,18 @@ export default {
     bannerText: 'NetTact {version} is available',
     // Used when the Store reports an update without naming its version.
     bannerTextUnnamed: 'A new version of NetTact is available',
+    // An install managed by a Watchtower sidecar updates itself; the banner says
+    // so instead of offering a download.
+    bannerTextAuto: 'NetTact {version} will be installed automatically',
+    bannerTextAutoUnnamed: 'A new version of NetTact will be installed automatically',
     bannerDismiss: 'Dismiss',
     download: 'Download',
     openStore: 'Open Microsoft Store',
     settingsTitle: 'Software update',
-    settingsHint: 'Checks once a day for a newer release. Downloading and installing is always yours to confirm — nothing updates itself.',
+    settingsHint: 'Checks once a day for a newer release. On this install you update by hand — downloading and installing is always yours to confirm.',
+    settingsHintAuto: 'This install is updated automatically by a Watchtower sidecar. The download and restart happen on its schedule, not on your action.',
+    autoSchedule: 'Updates itself nightly, in the host-local early morning.',
+    autoScheduleCron: 'Updates itself on schedule: {cron} (host-local time).',
     currentVersion: 'Current version',
     latestVersion: 'Latest version',
     upToDate: 'Up to date',
