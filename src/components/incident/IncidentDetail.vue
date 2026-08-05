@@ -9,6 +9,7 @@
 // component is keyed by incident id in the parent, so switching incidents tears
 // this instance down and late responses land on the discarded instance.
 import { ref, computed, onMounted, onBeforeUnmount, nextTick } from 'vue'
+import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import {
   api,
@@ -33,7 +34,14 @@ import { agentIndex } from '../../agentStatus'
 const props = defineProps<{ incidentId: string }>()
 const emit = defineEmits<{ close: [] }>()
 
+const router = useRouter()
 const { t, locale } = useI18n()
+
+// INCIDENT-004: the report is its own bare route (a print document), so exporting
+// navigates there rather than printing the drawer.
+function openReport() {
+  router.push(`/incidents/${props.incidentId}/report`)
+}
 
 // A member agent's live presence (online/offline) from the shared agent-status
 // store, so the incident view shows the same liveness as the Agent list.
@@ -277,9 +285,14 @@ onBeforeUnmount(() => {
           {{ incident.summary || incident.title }}
         </p>
       </div>
-      <button ref="closeBtn" class="drawer-close" @click="emit('close')" :aria-label="t('common.close')">
-        ×
-      </button>
+      <div class="drawer-actions">
+        <button type="button" class="drawer-action" @click="openReport">
+          {{ t('incidents.report.exportPdf') }}
+        </button>
+        <button ref="closeBtn" class="drawer-close" @click="emit('close')" :aria-label="t('common.close')">
+          ×
+        </button>
+      </div>
     </div>
 
     <div class="drawer-body">
@@ -570,6 +583,34 @@ onBeforeUnmount(() => {
   line-height: 1;
   cursor: pointer;
   transition: transform var(--dur-micro) var(--ease-out);
+}
+.drawer-actions {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: var(--space-2xs);
+}
+/* INCIDENT-004: the report entry. Sits beside the close button in the drawer
+   head; navigating to the report's bare route tears the drawer down. */
+.drawer-action {
+  min-height: 44px;
+  padding: var(--space-2xs) var(--space-sm);
+  border: var(--rule-hair) solid var(--color-rule-2);
+  border-radius: var(--radius-input);
+  background: var(--color-glass-subtle);
+  color: var(--color-accent-text);
+  font-size: var(--text-xs);
+  font-weight: 650;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: transform var(--dur-micro) var(--ease-out), border-color var(--dur-micro) var(--ease-out);
+}
+.drawer-action:hover,
+.drawer-action:focus-visible {
+  border-color: var(--color-accent);
+}
+.drawer-action:active {
+  transform: translateY(1px);
 }
 .drawer-close:focus-visible {
   outline: var(--rule-fine) solid var(--color-focus);

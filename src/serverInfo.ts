@@ -12,11 +12,13 @@ export const serverInfo = reactive<{
   loaded: boolean
   desktop: boolean
   os: string
+  version: string
   update: UpdateInfo | null
 }>({
   loaded: false,
   desktop: false,
   os: '',
+  version: '',
   update: null,
 })
 
@@ -28,6 +30,7 @@ export const serverInfo = reactive<{
 export function publishServerInfo(si: ServerInfo): void {
   serverInfo.desktop = si.listen?.desktop === true
   serverInfo.os = si.os
+  serverInfo.version = si.version
   serverInfo.update = si.update ?? null
   serverInfo.loaded = true
 }

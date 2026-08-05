@@ -50,6 +50,9 @@ export interface UpdateInfo {
 export interface ServerInfo {
   os: string
   native_notify: boolean
+  // The running build's version string, reported on every build regardless of
+  // update-check status ("dev" on an unstamped dev build).
+  version: string
   listen?: ListenStatus
   update?: UpdateInfo
 }
