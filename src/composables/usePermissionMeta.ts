@@ -10,7 +10,8 @@ import { useI18n } from 'vue-i18n'
 // lib/permissionSelection.ts rather than here. Deciding it from the permission id
 // alone was wrong in both directions: it told Linux operators that elevation
 // could not enable ICMP probing (it can, with CAP_NET_RAW) and told macOS
-// operators to run as Administrator for a capability that build does not have.
+// operators to escalate for ICMP probing, which runs unprivileged for every
+// user there — root fixes nothing.
 
 export function usePermissionMeta() {
   const { t, te } = useI18n()

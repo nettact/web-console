@@ -153,10 +153,11 @@ export function bucketAgentPermissions(perms: AgentPermission[]): PermissionBuck
 //
 // Whether a capability gap is fixable depends on the PLATFORM, not on the
 // permission id: `probe.icmp` on a Linux agent without CAP_NET_RAW is fixed by
-// running it privileged, while the same permission on macOS is simply not
-// implemented. Deciding from the id alone told Linux operators that elevation
-// could not help (it can) and told macOS operators to run as Administrator (it
-// changes nothing).
+// running it privileged, while the same permission on macOS runs unprivileged
+// for everyone — an agent still reporting it unsupported there is broken in
+// some other way no elevation fixes. Deciding from the id alone told Linux
+// operators that elevation could not help (it can) and told macOS operators to
+// escalate for nothing.
 export function categoryFor(p: AgentPermission, platform: EnrollPlatform): RemediationCategory {
   if (p.granted && p.supported) return 'dependency'
   if (!p.granted && p.supported) return 'permission_blocked'

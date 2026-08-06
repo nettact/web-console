@@ -84,9 +84,16 @@ describe('categoryFor', () => {
     }
   })
 
-  it('calls the same permissions a hard platform gap on macOS', () => {
-    // The macOS build does not implement them; elevation changes nothing.
-    for (const id of ['probe.icmp', 'network.gateway.probe', 'diagnostic.traceroute.icmp', 'diagnostic.traceroute.tcp']) {
+  it('splits macOS capability gaps by what root would actually fix', () => {
+    // Path diagnostics needs a raw ICMP socket on macOS, so root enables it —
+    // an elevation problem, same as Linux.
+    for (const id of ['diagnostic.traceroute.icmp', 'diagnostic.traceroute.tcp']) {
+      expect(categoryFor(perm(id, true, false, false), 'macos')).toBe('elevation')
+    }
+    // ICMP and gateway probing run unprivileged for every macOS user, so an
+    // agent still reporting them unsupported is broken in a way no elevation
+    // fixes — prescribing root there would be false advice.
+    for (const id of ['probe.icmp', 'network.gateway.probe']) {
       expect(categoryFor(perm(id, true, false, false), 'macos')).toBe('unsupported')
     }
   })
@@ -103,7 +110,9 @@ describe('categoryFor', () => {
 
   it('leads with the capability gap when a permission is neither granted nor supported', () => {
     // A policy line alone would not make these work, so the dialog must not open
-    // on the "just set this variable" flow.
+    // on the "just set this variable" flow. On macOS unsupported ICMP probing is
+    // not privilege-fixable (it already runs unprivileged for everyone), so the
+    // fallback guess stays a hard gap; on Linux privilege is the likely fix.
     expect(categoryFor(perm('probe.icmp', false, false, false), 'macos')).toBe('unsupported')
     expect(categoryFor(perm('probe.icmp', false, false, false), 'linux')).toBe('elevation')
   })

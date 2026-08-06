@@ -111,13 +111,22 @@ describe('sameSelection', () => {
 })
 
 describe('platformSupport', () => {
-  it('reports the macOS capability gap', () => {
-    // These are implemented in the Windows and Linux builds only.
-    for (const id of ['probe.icmp', 'network.gateway.probe', 'network.neighbor.read', 'diagnostic.traceroute.icmp']) {
-      expect(platformSupport(id, 'macos')).toBe('unsupported')
+  it('classifies macOS like Linux for the network capabilities', () => {
+    // The macOS build implements all of these; probing and neighbor reads run
+    // unprivileged, path diagnostics needs a raw socket (root) there too.
+    for (const id of ['probe.icmp', 'network.gateway.probe', 'network.neighbor.read']) {
+      expect(platformSupport(id, 'macos')).toBe('ok')
     }
+    expect(platformSupport('diagnostic.traceroute.icmp', 'macos')).toBe('privileged')
+    expect(platformSupport('diagnostic.traceroute.tcp', 'macos')).toBe('privileged')
     expect(platformSupport('probe.dns', 'macos')).toBe('ok')
     expect(platformSupport('host.cpu.read', 'macos')).toBe('ok')
+    // Temperature sensors sit behind IOKit/SMC, which the cgo-free build does
+    // not bind, and gopsutil cannot read per-process I/O on darwin — the two
+    // remaining hard macOS gaps. Elevation fixes neither.
+    expect(platformSupport('host.temperature.read', 'macos')).toBe('unsupported')
+    expect(platformSupport('host.process.io.read', 'macos')).toBe('unsupported')
+    expect(privilegeCanEnable('host.process.io.read', 'macos')).toBe(false)
   })
 
   it('only marks path diagnostics as privileged on Linux and in containers', () => {
@@ -141,9 +150,15 @@ describe('platformSupport', () => {
     // that DOES report it unsupported is fixed by running privileged.
     expect(platformSupport('probe.icmp', 'linux')).toBe('ok')
     expect(privilegeCanEnable('probe.icmp', 'linux')).toBe(true)
-    // On macOS nothing about privilege helps, because it is not implemented.
+    // On macOS the datagram ICMP socket is open to every user — there is no
+    // ping_group_range to fall foul of — so an agent reporting ICMP probing
+    // unsupported there is not fixed by root. Path diagnostics is: it needs a
+    // raw socket, same as Linux.
     expect(privilegeCanEnable('probe.icmp', 'macos')).toBe(false)
-    expect(privilegeCanEnable('diagnostic.traceroute.tcp', 'macos')).toBe(false)
+    expect(privilegeCanEnable('diagnostic.traceroute.tcp', 'macos')).toBe(true)
+    expect(privilegeCanEnable('diagnostic.traceroute.icmp', 'macos')).toBe(true)
+    // Temperature is unimplemented on macOS; elevation cannot enable it.
+    expect(privilegeCanEnable('host.temperature.read', 'macos')).toBe(false)
     // Windows needs elevation for TCP path diagnostics only.
     expect(privilegeCanEnable('diagnostic.traceroute.tcp', 'windows')).toBe(true)
     expect(privilegeCanEnable('probe.icmp', 'windows')).toBe(false)

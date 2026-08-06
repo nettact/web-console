@@ -68,7 +68,7 @@ describe('PermissionRemediationDialog', () => {
 
   it('shows the platform note and no env line for an unsupported block', () => {
     const w = render({ permId: 'probe.icmp', category: 'unsupported' })
-    expect(w.text()).toContain('Windows and Linux Agent builds')
+    expect(w.text()).toContain('Windows, Linux and macOS Agent builds')
     expect(w.find('pre').exists()).toBe(false)
   })
 

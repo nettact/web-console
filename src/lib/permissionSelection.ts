@@ -23,11 +23,12 @@ export type EnrollPlatform = 'windows' | 'macos' | 'linux' | 'docker'
 export type PlatformSupport = 'ok' | 'privileged' | 'component' | 'unsupported'
 
 // Path diagnostics has to RECEIVE the ICMP errors intermediate routers send back,
-// which off Windows takes a raw socket — CAP_NET_RAW or root. ICMP *probing* does
-// not: it only needs to send an echo and read the reply, which an unprivileged
-// ping socket (SOCK_DGRAM/IPPROTO_ICMP) does whenever net.ipv4.ping_group_range
-// covers the process gid — the default on common distributions and inside Docker.
-// Measured: an unprivileged user and a plain non-root container both get ICMP
+// which off Windows takes a raw socket — root, or CAP_NET_RAW on Linux. ICMP
+// *probing* does not: it only needs to send an echo and read the reply, which an
+// unprivileged datagram ICMP socket (SOCK_DGRAM/IPPROTO_ICMP) does — on Linux
+// whenever net.ipv4.ping_group_range covers the process gid (the default on
+// common distributions and inside Docker), on macOS unconditionally. Measured on
+// Linux: an unprivileged user and a plain non-root container both get ICMP
 // probing and gateway probing; only path diagnostics needs the privileged path.
 const NEEDS_RAW_SOCKET_OFF_WINDOWS = new Set([
   'diagnostic.traceroute.icmp',
@@ -88,24 +89,20 @@ export function componentCanEnable(id: string, platform: EnrollPlatform): boolea
   return platform === 'windows' && NEEDS_COMPONENT.has(id)
 }
 
-// Implemented only in the Windows and Linux builds today.
-const NOT_ON_MACOS = new Set([
-  'probe.icmp',
-  'network.gateway.probe',
-  'network.neighbor.read',
-  'network.neighbor.hostname.read',
-  'diagnostic.traceroute.icmp',
-  'diagnostic.traceroute.tcp',
-  // The macOS build reaches the sensors through cgo, which the agent does not use.
-  'host.temperature.read',
-])
+// The macOS build reads temperature sensors through nothing: the only macOS
+// sensor paths (IOKit/SMC) need bindings the cgo-free agent does not carry.
+// Per-process I/O counters are likewise unreadable there (gopsutil has no
+// cgo-free darwin implementation), and the agent honestly excludes them from
+// `supported`. Everything network-shaped that used to sit in this set — ICMP,
+// gateway, neighbors, both traceroutes — is implemented on macOS now (PF_ROUTE
+// sysctl + datagram/raw ICMP sockets) and classifies like Linux below.
+const UNSUPPORTED_ON_MACOS = new Set(['host.temperature.read', 'host.process.io.read'])
 
 // What to expect of a permission on a platform, used when choosing a policy at
 // enrollment. This answers "will this work once granted?", so ICMP probing counts
-// as plain `ok` on Linux: the usual configuration runs it unprivileged.
+// as plain `ok` on Linux and macOS: the usual configuration runs it unprivileged.
 export function platformSupport(id: string, platform: EnrollPlatform): PlatformSupport {
   if (platform !== 'windows' && WINDOWS_ONLY.has(id)) return 'unsupported'
-  if (platform === 'macos') return NOT_ON_MACOS.has(id) ? 'unsupported' : 'ok'
   if (platform === 'windows') {
     if (UNSUPPORTED_ON_WINDOWS.has(id)) return 'unsupported'
     // Reported before privilege for the same reason the remediation dialog
@@ -118,7 +115,10 @@ export function platformSupport(id: string, platform: EnrollPlatform): PlatformS
     // scheduled task runs as SYSTEM, so it is usually satisfied.
     return PRIVILEGED_ON_WINDOWS.has(id) ? 'privileged' : 'ok'
   }
-  // Linux and the Linux-based container image behave identically here.
+  if (platform === 'macos' && UNSUPPORTED_ON_MACOS.has(id)) return 'unsupported'
+  // macOS, Linux and the Linux-based container image agree from here: probing
+  // runs unprivileged and path diagnostics needs a raw socket (root, or
+  // CAP_NET_RAW on Linux).
   return NEEDS_RAW_SOCKET_OFF_WINDOWS.has(id) ? 'privileged' : 'ok'
 }
 
@@ -130,13 +130,20 @@ export function platformSupport(id: string, platform: EnrollPlatform): PlatformS
 // remediation question from the enrollment table would tell that operator the
 // platform cannot do it, which is false.
 export function privilegeCanEnable(id: string, platform: EnrollPlatform): boolean {
-  if (platform === 'macos') return false // not implemented; privilege is irrelevant
   // Elsewhere the component does not exist at all, so privilege changes nothing.
   if (platform !== 'windows' && WINDOWS_ONLY.has(id)) return false
   // On Windows the game permissions are deliberately absent from
   // ELEVATION_FIXES_ON_WINDOWS: an agent reporting them unsupported may simply
   // not have the component installed, and no privilege installs software.
   if (platform === 'windows') return ELEVATION_FIXES_ON_WINDOWS.has(id)
+  if (platform === 'macos') {
+    // Unlike Linux, macOS has no ping_group_range analogue: the datagram ICMP
+    // socket is available to every user, so an agent reporting probe.icmp or
+    // gateway probing unsupported there is not fixed by running as root —
+    // something else is wrong. Temperature is unimplemented outright. Only the
+    // raw-socket path diagnostics is privilege-fixable.
+    return NEEDS_RAW_SOCKET_OFF_WINDOWS.has(id)
+  }
   return (
     NEEDS_RAW_SOCKET_OFF_WINDOWS.has(id) || id === 'probe.icmp' || id === 'network.gateway.probe'
   )

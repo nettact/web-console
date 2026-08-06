@@ -2866,17 +2866,18 @@ export default {
 
   // Platform-availability note for a hard "unsupported" block, looked up by
   // permission id. Missing = the dialog falls back to a generic explanation. The
-  // Windows and Linux builds implement these; a raw socket on Linux needs
-  // CAP_NET_RAW (root has it; a container needs --user 0:0 AND --cap-add NET_RAW,
-  // since the image carries no file capability and --cap-add alone does nothing
-  // for a non-root process). macOS does not yet.
+  // Windows, Linux and macOS builds implement these; a raw socket needs root —
+  // on Linux CAP_NET_RAW is enough (root has it; a container needs --user 0:0
+  // AND --cap-add NET_RAW, since the image carries no file capability and
+  // --cap-add alone does nothing for a non-root process).
   permissionPlatforms: {
-    probe_icmp: 'The Windows and Linux Agent builds implement ICMP probing (macOS does not yet). Linux does not always need privilege: an unprivileged ping socket works whenever net.ipv4.ping_group_range covers the process gid. Most distributions leave it open on bare metal; inside a container the opposite holds — the kernel starts every network namespace at "1 0" (an empty range) and dockerd does not change it, so a non-root container has neither path. Add --sysctl net.ipv4.ping_group_range="0 2147483647" to the container, or run it as root / with CAP_NET_RAW.',
-    network_gateway_probe: 'Gateway probing is an ICMP echo to the default gateway, so it tracks ICMP availability exactly: implemented on Windows and Linux, not yet on macOS. A ping socket is enough on Linux too, but inside a container that socket first has to be opened with --sysctl net.ipv4.ping_group_range.',
-    network_neighbor_read: 'The Windows and Linux Agent builds implement neighbor-table reads (Linux uses netlink and needs no privilege). The macOS build does not implement it yet.',
-    network_neighbor_hostname_read: 'The Windows and Linux Agent builds implement neighbor hostname resolution. The macOS build does not implement it yet.',
-    diagnostic_traceroute_icmp: 'The Windows and Linux Agent builds implement ICMP path diagnostics. Unlike ICMP probing it must receive intermediate Time-Exceeded replies, so on Linux it does require CAP_NET_RAW or root — an unprivileged ping socket never sees them. The macOS build does not implement it yet.',
-    diagnostic_traceroute_tcp: 'The Windows and Linux Agent builds implement TCP path diagnostics, and both need extra privilege (Administrator on Windows, CAP_NET_RAW or root on Linux). The macOS build does not implement it yet.',
+    probe_icmp: 'The Windows, Linux and macOS Agent builds all implement ICMP probing. macOS normally needs no privilege: the datagram ICMP socket is open to every user, so an Agent reporting this unsupported on macOS is being blocked by something unusual (a sandbox or MDM policy) — running as root does not create the capability. Linux does not always need privilege either: an unprivileged ping socket works whenever net.ipv4.ping_group_range covers the process gid. Most distributions leave it open on bare metal; inside a container the opposite holds — the kernel starts every network namespace at "1 0" (an empty range) and dockerd does not change it, so a non-root container has neither path. Add --sysctl net.ipv4.ping_group_range="0 2147483647" to the container, or run it as root / with CAP_NET_RAW.',
+    network_gateway_probe: 'Gateway probing is an ICMP echo to the default gateway, so it tracks ICMP availability exactly: implemented on Windows, Linux and macOS. On macOS it normally needs no privilege — an unsupported report there points at a sandbox or MDM restriction, not a missing implementation. A ping socket is enough on Linux too, but inside a container that socket first has to be opened with --sysctl net.ipv4.ping_group_range.',
+    network_neighbor_read: 'The Windows, Linux and macOS Agent builds all implement neighbor-table reads, and none needs privilege for it (Linux uses netlink, macOS the PF_ROUTE routing sysctl). An unsupported report on macOS therefore means the routing sysctl itself was refused (a sandbox profile), not that the build lacks the capability.',
+    network_neighbor_hostname_read: 'The Windows, Linux and macOS Agent builds all implement neighbor hostname resolution.',
+    diagnostic_traceroute_icmp: 'The Windows, Linux and macOS Agent builds all implement ICMP path diagnostics. Unlike ICMP probing it must receive intermediate Time-Exceeded replies, which off Windows takes a raw ICMP socket: root on macOS, CAP_NET_RAW or root on Linux — an unprivileged ping socket never sees them.',
+    diagnostic_traceroute_tcp: 'The Windows, Linux and macOS Agent builds all implement TCP path diagnostics, and all need extra privilege (Administrator on Windows, CAP_NET_RAW or root on Linux, root on macOS).',
+    host_process_io_read: 'Per-process I/O counters are readable on Windows and Linux. The cgo-free macOS build has no way to read them, so the Agent reports the permission unsupported there outright — granting or elevating changes nothing.',
     game_process_detect: 'Frame data comes from the Windows graphics event stream, so only the Windows Agent build has this capability; other builds do not include the component. It also needs the Intel PresentMon service installed on the machine (see the fix).',
     game_performance_read: 'Frame data comes from the Windows graphics event stream, so only the Windows Agent build has this capability; other builds do not include the component. It also needs the Intel PresentMon service installed on the machine (see the fix).',
     game_gpu_read: 'GPU and video-memory telemetry comes through the same Windows-only component as the frame data, so no other build has this capability. Installing the component is necessary but not always sufficient here: this reads the adapter rather than the game’s own presentation, and many drivers publish no adapter telemetry at all. An Agent can therefore still report this unsupported with the component installed and working — in which case the machine simply has nothing to read, and neither Administrator access nor a capture-depth setting changes it.',
@@ -2907,7 +2908,7 @@ export default {
     elevationWindows: 'Windows: re-run the Agent as Administrator (right-click the executable → “Run as administrator”; when running as a service, set the service account to a privileged account or LocalSystem).',
     elevationOther: 'Other platforms: run the Agent as an account with the capability (e.g. root, or grant the matching capability).',
     reRunNote: 'Restart the Agent with the elevated privilege for the change to take effect.',
-    unsupportedIntro: 'The Agent’s current platform or build lacks this capability; neither granting the permission nor elevating privilege will enable it.',
+    unsupportedIntro: 'The Agent reports this capability as unavailable on this machine — either the platform or build lacks it, or something on the machine (a sandbox or management policy) blocks it. Neither granting the permission nor elevating privilege will enable it.',
     unsupportedGeneric: 'Deploy the Agent on a platform or build that supports this capability.',
     // Generic lead-in for the Agent-sensor cause. In practice the reason code
     // always supplies a more specific one; this only guards against an empty

@@ -2830,16 +2830,17 @@ export default {
   },
 
   // 硬性「平台/构建不支持」类受阻权限的可用平台说明（按权限 id 查找）。缺失时
-  // 解决方案弹窗回落到通用说明。Windows 与 Linux 均已实现这些能力；Linux 上裸 socket
-  // 需要 CAP_NET_RAW（root 自带；容器要 --user 0:0 加 --cap-add NET_RAW，因为镜像不带
-  // 文件能力，只加 --cap-add 对非 root 进程无效）；macOS 版尚未实现。
+  // 解决方案弹窗回落到通用说明。Windows、Linux 与 macOS 均已实现这些能力；裸 socket
+  // 需要 root——Linux 上 CAP_NET_RAW 即可（root 自带；容器要 --user 0:0 加
+  // --cap-add NET_RAW，因为镜像不带文件能力，只加 --cap-add 对非 root 进程无效）。
   permissionPlatforms: {
-    probe_icmp: 'Windows 与 Linux 版 Agent 已实现 ICMP 探测（macOS 版尚未实现）。Linux 上不一定要提权：无特权 ping socket 即可，前提是 net.ipv4.ping_group_range 覆盖当前进程的 gid。裸机上多数发行版默认开着；容器里正相反——新网络命名空间的内核默认值是 “1 0”（空区间），dockerd 不会改它，所以非 root 容器两条路都没有。给容器加 --sysctl net.ipv4.ping_group_range="0 2147483647"，或让它以 root/CAP_NET_RAW 运行。',
-    network_gateway_probe: '网关探测即对默认网关做 ICMP 探测，可用性与 ICMP 探测完全一致：Windows 与 Linux 已实现，macOS 版尚未实现。Linux 上同样是 ping socket 就够，容器里则需要先用 --sysctl 打开 net.ipv4.ping_group_range。',
-    network_neighbor_read: 'Windows 与 Linux 版 Agent 已实现邻居表读取（Linux 走 netlink，无需特权）；macOS 版尚未实现。',
-    network_neighbor_hostname_read: 'Windows 与 Linux 版 Agent 已实现邻居主机名解析；macOS 版尚未实现。',
-    diagnostic_traceroute_icmp: 'Windows 与 Linux 版 Agent 已实现 ICMP 路径诊断。与 ICMP 探测不同，它必须收到中间跳的 Time-Exceeded，因此 Linux 上必须有 CAP_NET_RAW 或以 root 运行（无特权 ping socket 收不到这类报文）。macOS 版尚未实现。',
-    diagnostic_traceroute_tcp: 'Windows 与 Linux 版 Agent 已实现 TCP 路径诊断，两者都需要提权（Windows 管理员 / Linux CAP_NET_RAW 或 root）。macOS 版尚未实现。',
+    probe_icmp: 'Windows、Linux 与 macOS 版 Agent 均已实现 ICMP 探测。macOS 上通常无需提权：datagram ICMP socket 对任意用户开放——所以 macOS 上仍报不支持，说明有异常的拦截（沙箱或 MDM 策略），以 root 运行也造不出这个能力。Linux 上也不一定要提权：无特权 ping socket 即可，前提是 net.ipv4.ping_group_range 覆盖当前进程的 gid。裸机上多数发行版默认开着；容器里正相反——新网络命名空间的内核默认值是 “1 0”（空区间），dockerd 不会改它，所以非 root 容器两条路都没有。给容器加 --sysctl net.ipv4.ping_group_range="0 2147483647"，或让它以 root/CAP_NET_RAW 运行。',
+    network_gateway_probe: '网关探测即对默认网关做 ICMP 探测，可用性与 ICMP 探测完全一致：Windows、Linux 与 macOS 均已实现。macOS 上通常无需提权——那里仍报不支持指向沙箱或 MDM 限制，而不是实现缺失。Linux 上同样是 ping socket 就够，容器里则需要先用 --sysctl 打开 net.ipv4.ping_group_range。',
+    network_neighbor_read: 'Windows、Linux 与 macOS 版 Agent 均已实现邻居表读取，且都无需特权（Linux 走 netlink，macOS 走 PF_ROUTE 路由 sysctl）。因此 macOS 上报不支持，意味着路由 sysctl 本身被拒（沙箱配置），而不是构建缺这个能力。',
+    network_neighbor_hostname_read: 'Windows、Linux 与 macOS 版 Agent 均已实现邻居主机名解析。',
+    diagnostic_traceroute_icmp: 'Windows、Linux 与 macOS 版 Agent 均已实现 ICMP 路径诊断。与 ICMP 探测不同，它必须收到中间跳的 Time-Exceeded，在 Windows 之外需要裸 ICMP socket：macOS 上要 root，Linux 上要 CAP_NET_RAW 或 root（无特权 ping socket 收不到这类报文）。',
+    diagnostic_traceroute_tcp: 'Windows、Linux 与 macOS 版 Agent 均已实现 TCP 路径诊断，且都需要提权（Windows 管理员 / Linux CAP_NET_RAW 或 root / macOS root）。',
+    host_process_io_read: '进程级 I/O 计数在 Windows 与 Linux 上可读。无 cgo 的 macOS 构建读不到它，因此 Agent 在 macOS 上直接报告该权限不支持——授予或提权都改变不了。',
     game_process_detect: '帧数据来自 Windows 图形呈现事件，仅 Windows 版 Agent 具备该能力；其他平台的构建不包含相应组件。此外还需要在本机安装 Intel PresentMon 服务（见解决方案）。',
     game_performance_read: '帧数据来自 Windows 图形呈现事件，仅 Windows 版 Agent 具备该能力；其他平台的构建不包含相应组件。此外还需要在本机安装 Intel PresentMon 服务（见解决方案）。',
     game_gpu_read: 'GPU 与显存遥测走的是与帧数据同一个 Windows 专有组件，因此其他平台的构建同样不具备该能力。但这里装上组件是必要条件、未必是充分条件：它读的是整块显卡，而不是游戏自身的呈现，而相当多的驱动根本不发布这类遥测。所以组件装好、权限也授予了，Agent 仍可能报告不支持——那说明这台机器就是没有可读的数据，管理员权限和采集深度设置都改变不了。',
@@ -2870,7 +2871,7 @@ export default {
     elevationWindows: 'Windows：以管理员身份重新运行 Agent（右键可执行文件 →「以管理员身份运行」；作为服务运行时，将服务账户设为具备该能力的账户或 LocalSystem）。',
     elevationOther: '其他平台：以具备相应能力的账户运行 Agent（例如 root，或授予对应的 capability）。',
     reRunNote: '以提升后的权限重新启动 Agent 后生效。',
-    unsupportedIntro: '当前 Agent 的平台或构建不具备此能力，授予权限或提权都无法启用。',
+    unsupportedIntro: 'Agent 报告此能力在这台机器上不可用——或是平台/构建不具备，或是机器上有东西在拦截（沙箱、管理策略）。授予权限或提权都无法启用。',
     unsupportedGeneric: '请在支持该能力的平台或构建上部署 Agent。',
     // Agent 传感组件类原因的通用开场白。实际使用中原因码总会给出更具体的说明，
     // 这条只是兜底，避免调用方不带原因码时段落为空。

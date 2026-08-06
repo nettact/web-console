@@ -26,6 +26,8 @@ const CATALOG = [
     implies: ['network.interface.status.read', 'network.wifi.status.read'],
   },
   { id: 'host.cpu.read', default: false },
+  // Windows-only (component-backed) — the picker must flag it off Windows.
+  { id: 'game.process.detect', default: false },
 ]
 const RECOMMENDED = ['probe.icmp', 'probe.dns', 'network.interface.status.read', 'network.wifi.status.read']
 const HOST_METRICS = [...RECOMMENDED, 'host.cpu.read']
@@ -37,7 +39,7 @@ function seedCatalog(loaded = true) {
     ? [
         { id: 'recommended', permissions: RECOMMENDED },
         { id: 'host_metrics', permissions: HOST_METRICS },
-        { id: 'full', permissions: [...HOST_METRICS, 'network.wifi.ssid.read'] },
+        { id: 'full', permissions: [...HOST_METRICS, 'network.wifi.ssid.read', 'game.process.detect'] },
       ]
     : []
 }
@@ -181,9 +183,11 @@ describe('EnrollExamples permission picker', () => {
 
   it('flags permissions the selected platform cannot run', async () => {
     const wrapper = mountExamples()
-    await wrapper.findAll('input[type="radio"]')[2].setValue() // full — includes probe.icmp
+    await wrapper.findAll('input[type="radio"]')[2].setValue() // full — includes game.process.detect
 
-    // Windows runs everything in this catalog; macOS has no ICMP implementation.
+    // On Windows the game capture is component-backed, not a platform gap; on
+    // macOS the build has no such component at all, so the hard warning shows.
+    // (ICMP no longer serves as the trigger here — macOS implements it now.)
     expect(wrapper.text()).not.toContain('cannot be enabled on this platform')
     await wrapper.findAll('.tab')[1].trigger('click') // macOS
     expect(wrapper.text()).toContain('cannot be enabled on this platform')
