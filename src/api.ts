@@ -676,10 +676,14 @@ export interface AgentGroup {
   created_at: string
 }
 export interface EnrollmentToken {
+  token_hash: string
   site_id: string
+  // Set = a reinstall token bound to that agent (AGENT-006); null = site token.
+  agent_id: string | null
   note: string
   expires_at: string
   used_at: string | null
+  revoked: boolean
 }
 export interface Device {
   mac: string
@@ -2030,6 +2034,17 @@ export const api = {
   listTokens: () => req<EnrollmentToken[]>('GET', '/api/v1/enrollment-tokens'),
   createToken: (note: string) =>
     req<{ token: string; expires_in_minutes: number }>('POST', '/api/v1/enrollment-tokens', { note }),
+  // Reinstall token for an offline agent: redeeming it makes a freshly installed
+  // machine rejoin under the SAME agent_id (AGENT-006). Response shape mirrors
+  // createToken so both render the same way.
+  createReinstallToken: (agentId: string) =>
+    req<{ token: string; expires_in_minutes: number }>(
+      'POST', `/api/v1/agents/${encodeURIComponent(agentId)}/reinstall-token`,
+    ),
+  // Void an unused enrollment token (minted by mistake / leaked). Used, revoked,
+  // or unknown tokens are a 404 → req throws ApiError.
+  revokeToken: (tokenHash: string) =>
+    req<unknown>('POST', `/api/v1/enrollment-tokens/${encodeURIComponent(tokenHash)}/revoke`),
   listTargets: (siteID: string) => req<ProbeTarget[]>('GET', `/api/v1/sites/${encodeURIComponent(siteID)}/targets`),
   // Saving targets is a full reconcile; the server replies with per-monitor
   // warnings for monitors some in-scope agents can't run (permission/unsupported).

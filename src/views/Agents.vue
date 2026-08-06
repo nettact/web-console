@@ -20,6 +20,7 @@ import MonitorStateBadge from '../components/status/MonitorStateBadge.vue'
 import AgentResourceCell from '../components/agents/AgentResourceCell.vue'
 import OsIcon from '../components/agents/OsIcon.vue'
 import EnrollExamples from '../components/EnrollExamples.vue'
+import ReinstallDialog from '../components/ReinstallDialog.vue'
 
 // KeepAlive in App.vue caches this view by name.
 defineOptions({ name: 'Agents' })
@@ -66,6 +67,8 @@ const note = ref('')
 const newToken = ref('')
 const error = ref('')
 const busy = ref(false)
+// The agent row whose reinstall dialog is open (null = closed).
+const reinstallAgent = ref<AgentStatusRow | null>(null)
 
 // Rows scoped by group + search (but NOT status), so the summary-card counts and
 // the status filter compose: clicking a status card narrows to exactly its count.
@@ -230,15 +233,30 @@ async function createToken() {
 function copyToken() {
   navigator.clipboard?.writeText(newToken.value)
 }
-type TokenState = 'used' | 'expired' | 'available'
+type TokenState = 'used' | 'expired' | 'available' | 'revoked'
 function tokenState(tok: EnrollmentToken): TokenState {
+  if (tok.revoked) return 'revoked'
   if (tok.used_at) return 'used'
   return new Date(tok.expires_at) < new Date() ? 'expired' : 'available'
 }
 const tokenStateLabel = (tok: EnrollmentToken) =>
-  ({ used: t('agents.tokenUsed'), expired: t('agents.tokenExpired'), available: t('agents.tokenAvailable') })[
-    tokenState(tok)
-  ]
+  ({
+    used: t('agents.tokenUsed'),
+    expired: t('agents.tokenExpired'),
+    available: t('agents.tokenAvailable'),
+    revoked: t('agents.tokenRevoked'),
+  })[tokenState(tok)]
+
+async function revokeToken(tok: EnrollmentToken) {
+  if (!confirm(t('agents.revokeConfirm'))) return
+  error.value = ''
+  try {
+    await api.revokeToken(tok.token_hash)
+    await loadTokens()
+  } catch (e) {
+    error.value = String((e as Error).message || e)
+  }
+}
 
 watch(tab, (v) => {
   if (v === 'groups') loadGroups()
@@ -425,6 +443,9 @@ onBeforeUnmount(() => {
                 >
                   <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-1.2-1.1-1.7-1.9-3.2" /><path d="M10 21h4M3 3l18 18" /></svg>
                 </button>
+                <button class="icon-action" :title="t('agents.reinstallAction')" @click="reinstallAgent = r">
+                  <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12a9 9 0 1 1 3 6.7M3 21v-5h5" /></svg>
+                </button>
                 <button class="icon-action danger" :disabled="busy" :title="t('common.delete')" @click="removeAgent(r)">
                   <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M9 7V4h6v3M7 7l1 13h8l1-13M10 11v5M14 11v5" /></svg>
                 </button>
@@ -479,14 +500,26 @@ onBeforeUnmount(() => {
       <div class="table-wrap">
         <table class="data-table">
           <thead>
-            <tr><th>{{ t('agents.thNote') }}</th><th>{{ t('agents.thExpires') }}</th><th>{{ t('agents.thState') }}</th></tr>
+            <tr>
+              <th>{{ t('agents.thNote') }}</th>
+              <th>{{ t('agents.thAgent') }}</th>
+              <th>{{ t('agents.thExpires') }}</th>
+              <th>{{ t('agents.thState') }}</th>
+              <th>{{ t('agents.thActions') }}</th>
+            </tr>
           </thead>
           <tbody>
-            <tr v-if="!tokens.length"><td colspan="3" class="hint">{{ t('agents.noTokens') }}</td></tr>
-            <tr v-for="(tok, i) in tokens" :key="i">
-              <td>{{ tok.note || '—' }}</td>
+            <tr v-if="!tokens.length"><td colspan="5" class="hint">{{ t('agents.noTokens') }}</td></tr>
+            <tr v-for="tok in tokens" :key="tok.token_hash">
+              <td>{{ tok.agent_id ? t('agents.tokenReinstall') : tok.note || '—' }}</td>
+              <td>{{ tok.agent_id ? groupAgentLabel(tok.agent_id) : '—' }}</td>
               <td class="hint">{{ fmtDateTime(tok.expires_at) }}</td>
               <td><span class="badge" :class="tokenState(tok) === 'available' ? 'up' : 'neutral'">{{ tokenStateLabel(tok) }}</span></td>
+              <td>
+                <button v-if="!tok.used_at && !tok.revoked" class="link-btn danger" @click="revokeToken(tok)">
+                  {{ t('agents.revoke') }}
+                </button>
+              </td>
             </tr>
           </tbody>
         </table>
@@ -494,6 +527,7 @@ onBeforeUnmount(() => {
     </section>
     </div>
   </main>
+  <ReinstallDialog :open="!!reinstallAgent" :agent="reinstallAgent" @close="reinstallAgent = null" />
 </template>
 
 <style scoped>
@@ -768,10 +802,10 @@ onBeforeUnmount(() => {
    number, so it is 28px wider than the text alone needs — and the list min-width
    grows by the same 28px, or the extra column width would come out of the
    resource grid. */
-.status-list { min-width: 1398px; }
+.status-list { min-width: 1514px; }
 .status-grid {
   display: grid;
-  grid-template-columns: minmax(235px, 1.25fr) 120px 165px 100px 100px minmax(560px, 2.5fr) 68px;
+  grid-template-columns: minmax(235px, 1.25fr) 120px 165px 100px 100px minmax(560px, 2.5fr) 150px;
   align-items: center;
   gap: 14px;
 }

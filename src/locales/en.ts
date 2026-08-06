@@ -1653,6 +1653,22 @@ export default {
     tokenUsed: 'Used',
     tokenExpired: 'Expired',
     tokenAvailable: 'Available',
+    // Offline-agent reinstall (AGENT-006): a token bound to one agent so a
+    // reinstalled machine rejoins under the same agent_id.
+    reinstallAction: 'Reinstall',
+    reinstallTitle: 'Reinstall agent',
+    reinstallTarget: 'Agent',
+    reinstallMinting: 'Generating reinstall token…',
+    reinstallHintWipe: 'The install command wipes the machine\'s local identity and queued telemetry before enrolling.',
+    reinstallHintHistory: 'The agent rejoins under the same agent id, so its metrics, incidents and status history are kept.',
+    reinstallHintToken: 'This token is bound to this agent only and creates no second agent row.',
+    tokenReinstall: 'Reinstall token',
+    tokenRevoked: 'Revoked',
+    revoke: 'Revoke',
+    revokeConfirm: 'Revoke this token? It can no longer be used to enroll.',
+    copyUnavailable: 'Clipboard is unavailable here — select the token text to copy it manually.',
+    thAgent: 'Agent',
+    thActions: 'Actions',
     // Agent local permissions
     thPermissions: 'Permissions',
     permSupported: 'Supported',
