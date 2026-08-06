@@ -25,7 +25,7 @@ function render(props: {
 
 // Every reason code the server can send, so a missing zh translation shows up
 // here rather than as a raw dotted key in front of the only audience that reads
-// the default locale.
+// the default locale. Keep in step with REASON_CATEGORY in lib/agentPermissions.
 const REASON_CODES = [
   'presentmon_missing',
   'service_unavailable',
@@ -38,7 +38,18 @@ const REASON_CODES = [
   'session_lost',
   'unsupported_os',
   'gpu_telemetry_unavailable',
+  'not_licensed',
+  'owned_by_another_server',
 ]
+
+// The codes that route to the "nothing to install anywhere" flow rather than to
+// the Agent's own sensor.
+const UNSUPPORTED_CODES = new Set([
+  'unsupported_os',
+  'gpu_telemetry_unavailable',
+  'not_licensed',
+  'owned_by_another_server',
+])
 
 describe('PermissionRemediationDialog (zh)', () => {
   it('renders the component guidance without any unresolved keys', () => {
@@ -63,7 +74,7 @@ describe('PermissionRemediationDialog (zh)', () => {
     for (const reason of REASON_CODES) {
       // The category does not change which reason text renders, so one branch is
       // enough to prove the strings exist; the English suite covers the routing.
-      const category = reason === 'unsupported_os' || reason === 'gpu_telemetry_unavailable' ? 'unsupported' : 'agent_sensor'
+      const category = UNSUPPORTED_CODES.has(reason) ? 'unsupported' : 'agent_sensor'
       const text = render({ permId: 'game.performance.read', category, unsupportedReason: reason, desktop: true }).text()
       expect(text, reason).not.toMatch(/permUnsupportedReason\./)
       expect(text, reason).not.toMatch(/permRemediation\.\w+/)

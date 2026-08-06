@@ -267,6 +267,21 @@ describe('PermissionRemediationDialog unsupported reasons', () => {
     expect(gpu.text()).not.toContain('see the fix')
   })
 
+  // The machine has a working sensor; it just answers to a different server. The
+  // remedy is to look somewhere else, so this cause must not put an installer in
+  // front of someone whose PresentMon is healthy and busy.
+  it('points at the owning server instead of an installer when the sensor belongs elsewhere', () => {
+    const w = render({
+      permId: 'game.performance.read',
+      category: 'unsupported',
+      unsupportedReason: 'owned_by_another_server',
+    })
+    expect(w.text()).toContain('reports to a different NetTact server')
+    expect(w.text()).toContain('nothing to install')
+    expect(hasDownloadLink(w)).toBe(false)
+    expect(w.text()).not.toMatch(/permUnsupportedReason\.|permRemediation\.\w/)
+  })
+
   // A newer agent's code, and an agent that never probed at all, must both land
   // on the old guess WITH its hedge rather than on a blank or invented cause —
   // but they are three different states and each gets its own wording.

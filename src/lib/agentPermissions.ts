@@ -73,6 +73,17 @@ const REASON_CATEGORY = new Map<string, RemediationCategory>([
   // "nothing to install anywhere" group; the reason text carries the actual
   // remedy (install/purchase from the Store).
   ['not_licensed', 'unsupported'],
+  // Frame capture works on this machine, but it belongs to a different server.
+  // One machine has one sensor, driven by one pushed profile list, so exactly
+  // one of the servers an agent reports to owns it. Every other server is told
+  // this instead of a bare "unsupported" precisely so its console does not send
+  // an operator off to install PresentMon onto a machine that already has a
+  // healthy, running one — which is what the component flow would do, and which
+  // could not possibly help, because nothing here is missing. Routed with the
+  // "nothing to install anywhere" group for that reason; note that unlike the
+  // others in it, this one is not even a gap — the data exists, it is simply
+  // somebody else's.
+  ['owned_by_another_server', 'unsupported'],
 ])
 
 // What the console actually knows about the cause. Three states, not two:

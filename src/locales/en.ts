@@ -1450,6 +1450,66 @@ export default {
       staleHelp: 'Resource samples older than this are tagged "stale" in the list.',
       rangeErr: 'A value is out of the allowed range.',
     },
+    // "Connect to other servers" — desktop-only panel for the extra servers this
+    // computer's embedded Agent reports to (AGENT-007).
+    localAgent: {
+      title: 'Connect to other servers',
+      hint: 'This computer already reports to the NetTact running on it. It can report to another NetTact server as well — a family member\'s, or the one at work — and you choose separately what each of them is allowed to collect.',
+      empty: 'No other servers yet. Add one and this computer will appear in that server\'s console too, alongside the monitoring you already see here.',
+      state: {
+        connected: 'Connected',
+        connecting: 'Connecting',
+        enroll_failed: 'Sign-up failed',
+        superseded: 'Replaced by another agent',
+        revoked: 'Removed by that server',
+        stopped: 'Stopped',
+      },
+      // A state this console has no wording for. The app serving the console and
+      // the console itself are versioned separately, so a newer host reporting a
+      // state added after this build is ordinary — showing the raw code beats
+      // showing a translation key, and it is what someone would quote for help.
+      stateUnknown: 'Unknown state ({state})',
+      tlsInsecureBadge: 'Certificate not checked',
+      // Joins permission names in a row summary.
+      listSep: ', ',
+      permNone: 'Collects nothing',
+      permMore: '{names} and {n} more',
+      since: 'since {time}',
+      agentId: 'known there as',
+      notEnrolled: 'not signed up yet',
+      lastError: 'Last error:',
+      // A one-time token cannot be retried: it is spent or expired, and the entry
+      // holds no copy of it. Say what to do instead of showing a dead row.
+      enrollFailedFix: 'That enrollment token was refused. Tokens can only be used once and expire 24 hours after they are created — remove this entry, generate a fresh token in that server\'s console, and add it again.',
+      editPerms: 'Change what it collects',
+      remove: 'Remove',
+      removeTitle: 'Remove this server?',
+      removeBody: 'This computer will stop reporting to {name}.',
+      removeConsequence: 'The history already sent stays on that server. Adding it back later needs a new enrollment token.',
+      cancel: 'Cancel',
+      addTitle: 'Add a server',
+      editTitle: 'What {name} may collect',
+      addAction: 'Add server',
+      urlLabel: 'Server address',
+      urlHelp: 'The address you open that server\'s console at, including the port.',
+      tokenLabel: 'Enrollment token',
+      tokenHelp: 'Generate one on that server\'s "Add agent" page and paste it here. It is used once, expires after 24 hours, and is never shown again once saved.',
+      nameLabel: 'Short name (optional)',
+      namePlaceholder: 'work-server',
+      nameHelp:
+        'Lowercase letters, digits, "-" and "_" only, starting with a letter or digit. Anything else is converted, so "Work server" is saved as "work-server". Left empty, the name is taken from the server address.',
+      tlsInsecureLabel: 'Skip certificate checking',
+      tlsInsecureHelp: 'Only for a server using a self-signed certificate on your own network. It makes the connection possible to intercept, so leave it off otherwise.',
+      permTitle: 'What this server may collect',
+      permHint: 'Chosen per server: the one at work can be limited to reachability checks while the one at home also reads this computer\'s CPU and memory.',
+      permNoneNote: 'Nothing selected — this server will see that the computer is online and nothing else.',
+      permUnsupportedNote: '{n} of the selected items cannot be collected on this computer and will simply stay empty.',
+      errUrlRequired: 'Enter the server address.',
+      errUrlScheme: 'The address must start with http:// or https://.',
+      errTokenRequired: 'Paste the enrollment token from that server\'s console.',
+      errNameInvalid: 'That name has no letters or digits in it. Use lowercase letters, digits, "-" or "_", or leave it empty to use the server address.',
+      errNameReserved: '"local" is the name of this computer\'s own server. Pick another one.',
+    },
     deviceRetention: {
       title: 'LAN device cleanup',
       hint: 'Device discovery only ever adds devices, never removes them, so a device that left the network is cleaned up based on how long it has been missing.',
@@ -2754,6 +2814,9 @@ export default {
     default: 'Default',
     environment: 'Environment',
     desktop_full_access: 'Desktop full access',
+    // AGENT-007: this server has its own permission set in the machine's local
+    // settings, so the process-level policy does not apply to it.
+    server_config: 'Server configuration',
     desktopFullAccessExplain: 'This agent runs in desktop full-access mode, granting every permission its platform supports (typically for local monitoring on a personal computer).',
   },
 
@@ -2937,6 +3000,10 @@ export default {
     not_licensed: {
       found: 'The sensor component found no active Microsoft Store license for NetTact, so it declines to collect. Nothing on this machine’s capture stack is missing or broken — Intel PresentMon is not the problem.',
       fix: 'Install NetTact from the Microsoft Store (or purchase it if the trial has ended), then restart the Agent. Installing other software will not help.',
+    },
+    owned_by_another_server: {
+      found: 'Frame capture works on this computer, but it reports to a different NetTact server. A computer has one sensor and one server driving it, so game data goes to that server and not to this one. Nothing is missing or broken here, and Intel PresentMon is not the problem.',
+      fix: 'There is nothing to install. Game data for this computer is on the server that owns its sensor — the NetTact running on the computer itself, unless that was changed. Look for it there rather than here.',
     },
   },
 

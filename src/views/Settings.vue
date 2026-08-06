@@ -29,6 +29,7 @@ import { pushToast } from '../toasts'
 import WebhookChannelForm from '../components/WebhookChannelForm.vue'
 import ChannelAddForm from '../components/ChannelAddForm.vue'
 import DataCleanup from '../components/DataCleanup.vue'
+import LocalAgentServers from '../components/LocalAgentServers.vue'
 import PolicyFields from '../components/PolicyFields.vue'
 import InfoTip from '../components/InfoTip.vue'
 
@@ -909,6 +910,24 @@ onMounted(() => {
           <span v-if="pwSaved" class="hint saved">✓ {{ t('settings.account.saved') }}</span>
         </div>
         <p v-if="pwError" class="err inline">{{ pwError }}</p>
+      </div>
+    </section>
+
+    <!-- Desktop only, and the mirror image of the account panel above: a desktop
+         install has no login to manage, but it is the only build whose Agent runs
+         on the user's own computer — so it is the only one that can offer to
+         report to somebody else's server as well (AGENT-007).
+
+         Gated on the `local_agent` capability bit rather than on listen.desktop,
+         which describes a deployment and lives inside a block that is itself
+         optional. The bit means exactly "the /local-agent routes are here", which
+         is the only thing this panel actually needs to be true — a desktop build
+         serving the console without having wired its embedded agent satisfies
+         listen.desktop and would render a panel whose every call 404s. -->
+    <section class="panel" v-if="serverInfo?.local_agent === true">
+      <div class="panel-head"><h3>{{ t('settings.localAgent.title') }}</h3></div>
+      <div class="panel-body">
+        <LocalAgentServers />
       </div>
     </section>
 

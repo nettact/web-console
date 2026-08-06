@@ -166,6 +166,34 @@ describe('categoryFor with a reported reason', () => {
     )
   })
 
+  // An agent may report to several servers at once, and exactly one of them owns
+  // the sensor. The others are told this instead of a bare "unsupported"
+  // precisely so their consoles stop guessing, and the guess they would fall
+  // back to on Windows is `component` — "install Intel PresentMon" — aimed at a
+  // machine whose PresentMon is installed, running and busy. That is the wrong
+  // remedy this code was added to prevent, so it must never route there.
+  it('does not send a machine whose sensor belongs to another server to the installer', () => {
+    for (const id of ['game.process.detect', 'game.performance.read', 'game.gpu.read']) {
+      expect(categoryFor(perm(id, true, false, false, 'owned_by_another_server'), 'windows')).toBe('unsupported')
+      // Ungranted as well: the policy line still renders on top via grantMissing,
+      // but the cause underneath it is not something to install.
+      expect(categoryFor(perm(id, false, false, false, 'owned_by_another_server'), 'windows')).toBe('unsupported')
+    }
+    expect(reasonCategory('owned_by_another_server')).toBe('unsupported')
+    expect(isKnownUnsupportedReason('owned_by_another_server')).toBe(true)
+  })
+
+  // Not a gap at all, so it must not be confused with the two codes that really
+  // do mean "the sensor cannot run here".
+  it('keeps the sensor-side codes distinct from the ownership one', () => {
+    expect(categoryFor(perm('game.performance.read', true, false, false, 'sensor_missing'), 'windows')).toBe(
+      'agent_sensor',
+    )
+    expect(categoryFor(perm('game.performance.read', true, false, false, 'owned_by_another_server'), 'windows')).toBe(
+      'unsupported',
+    )
+  })
+
   // The reason comes from the machine itself, so it beats the platform tables
   // rather than being filtered by them. A Linux agent reporting sensor_missing
   // is telling the truth about its own build.

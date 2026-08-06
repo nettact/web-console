@@ -1451,6 +1451,63 @@ export default {
       staleHelp: '资源采样超过该时长后在列表中标记为「过期」。',
       rangeErr: '数值超出允许范围。',
     },
+    // 「连接到其他服务器」——仅桌面版：本机内嵌 Agent 额外上报的 server 列表（AGENT-007）。
+    localAgent: {
+      title: '连接到其他服务器',
+      hint: '这台电脑已经在向本机运行的 NetTact 上报。它还可以同时向另一台 NetTact 服务器上报——家人的，或者公司的——每台服务器分别授权能采集什么。',
+      empty: '还没有添加其他服务器。添加之后，这台电脑也会出现在对方的控制台里，本机这边的监控不受影响。',
+      state: {
+        connected: '已连接',
+        connecting: '连接中',
+        enroll_failed: '注册失败',
+        superseded: '已被另一个 Agent 顶替',
+        revoked: '已被对方移除',
+        stopped: '已停止',
+      },
+      // 本控制台没有对应文案的状态。提供控制台的程序与控制台本身是分开发布的，
+      // 更新的宿主报出本版本之后新增的状态属于正常情况——直接显示原始代码，
+      // 好过显示一个翻译键，而且这正是用户求助时会引用的内容。
+      stateUnknown: '未知状态（{state}）',
+      tlsInsecureBadge: '不校验证书',
+      // 行内权限摘要的分隔符。
+      listSep: '、',
+      permNone: '不采集任何数据',
+      permMore: '{names} 等 {n} 项',
+      since: '{time} 起',
+      agentId: '在对方处的标识',
+      notEnrolled: '尚未注册',
+      lastError: '最近一次错误：',
+      // 一次性令牌无法重试：要么已用掉要么已过期，这里也不保存副本。
+      enrollFailedFix: '注册令牌被拒绝。令牌只能使用一次，且创建 24 小时后过期——请移除这一条，到对方控制台重新生成一个令牌后再添加。',
+      editPerms: '调整采集范围',
+      remove: '移除',
+      removeTitle: '移除这台服务器？',
+      removeBody: '这台电脑将不再向 {name} 上报。',
+      removeConsequence: '已经上报过的历史数据仍留在对方服务器上。以后想再加回来，需要一个新的注册令牌。',
+      cancel: '取消',
+      addTitle: '添加服务器',
+      editTitle: '{name} 可以采集什么',
+      addAction: '添加服务器',
+      urlLabel: '服务器地址',
+      urlHelp: '平时打开对方控制台用的地址，包含端口。',
+      tokenLabel: '注册令牌',
+      tokenHelp: '在对方控制台的「添加 Agent」页面生成后粘贴到这里。只能用一次，24 小时后过期，保存后不再显示。',
+      nameLabel: '短名称（可选）',
+      namePlaceholder: 'work-server',
+      nameHelp:
+        '只能使用小写字母、数字、「-」和「_」，并以字母或数字开头。其他字符会被自动转换，例如「Work server」会保存为「work-server」。留空则根据服务器地址自动生成。',
+      tlsInsecureLabel: '跳过证书校验',
+      tlsInsecureHelp: '仅适用于自己网络内使用自签名证书的服务器。开启后连接可被中间人窃听，其他情况请保持关闭。',
+      permTitle: '这台服务器可以采集什么',
+      permHint: '按服务器分别设置：公司那台可以只允许做可达性探测，家里那台则额外读取本机的 CPU 与内存。',
+      permNoneNote: '一项都没选——对方只能看到这台电脑在线，别的什么都看不到。',
+      permUnsupportedNote: '所选项目中有 {n} 项在这台电脑上无法采集，会一直是空的。',
+      errUrlRequired: '请填写服务器地址。',
+      errUrlScheme: '地址必须以 http:// 或 https:// 开头。',
+      errTokenRequired: '请粘贴对方控制台生成的注册令牌。',
+      errNameInvalid: '这个名称里没有任何字母或数字。请使用小写字母、数字、「-」或「_」，也可以留空以使用服务器地址。',
+      errNameReserved: '「local」是本机自身服务器的名称，请换一个。',
+    },
     deviceRetention: {
       title: '局域网设备清理',
       hint: '设备发现只会新增，不会自己删除，所以离开网络的设备靠「多久没再出现」来清理。',
@@ -2724,6 +2781,8 @@ export default {
     default: '默认',
     environment: '环境变量',
     desktop_full_access: '桌面完全访问',
+    // AGENT-007：该 server 在本机设置里有自己的权限集，因此不走进程级策略。
+    server_config: '服务器配置',
     desktopFullAccessExplain: '该 agent 以桌面完全访问模式运行，授予其平台支持的全部权限（通常用于个人电脑上的本机监控）。',
   },
 
@@ -2899,6 +2958,10 @@ export default {
     not_licensed: {
       found: '传感组件未检测到 NetTact 的有效 Microsoft Store 许可，因此拒绝采集。这台机器的采集环境没有任何缺失或故障——与 Intel PresentMon 无关。',
       fix: '请从 Microsoft Store 安装 NetTact（试用已结束则需购买），然后重启 Agent。安装其他软件对此没有帮助。',
+    },
+    owned_by_another_server: {
+      found: '这台电脑的帧数据采集是正常的，只是上报给了另一台 NetTact 服务器。一台电脑只有一个传感器、只由一台服务器驱动，所以游戏数据会送到那台服务器，而不是这一台。这里既没有缺失也没有故障，与 Intel PresentMon 无关。',
+      fix: '无需安装任何东西。这台电脑的游戏数据在持有其传感器的那台服务器上——如果没有改过，就是电脑本机运行的 NetTact。请到那边查看，而不是这里。',
     },
   },
 

@@ -55,6 +55,10 @@ export interface ServerInfo {
   version: string
   listen?: ListenStatus
   update?: UpdateInfo
+  // Whether this build manages a local embedded Agent, i.e. whether the
+  // /local-agent/* routes exist (AGENT-007). Absent on every server build; the
+  // desktop all-in-one is the only thing that sets it.
+  local_agent?: boolean
 }
 export interface Quota {
   used: number
@@ -143,6 +147,85 @@ export interface PermissionBundle {
 export interface PermissionCatalog {
   permissions: PermissionCatalogEntry[]
   bundles: PermissionBundle[]
+}
+
+// --- Desktop local agent: additional servers (AGENT-007 phase 3) ---
+//
+// The desktop all-in-one runs its Agent in-process against its own server; these
+// types describe the EXTRA servers that Agent also reports to. Every route below
+// exists only on a desktop build (a server build answers 404), and every one of
+// them is session-protected — this is the machine owner deciding who may collect
+// from their computer, not a fleet-management surface.
+//
+// A foreign server is added by pasting the ordinary one-time enrollment token its
+// own console mints, so there is no separate pairing flow to learn. That token is
+// the reason the spec and the read model are different types: it is spent on the
+// first connection and MUST NOT be readable afterwards.
+
+// What the user submits to add a server. Everything but `url` and `enroll_token`
+// is optional, and each omission has a defined meaning rather than an empty
+// value: no `name` derives one from the URL host, no `permissions` grants the
+// Agent's recommended default set.
+export interface LocalAgentServerSpec {
+  // Lowercase alphanumerics, '-' and '_', starting with an alphanumeric, at most
+  // 64 characters, and never "local" (which names this machine's own server).
+  // The API rejects anything else with a 400, so a caller either normalizes to
+  // that grammar or omits the field and lets the URL host supply it.
+  name?: string
+  url: string
+  // WRITE-ONLY. One-time, expires 24h after that server minted it, and never
+  // comes back on any read — LocalAgentServer has no token field at all, so the
+  // console cannot re-display or re-submit it. A rejected token is therefore not
+  // retryable: the entry has to be removed and re-added with a fresh one.
+  enroll_token: string
+  tls_insecure?: boolean
+  // THREE values, not two. Omitting the key means "grant the Agent's recommended
+  // default"; sending `[]` means "grant nothing" and is honored literally; a
+  // non-empty list must be dependency closed (the catalog's `implies` closure
+  // makes a union of ticked boxes closed by construction).
+  //
+  // `undefined` and `[]` are therefore NOT interchangeable here, and JSON.stringify
+  // is what keeps them apart on the wire — an undefined property is dropped, an
+  // empty array is sent. Defaulting this field to `[]` anywhere would silently
+  // turn "you choose" into "collect nothing", and dropping an empty array would
+  // silently turn a revocation into a full default grant.
+  permissions?: string[]
+}
+
+// Live connection state of one configured server.
+//   connected     — session up
+//   connecting    — enrolled, dialing/backing off
+//   enroll_failed — the token was refused (spent, expired, or wrong server)
+//   superseded    — another agent connected as this identity and took the slot
+//   revoked       — that server deleted this agent
+//   stopped       — configured but not being dialed
+export interface LocalAgentServerStatus {
+  // Deliberately `string` and not a union of the six above. The serving binary
+  // and this console are versioned separately (a release server downloads its
+  // stamped console at runtime), so "newer host, older console" is ordinary — the
+  // Go side documents that readers MUST tolerate an unknown state, and a closed
+  // union would let the compiler certify exhaustive handling that the wire does
+  // not guarantee. Render through a guarded lookup with a generic fallback.
+  state: string
+  agent_id?: string
+  last_error?: string
+  // Absent when the host has no meaningful timestamp for the current state,
+  // which is the ordinary case for an entry between being added and its first
+  // transition. Present means a real instant.
+  since?: string
+}
+
+// One configured server as the console reads it back. Note the absent token.
+export interface LocalAgentServer {
+  name: string
+  url: string
+  tls_insecure: boolean
+  // What THIS machine grants THAT server. Independent per server: the point of
+  // the feature is that the office server may probe while only the home server
+  // reads host metrics.
+  permissions: string[]
+  enrolled: boolean
+  status: LocalAgentServerStatus
 }
 
 // --- Agent status list (AGENT-001) ---
@@ -2080,6 +2163,31 @@ export const api = {
     req<AgentPermissions>('GET', `/api/v1/agents/${encodeURIComponent(id)}/permissions`),
   // Every permission this server build knows, plus the enrollment presets.
   permissionCatalog: () => req<PermissionCatalog>('GET', '/api/v1/permissions'),
+  // --- Desktop local agent: additional servers (AGENT-007 phase 3) ---
+  // Desktop-only routes; a server build answers 404 on all four.
+  localAgentServers: () =>
+    req<{ servers: LocalAgentServer[] }>('GET', '/api/v1/local-agent/servers').then((r) => r.servers || []),
+  // The spec's `enroll_token` is write-only: it is spent on the first connection
+  // and never echoed, so the caller cannot re-read it and a refused token can
+  // only be fixed by removing the entry and re-adding it with a fresh one.
+  addLocalAgentServer: (spec: LocalAgentServerSpec) =>
+    req<LocalAgentServer>('POST', '/api/v1/local-agent/servers', spec),
+  removeLocalAgentServer: (name: string) =>
+    req<unknown>('DELETE', `/api/v1/local-agent/servers/${encodeURIComponent(name)}`),
+  // Replace what this machine grants that server. A full set, not a patch: the
+  // whole point is that the operator sees exactly what is granted, so a merge
+  // would make the UI's list and the effective policy two different things.
+  //
+  // `[]` is sent as `[]` and revokes everything, exactly as on the create path.
+  // Pass `null` for the other answer — "use the Agent's recommended default" —
+  // which omits the key; the two are different requests and the server tells
+  // them apart by the field's presence.
+  setLocalAgentServerPermissions: (name: string, permissions: string[] | null) =>
+    req<unknown>(
+      'PUT',
+      `/api/v1/local-agent/servers/${encodeURIComponent(name)}/permissions`,
+      permissions === null ? {} : { permissions },
+    ),
   // Monitoring/permission issues (notification center). Full-state list + the
   // server-authoritative unread count; SSE pushes updates live.
   listIssues: () => req<IssuesResponse>('GET', '/api/v1/issues'),
