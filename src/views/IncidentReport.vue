@@ -22,6 +22,7 @@ import {
 } from '../composables/useIncidentLabels'
 import { useMetricMeta } from '../composables/useMetricMeta'
 import { toDateLocale } from '../i18n'
+import { isDegradation } from '../lib/detection'
 import { fmtBytes } from '../lib/format'
 import { formatAvailability } from '../lib/targetStatus'
 import { generateReportPdf, reportFilename } from '../lib/reportPdf'
@@ -410,7 +411,23 @@ async function exportPdf() {
               <dt>{{ t('incidents.detail.evTarget') }}</dt>
               <dd class="mono">{{ m.target_addr }}</dd>
             </div>
-            <div v-if="m.metric_kind">
+            <!-- A baseline-judged member states the comparison that was actually
+                 made. `gte_baseline` has no symbol and its threshold is a number
+                 the product derived, not one anybody chose, so rendering it the
+                 usual way would print "(gte_baseline 67.5)" into an exported PDF.
+                 Kept in step with IncidentDetail.vue: the two surfaces describe
+                 the same evidence and must not disagree. -->
+            <div v-if="m.metric_kind && isDegradation(m.detector_key)">
+              <dt>{{ t('incidents.detail.evVsBaseline') }}</dt>
+              <dd>
+                {{ metricLabel(m.metric_kind) }}
+                <span class="mono">{{ fmtNum(m.value) }}</span>
+                <span class="dim">
+                  {{ t('incidents.detail.baselineUsual', { usual: fmtNum(m.baseline_p50) }) }}
+                </span>
+              </dd>
+            </div>
+            <div v-else-if="m.metric_kind">
               <dt>{{ t('incidents.detail.evMetric') }}</dt>
               <dd>
                 {{ metricLabel(m.metric_kind) }}

@@ -58,6 +58,8 @@ const member = (over: Partial<FaultSignal>): FaultSignal => ({
   threshold: 80,
   reason_code: 3,
   reason_detail: '',
+  baseline_p50: 0,
+  baseline_p95: 0,
   observed_at: '2026-08-01T10:00:00Z',
   confirmed_at: '2026-08-01T10:00:10Z',
   resolved_at: null,

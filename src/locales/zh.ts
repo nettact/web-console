@@ -544,6 +544,7 @@ export default {
       agent_deleted: 'Agent 已删除',
       muted: '已静默',
       disabled: '检测已关闭',
+      superseded: '已被更严重的故障取代',
     },
     cmp: {
       gt: '大于',
@@ -551,6 +552,14 @@ export default {
       lt: '小于',
       lte: '小于等于',
       eq: '等于',
+      gte_baseline: '明显高于自身基线',
+    },
+    // 判定来源：可用性/连通性回答「通不通」，劣化类回答「是不是没平时好」。
+    detector: {
+      availability: '可用性',
+      agent_connectivity: 'Agent 连通性',
+      latency_degradation: '延迟劣化',
+      loss_degradation: '丢包劣化',
     },
     detail: {
       title: '事故详情',
@@ -567,6 +576,8 @@ export default {
       evTarget: '目标',
       evAgent: 'Agent',
       evMetric: '指标',
+      evVsBaseline: '与平时对比',
+      baselineUsual: '（平时同时段约 {usual}）',
       evValue: '当前值',
       evThreshold: '阈值',
       evReason: '失败原因',
@@ -1078,6 +1089,18 @@ export default {
     lossHint: '单轮丢包率达到该值即视为失败。100 表示只有完全不通才算故障；低于 100 表示持续部分丢包也算故障。',
     errRounds: '确认与恢复轮数必须是 1–20 的整数。',
     errLoss: '丢包阈值必须是 1–100 的整数。',
+    // 智能判断（基于目标自身历史的质量劣化检测）
+    smartTitle: '自动发现「变慢、变差」',
+    smartHint:
+      '把当前表现和这个目标平时同时段的表现比较，明显变差时在故障中心记一笔（默认不发通知）。',
+    smart_loose: '宽松',
+    smartDesc_loose: '差得很明显、持续很久才记录；几乎不会误报',
+    smart_standard: '标准（推荐）',
+    smartDesc_standard: '明显变差并持续一段时间才记录',
+    smart_sensitive: '敏感',
+    smartDesc_sensitive: '略有变差就记录；发现更早，也更容易被正常波动触发',
+    smartLearning: '需要累积约 3 天的历史才开始判断，期间不会产生任何记录。',
+    smartLossYielded: '你已自定义丢包阈值，丢包的智能判断会让位给它；延迟判断不受影响。',
   },
   mform: {
     detectionTitle: '故障检测灵敏度',
@@ -1789,6 +1812,7 @@ export default {
   metrics: {
     timeRange: '时间范围',
     metricPicker: '指标（可多选，图中叠加展示）',
+    baselineBand: '浅色区域是该目标平时同时段的正常范围（p50–p95）。',
     noDataRange: '该范围内无数据',
     localTarget: '（本机）',
     metricsCount: '{n} 项指标',

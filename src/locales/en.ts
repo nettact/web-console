@@ -542,6 +542,7 @@ export default {
       agent_deleted: 'Agent deleted',
       muted: 'Muted',
       disabled: 'Detection disabled',
+      superseded: 'Superseded by a more serious fault',
     },
     cmp: {
       gt: 'greater than',
@@ -549,6 +550,15 @@ export default {
       lt: 'less than',
       lte: 'less than or equal to',
       eq: 'equal to',
+      gte_baseline: 'well above its own baseline',
+    },
+    // Which detector reached the verdict: availability and connectivity answer
+    // "does it work", the degradation pair answer "does it work as well as usual".
+    detector: {
+      availability: 'Availability',
+      agent_connectivity: 'Agent connectivity',
+      latency_degradation: 'Latency degradation',
+      loss_degradation: 'Packet-loss degradation',
     },
     detail: {
       title: 'Incident detail',
@@ -566,6 +576,8 @@ export default {
       evTarget: 'Target',
       evAgent: 'Agent',
       evMetric: 'Metric',
+      evVsBaseline: 'Compared with usual',
+      baselineUsual: '(usually about {usual} at this hour)',
       evValue: 'Value',
       evThreshold: 'Threshold',
       evReason: 'Failure reason',
@@ -1081,6 +1093,19 @@ export default {
     lossHint: 'A round counts as failed when its loss reaches this value. 100 means only total loss is a fault; below 100, sustained partial loss counts too.',
     errRounds: 'The confirm and recover rounds must be whole numbers between 1 and 20.',
     errLoss: 'The loss threshold must be a whole number between 1 and 100.',
+    // Smart detection: quality degradation judged against the target's own history.
+    smartTitle: 'Notice when it gets slower or worse',
+    smartHint:
+      "Compares how the target is doing now against how it usually does at this time of day, and records a note in the fault centre when it is markedly worse. No notification by default.",
+    smart_loose: 'Relaxed',
+    smartDesc_loose: 'Only records a large, sustained drop — almost never a false alarm',
+    smart_standard: 'Standard (recommended)',
+    smartDesc_standard: 'Records a clear drop that lasts a while',
+    smart_sensitive: 'Sensitive',
+    smartDesc_sensitive: 'Records smaller drops — catches things sooner, more prone to normal variation',
+    smartLearning: 'Needs about 3 days of history before it starts judging; nothing is recorded until then.',
+    smartLossYielded:
+      'You have set your own loss threshold, so smart loss detection stands down for this target. Latency detection is unaffected.',
   },
   mform: {
     detectionTitle: 'Detection sensitivity',
@@ -1791,6 +1816,7 @@ export default {
   metrics: {
     timeRange: 'Time range',
     metricPicker: 'Metrics (multi-select, overlaid on the chart)',
+    baselineBand: 'The shaded area is where this target normally sits at this time of day (p50–p95).',
     noDataRange: 'No data in this range',
     localTarget: '(this host)',
     metricsCount: '{n} metrics',

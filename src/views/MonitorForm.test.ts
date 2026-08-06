@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { flushPromises, mount } from '@vue/test-utils'
+import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { createI18n } from 'vue-i18n'
 
 import en from '../locales/en'
@@ -25,8 +25,19 @@ vi.mock('vue-router', () => ({
 }))
 
 function detection(over: Record<string, unknown> = {}) {
-  return { target_id: 't1', kind: 'icmp', profile: 'balanced', fail_rounds: 3, recover_rounds: 2, icmp_loss_pct: 100, revision: 1, ...over }
+  return { target_id: 't1', kind: 'icmp', profile: 'balanced', fail_rounds: 3, recover_rounds: 2, icmp_loss_pct: 100, smart_enabled: true, smart_sensitivity: 'standard', revision: 1, ...over }
 }
+
+// The panel now holds two radio groups that share a style class: the availability
+// profiles inside the advanced disclosure, and the smart sensitivity levels above
+// it. Selectors are scoped to their container so a test can never assert against
+// the wrong group.
+const editableIcmpTarget: ProbeTarget = {
+  id: 't1', kind: 'icmp', name: 'Router', target: '192.168.1.1', params: {},
+  enabled: true, group_id: 'group-default',
+}
+const profileRadios = (page: VueWrapper) => page.findAll('.det-body .profile-opt input')
+const smartRadios = (page: VueWrapper) => page.findAll('.smart-list .profile-opt input')
 
 async function render(targets: ProbeTarget[] = [], det = detection()) {
   apiMock.listTargets.mockResolvedValue(targets)
@@ -380,7 +391,7 @@ describe('MonitorForm detection sensitivity', () => {
     const page = await render()
     await targetInput(page).setValue('1.1.1.1')
     // 0 = balanced, 1 = fast, 2 = stable, 3 = custom
-    await page.findAll('.profile-opt input')[1].setValue()
+    await profileRadios(page)[1].setValue()
     apiMock.listTargets.mockResolvedValue([{
       id: 'new-1', kind: 'icmp', name: '', target: '1.1.1.1', params: {},
       enabled: true, group_id: 'group-default',
@@ -391,6 +402,7 @@ describe('MonitorForm detection sensitivity', () => {
 
     expect(apiMock.updateDetectionSettings).toHaveBeenCalledWith('new-1', {
       profile: 'fast', fail_rounds: 2, recover_rounds: 2, icmp_loss_pct: 100,
+      smart_enabled: true, smart_sensitivity: 'standard',
     })
     expect(state.push).toHaveBeenCalledWith('/monitoring')
   })
@@ -420,8 +432,7 @@ describe('MonitorForm detection sensitivity', () => {
     expect(apiMock.detectionSettings).toHaveBeenCalledWith('t1')
     expect(page.find('.det-summary').exists()).toBe(true)
     // 2 = stable, the stored profile.
-    const radios = page.findAll('.profile-opt input')
-    expect((radios[2].element as HTMLInputElement).checked).toBe(true)
+    expect((profileRadios(page)[2].element as HTMLInputElement).checked).toBe(true)
   })
 
   // host targets carry no availability detector, so there is nothing to tune.
@@ -431,5 +442,61 @@ describe('MonitorForm detection sensitivity', () => {
 
     expect(page.find('.det-summary').exists()).toBe(false)
     expect(apiMock.detectionSettings).not.toHaveBeenCalled()
+  })
+})
+
+// Smart detection judges a target against its own history. Unlike the
+// availability profiles it can be switched off, and unlike them its levels are
+// never expressed as numbers — the multipliers behind them are not something a
+// user could calibrate by eye.
+describe('MonitorForm smart detection', () => {
+  it('keeps the toggle visible rather than hiding it behind the disclosure', async () => {
+    const page = await render()
+
+    // Outside <details class="advanced">: discovering this feature must not
+    // require expanding anything.
+    expect(page.find('.smart-body').exists()).toBe(true)
+    expect(page.find('.advanced .smart-body').exists()).toBe(false)
+    expect(page.find('.smart-body input[type="checkbox"]').exists()).toBe(true)
+    expect(smartRadios(page)).toHaveLength(3)
+  })
+
+  it('states no raw numbers in the level descriptions', async () => {
+    const page = await render()
+    for (const desc of page.findAll('.smart-list .profile-desc')) {
+      expect(desc.text()).not.toMatch(/\d/)
+    }
+  })
+
+  it('hides the levels when smart detection is switched off', async () => {
+    state.route.path = '/monitoring/t1/edit'
+    state.route.params = { id: 't1' }
+    const page = await render([editableIcmpTarget], detection({ smart_enabled: false }))
+    expect(page.find('.smart-list').exists()).toBe(false)
+  })
+
+  it('loads the stored level and writes a changed one', async () => {
+    state.route.path = '/monitoring/t1/edit'
+    state.route.params = { id: 't1' }
+    apiMock.setTargets.mockResolvedValue({ ok: true, warnings: [] })
+    const page = await render([editableIcmpTarget], detection({ smart_sensitivity: 'sensitive' }))
+    // 0 = loose, 1 = standard, 2 = sensitive
+    expect((smartRadios(page)[2].element as HTMLInputElement).checked).toBe(true)
+
+    await smartRadios(page)[0].setValue()
+    await page.get('button.btn.btn-primary').trigger('click')
+    await flushPromises()
+
+    expect(apiMock.updateDetectionSettings).toHaveBeenCalledWith(
+      't1',
+      expect.objectContaining({ smart_enabled: true, smart_sensitivity: 'loose' }),
+    )
+  })
+
+  it('says so when a custom loss threshold has stood the loss check down', async () => {
+    state.route.path = '/monitoring/t1/edit'
+    state.route.params = { id: 't1' }
+    const page = await render([editableIcmpTarget], detection({ profile: 'custom', icmp_loss_pct: 30 }))
+    expect(page.get('.smart-body').text()).toContain('smart loss detection stands down')
   })
 })

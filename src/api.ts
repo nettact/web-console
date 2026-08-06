@@ -746,6 +746,15 @@ export interface Incident {
   opened_at: string
   resolved_at: string | null
 }
+// Which detector reached a verdict. availability and agent_connectivity answer
+// "is it working"; the two degradation keys answer "is it working as well as it
+// usually does" — a different claim, recorded at a lower severity and never
+// merged into an availability incident.
+export type DetectorKey =
+  | 'availability'
+  | 'agent_connectivity'
+  | 'latency_degradation'
+  | 'loss_degradation'
 // A fault signal: one confirmed fault lifecycle for one (agent, target,
 // detector). Every display fact is frozen at confirmation time, so renaming or
 // deleting the target afterwards cannot rewrite what the fault said.
@@ -760,7 +769,7 @@ export interface FaultSignal {
   target_name: string
   target_addr: string
   target_port?: number
-  detector_key: 'availability' | 'agent_connectivity'
+  detector_key: DetectorKey
   probe_kind: string
   group_id?: string
   group_name: string
@@ -774,9 +783,23 @@ export interface FaultSignal {
   fail_threshold: number
   recover_threshold: number
   metric_kind: string
-  comparator: string // gte (icmp loss) | lt (probe ok)
+  // gte (icmp loss) | lt (probe ok) | gte_baseline (the threshold was DERIVED
+  // from the target's own history rather than configured, so it is rendered as a
+  // sentence — nobody chose the number and nobody would recognise it).
+  comparator: string
   value: number
   threshold: number
+  // The target's own historical band for this metric and time of day, frozen at
+  // confirmation. Only the degradation detectors set them (0 elsewhere), and only
+  // they make the claim legible: "180ms" means nothing until it sits next to
+  // "usually about 40ms at this hour".
+  //
+  // Always present, never optional: a clean target's packet-loss baseline is
+  // legitimately 0/0, so an absent field and a zero one would be indistinguishable
+  // in exactly the most common degradation there is. The server sends both
+  // unconditionally for the same reason.
+  baseline_p50: number
+  baseline_p95: number
   // Frozen probe failure reason (telemetry.ProbeReason* code): the underlying
   // cause (unreachable / DNS-failed / timeout). 0 = none.
   reason_code: number
@@ -1201,11 +1224,17 @@ export interface NotificationDelivery {
 }
 
 // ---- built-in detection sensitivity ----
-// The only tunables the built-in detector has. There is deliberately no "off":
-// fault recording is a product guarantee, so a user who does not want the probe
-// disables the target, and one who does not want to be disturbed edits its
-// monitor group's notification policy.
+// The availability detector has deliberately no "off": fault recording is a
+// product guarantee, so a user who does not want the probe disables the target,
+// and one who does not want to be disturbed edits its monitor group's
+// notification policy.
+//
+// The smart_* fields DO have an off switch. They drive the baseline-relative
+// degradation detectors, which make a claim about how a target usually behaves
+// rather than about whether it works — a different kind of statement, and one
+// somebody may reasonably not want made about their network.
 export type DetectionProfile = 'balanced' | 'fast' | 'stable' | 'custom'
+export type SmartSensitivity = 'loose' | 'standard' | 'sensitive'
 export interface DetectionSettings {
   target_id: string
   kind: string
@@ -1215,6 +1244,9 @@ export interface DetectionSettings {
   // Loss percentage at or above which an ICMP/gateway round counts as a failure.
   // 100 = only total loss is a fault.
   icmp_loss_pct: number
+  // Watch for quality degradation against the target's own history.
+  smart_enabled: boolean
+  smart_sensitivity: SmartSensitivity
   revision: number
   updated_at?: string
 }
@@ -1223,6 +1255,38 @@ export interface DetectionSettingsInput {
   fail_rounds: number
   recover_rounds: number
   icmp_loss_pct: number
+  smart_enabled: boolean
+  smart_sensitivity: SmartSensitivity
+}
+
+// ---- historical baselines (ALERT-003) ----
+// What "normal" looks like for one target on one Agent, per time-of-day bucket.
+// Per-agent rather than aggregated: the same target probed from two vantage
+// points genuinely has two normals, and an average of them is a reference
+// neither agent has ever measured.
+export interface DaypartBand {
+  weekend: boolean
+  // 0: 00-06, 1: 06-12, 2: 12-18, 3: 18-24, in the SERVER's local time.
+  daypart: number
+  p50: number
+  p95: number
+  // How many days the medians were taken over, and how many raw samples sit
+  // behind them. Shown rather than hidden: "usually about 40ms" is a claim, and
+  // this is its evidence.
+  days: number
+  samples: number
+}
+export interface TargetBaseline {
+  target_id: string
+  agent_id: string
+  metric_kind: string
+  // True while NO time-of-day bucket has met the cold-start gate. Individual
+  // buckets can still be missing while this is false — a target watched since
+  // Wednesday has weekday bands and no weekend ones.
+  learning: boolean
+  observed_days: number
+  min_days: number
+  bands: DaypartBand[]
 }
 
 // ---- availability ----
@@ -2180,6 +2244,13 @@ export const api = {
     req<DetectionSettings>('GET', `/api/v1/targets/${encodeURIComponent(targetID)}/detection-settings`),
   updateDetectionSettings: (targetID: string, body: DetectionSettingsInput) =>
     req<DetectionSettings>('PATCH', `/api/v1/targets/${encodeURIComponent(targetID)}/detection-settings`, body),
+  // One target's learned baseline as seen from one Agent. metric defaults to the
+  // target kind's own judged latency metric.
+  targetBaseline: (targetID: string, agentID: string, metric?: string) => {
+    const q = new URLSearchParams({ agent_id: agentID })
+    if (metric) q.set('metric', metric)
+    return req<TargetBaseline>('GET', `/api/v1/targets/${encodeURIComponent(targetID)}/baseline?${q}`)
+  },
   // Availability over a window: every target of a site, or one target broken
   // down per Agent.
   siteAvailability: (siteID: string, window: AvailabilityWindow = '24h') =>

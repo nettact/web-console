@@ -80,6 +80,8 @@ const availabilityMember = (over: Partial<FaultSignal> = {}): FaultSignal => ({
   threshold: 80,
   reason_code: 3,
   reason_detail: 'network is unreachable',
+  baseline_p50: 0,
+  baseline_p95: 0,
   observed_at: T0,
   confirmed_at: '2026-08-01T10:00:08Z',
   resolved_at: null,
@@ -118,6 +120,8 @@ const connectivityMember = (over: Partial<FaultSignal> = {}): FaultSignal => ({
   threshold: 0,
   reason_code: 0,
   reason_detail: '',
+  baseline_p50: 0,
+  baseline_p95: 0,
   observed_at: T0,
   confirmed_at: '2026-08-01T10:00:05Z',
   resolved_at: null,
@@ -254,6 +258,8 @@ function seed(extraMembers: Partial<FaultSignal>[] = []) {
         threshold: 80,
         reason_code: 1,
         reason_detail: '',
+        baseline_p50: 0,
+        baseline_p95: 0,
         rounds: null,
         started_at: '2026-08-01T09:55:00Z',
         ended_at: '2026-08-01T09:56:00Z',
@@ -365,6 +371,37 @@ describe('IncidentReport', () => {
     expect(history.findAll('tr')).toHaveLength(2)
   })
 
+  // A degradation's threshold is a number the product derived from the target's
+  // own history. Printed the usual way it becomes "(gte_baseline 67.5)" — an
+  // internal token in an exported PDF, next to a threshold nobody chose.
+  it('states a degradation against its baseline instead of a raw comparator', async () => {
+    apiMock.incident.mockResolvedValue({
+      incident,
+      members: [
+        availabilityMember({
+          id: 'm_deg',
+          detector_key: 'latency_degradation',
+          severity: 'info',
+          metric_kind: 'probe.icmp.rtt_ms',
+          comparator: 'gte_baseline',
+          value: 180,
+          threshold: 67.5,
+          baseline_p50: 40,
+          baseline_p95: 45,
+          reason_code: 0,
+          reason_detail: '',
+          rounds: null,
+        }),
+      ],
+      abnormal_target_count: 1,
+    })
+    const text = (await mountReport()).text()
+
+    expect(text).not.toContain('gte_baseline')
+    expect(text).toContain('与平时对比')
+    expect(text).toContain('平时同时段约 40')
+  })
+
   it('says when the precursor page was capped by the server', async () => {
     apiMock.fluctuations.mockResolvedValue({
       items: [
@@ -386,6 +423,8 @@ describe('IncidentReport', () => {
           threshold: 80,
           reason_code: 1,
           reason_detail: '',
+          baseline_p50: 0,
+          baseline_p95: 0,
           rounds: null,
           started_at: '2026-08-01T09:55:00Z',
           ended_at: '2026-08-01T09:56:00Z',

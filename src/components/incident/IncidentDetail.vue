@@ -22,6 +22,7 @@ import {
   type NotificationDelivery,
 } from '../../api'
 import { toDateLocale } from '../../i18n'
+import { isDegradation } from '../../lib/detection'
 import { useIncidentLabels, severityTone } from '../../composables/useIncidentLabels'
 import { useMetricMeta } from '../../composables/useMetricMeta'
 import { usePolling } from '../../composables/usePolling'
@@ -57,6 +58,7 @@ const {
   resolveReasonLabel,
   comparatorSymbol,
   comparatorLabel,
+  detectorLabel,
   attributionSentence,
   clueLabel,
   cluePolarity,
@@ -363,6 +365,13 @@ onBeforeUnmount(() => {
                 {{ memberStateLabel(m) }}
               </span>
               <span class="badge" :class="severityTone(m.severity)">{{ sevLabel(m.severity) }}</span>
+              <!-- Degradation members are labelled explicitly. Severity alone does
+                   not carry it: "info" says how loud this is, not that the target
+                   is answering fine and merely doing so slowly. -->
+              <span
+                v-if="isDegradation(m.detector_key)"
+                class="badge neutral tiny"
+              >{{ detectorLabel(m.detector_key) }}</span>
               <span
                 v-if="m.state === 'firing' && !m.currently_abnormal"
                 class="badge neutral tiny"
@@ -383,7 +392,22 @@ onBeforeUnmount(() => {
                 <dt>{{ t('incidents.detail.evTarget') }}</dt>
                 <dd class="mono">{{ m.target_addr }}</dd>
               </div>
-              <div v-if="m.metric_kind">
+              <!-- A baseline-judged member reads as a sentence, not as a
+                   comparison against a number. "≥ 67.5" is a threshold the
+                   product derived from this target's own history; nobody chose
+                   it and nobody would recognise it, so what is shown is the
+                   comparison that was actually made. -->
+              <div v-if="m.metric_kind && isDegradation(m.detector_key)">
+                <dt>{{ t('incidents.detail.evVsBaseline') }}</dt>
+                <dd>
+                  {{ metricLabel(m.metric_kind) }}
+                  <span class="mono">{{ fmtNum(m.value) }}</span>
+                  <span class="hint">
+                    {{ t('incidents.detail.baselineUsual', { usual: fmtNum(m.baseline_p50) }) }}
+                  </span>
+                </dd>
+              </div>
+              <div v-else-if="m.metric_kind">
                 <dt>{{ t('incidents.detail.evMetric') }}</dt>
                 <dd>
                   {{ metricLabel(m.metric_kind) }}

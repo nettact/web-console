@@ -11,6 +11,7 @@ import { escapeHtml } from '../lib/escapeHtml'
 import { lineDataWithGaps } from '../lib/chartSeries'
 import { chartColor, oklchToRgb } from '../lib/chartColor'
 import { bandAt, mergeBands, type BandKind, type ChartBand } from '../lib/chartBands'
+import type { BaselineSpan } from '../lib/baselineBand'
 import { pixelAtTime, useChartSelection, type TimeSelection } from '../composables/useChartSelection'
 import { ALIGNED_GRID_LEFT, ALIGNED_GRID_RIGHT } from '../lib/chartGrid'
 
@@ -67,6 +68,12 @@ const props = defineProps<{
   // as the blank on the frame charts above — "the game was minimised", not "the
   // network data is missing".
   bands?: ChartBand[]
+  // ALERT-003: what this metric NORMALLY sits between, shaded behind the lines.
+  // One rectangle per time-of-day span, because the baseline is learned per
+  // daypart — a household's 21:00 is not its 04:00, and a single flat band across
+  // the window would be an average of two different normals that describes
+  // neither. Empty/absent while the target is still learning.
+  baselineSpans?: BaselineSpan[]
   // Whether a drag on this chart selects a time span.
   //
   // Off by default, and explicitly rather than by inferring it from the model
@@ -107,6 +114,26 @@ function markAreaData() {
   return mergeBands(props.bands ?? []).flatMap(({ kind, spans }) =>
     spans.map(([from, to]) => [{ xAxis: from, itemStyle: { color: bandFill(kind) } }, { xAxis: to }]),
   )
+}
+
+// The baseline corridor, as 2D markArea rectangles bounded on both axes. It rides
+// in the SAME markArea as the time-span bands above because ECharts allows one
+// per series — mixing 1D (x-only) and 2D items in one data array is supported, and
+// is why this does not need a decoy series to hang off.
+//
+// The rectangles are bound to the first y axis, which on a latency chart is the
+// only one; a chart mixing units would need the caller to say which axis the
+// corridor belongs to, and no such chart asks for one today.
+function baselineAreaData() {
+  const spans = props.baselineSpans ?? []
+  if (!spans.length) return []
+  const isLight = theme.value === 'light'
+  const base = chartColor('--color-chart-label', isLight ? '#4a5768' : '#b7c3d4')
+  const fill = echarts.color.modifyAlpha(base, isLight ? 0.1 : 0.14) ?? base
+  return spans.map((s) => [
+    { xAxis: s.from, yAxis: s.lo, itemStyle: { color: fill } },
+    { xAxis: s.to, yAxis: s.hi },
+  ])
 }
 
 const el = ref<HTMLDivElement>()
@@ -199,7 +226,7 @@ function renderLines(ms: ChartMetric[]) {
     ...(u === 'bool' ? { min: 0, max: 1, interval: 1 } : {}),
   }))
 
-  const areas = markAreaData()
+  const areas = [...baselineAreaData(), ...markAreaData()]
   const series = ms.map((m, i) => {
     const isBool = m.unit === 'bool'
     const ai = Math.max(0, axisUnits.indexOf(m.unit || ''))

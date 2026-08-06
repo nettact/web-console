@@ -4,18 +4,20 @@ import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
 import {
   api,
-  type Channel,
   type DetectionProfile,
   type DetectionSettingsInput,
+  type Channel,
   type MonitorGroup,
   type ProbeParams,
   type ProbeTarget,
   type Proxy,
   type SaveWarning,
+  type SmartSensitivity,
 } from '../api'
 import ComboInput from '../components/ComboInput.vue'
 import { pushToast } from '../toasts'
 import { LEADING_SCHEME, paramsRangeError, retargetForKind, targetError } from '../lib/targetValidation'
+import { profileRounds } from '../lib/detection'
 import {
   anyProxyCapable,
   proxyDisabledWarning,
@@ -145,17 +147,22 @@ function applyKindDefaults() {
 // design. The only tunables are how many consecutive rounds confirm a fault and
 // how many confirm the recovery, plus the loss threshold for ICMP/gateway.
 // host targets carry no such detector, so the whole block is hidden for them.
+//
+// Smart detection (ALERT-003) sits alongside it and DOES have an off switch: it
+// judges a target against its own history rather than against a fixed number, so
+// it makes a claim about usual behaviour rather than about whether the thing
+// works. Its sensitivity is presented as three plain-language levels — the
+// multipliers and round counts behind them are never shown, because they are not
+// numbers anybody could calibrate by eye.
 const DETECTION_PROFILES: DetectionProfile[] = ['balanced', 'fast', 'stable', 'custom']
-const PROFILE_ROUNDS: Record<string, { fail: number; recover: number }> = {
-  balanced: { fail: 3, recover: 2 },
-  fast: { fail: 2, recover: 2 },
-  stable: { fail: 5, recover: 3 },
-}
+const SMART_LEVELS: SmartSensitivity[] = ['loose', 'standard', 'sensitive']
 const detection = reactive<DetectionSettingsInput>({
   profile: 'balanced',
   fail_rounds: 3,
   recover_rounds: 2,
   icmp_loss_pct: 100,
+  smart_enabled: true,
+  smart_sensitivity: 'standard',
 })
 // Server state as last seen, so an untouched form never PATCHes (and never bumps
 // the settings revision) just because the target itself was saved.
@@ -163,10 +170,15 @@ const detectionBaseline = ref<DetectionSettingsInput>({ ...detection })
 const detectionOpen = ref(false)
 const showDetection = computed(() => form.kind !== 'host')
 const showLossThreshold = computed(() => form.kind === 'icmp' || form.kind === 'gateway')
+// Smart loss detection stands down once the user has stated their own loss
+// tolerance, so the copy has to stop implying it is still watching.
+const smartLossYielded = computed(
+  () => showLossThreshold.value && detection.icmp_loss_pct !== 100,
+)
 
 function setProfile(p: DetectionProfile) {
   detection.profile = p
-  const preset = PROFILE_ROUNDS[p]
+  const preset = profileRounds(p)
   if (preset) {
     detection.fail_rounds = preset.fail
     detection.recover_rounds = preset.recover
@@ -178,7 +190,9 @@ function detectionChanged(): boolean {
     b.profile !== detection.profile ||
     b.fail_rounds !== detection.fail_rounds ||
     b.recover_rounds !== detection.recover_rounds ||
-    b.icmp_loss_pct !== detection.icmp_loss_pct
+    b.icmp_loss_pct !== detection.icmp_loss_pct ||
+    b.smart_enabled !== detection.smart_enabled ||
+    b.smart_sensitivity !== detection.smart_sensitivity
   )
 }
 // The number inputs' min/max are advisory (this form saves from a button click),
@@ -202,6 +216,8 @@ async function loadDetection(id: string) {
     detection.fail_rounds = d.fail_rounds
     detection.recover_rounds = d.recover_rounds
     detection.icmp_loss_pct = d.icmp_loss_pct
+    detection.smart_enabled = d.smart_enabled
+    detection.smart_sensitivity = d.smart_sensitivity
   } catch {
     // Not materialized yet — the defaults above are the ones the server applies.
   }
@@ -217,11 +233,15 @@ async function saveDetection(): Promise<boolean> {
       fail_rounds: detection.fail_rounds,
       recover_rounds: detection.recover_rounds,
       icmp_loss_pct: detection.icmp_loss_pct,
+      smart_enabled: detection.smart_enabled,
+      smart_sensitivity: detection.smart_sensitivity,
     })
     detection.profile = d.profile
     detection.fail_rounds = d.fail_rounds
     detection.recover_rounds = d.recover_rounds
     detection.icmp_loss_pct = d.icmp_loss_pct
+    detection.smart_enabled = d.smart_enabled
+    detection.smart_sensitivity = d.smart_sensitivity
     detectionBaseline.value = { ...detection }
     return true
   } catch (e) {
@@ -720,6 +740,29 @@ onMounted(loadAll)
         <p class="hint panel-hint det-summary">
           {{ tr('mform.detectionSummary', { fail: detection.fail_rounds, recover: detection.recover_rounds }) }}
         </p>
+        <!-- Smart detection sits OUTSIDE the advanced disclosure: it is a primary
+             choice about what the product will tell you, not a tuning knob, and
+             hiding it would mean nobody ever discovers it. -->
+        <div class="panel-body smart-body">
+          <label class="check-row">
+            <input type="checkbox" v-model="detection.smart_enabled" />
+            <span class="check-text">
+              <strong>{{ tr('detection.smartTitle') }}</strong>
+              <em class="hint tiny">{{ tr('detection.smartHint') }}</em>
+            </span>
+          </label>
+          <template v-if="detection.smart_enabled">
+            <div class="profile-list smart-list">
+              <label v-for="s in SMART_LEVELS" :key="s" class="profile-opt">
+                <input type="radio" :value="s" v-model="detection.smart_sensitivity" />
+                <span class="profile-name">{{ tr(`detection.smart_${s}`) }}</span>
+                <em class="profile-desc">{{ tr(`detection.smartDesc_${s}`) }}</em>
+              </label>
+            </div>
+            <p class="hint tiny">{{ tr('detection.smartLearning') }}</p>
+            <p class="hint tiny" v-if="smartLossYielded">{{ tr('detection.smartLossYielded') }}</p>
+          </template>
+        </div>
         <details class="advanced" :open="detectionOpen">
           <summary @click.prevent="detectionOpen = !detectionOpen">{{ tr('mform.detectionAdvanced') }}</summary>
           <div class="det-body">
@@ -971,6 +1014,34 @@ onMounted(loadAll)
 .det-summary {
   padding-bottom: 8px;
   color: var(--text);
+}
+.smart-body {
+  padding-top: 0;
+  padding-bottom: 12px;
+}
+.check-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  min-height: 44px;
+  font-size: 13px;
+  color: var(--text);
+}
+.check-row input {
+  width: auto;
+  margin-top: 3px;
+}
+.check-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.check-text em {
+  font-style: normal;
+}
+.smart-list {
+  margin-top: 2px;
+  padding-inline-start: 22px;
 }
 .advanced {
   border-top: 1px solid var(--border);

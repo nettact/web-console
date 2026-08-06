@@ -100,6 +100,10 @@ export function useIncidentLabels() {
     comparatorLabel: (c: string) => tr(`incidents.cmp.${c}`, c),
     errorClassLabel: (c: string) => tr(`incidents.snap.errorClass.${c}`, c),
 
+    // Which detector reached the verdict. Rendered so a "markedly slower than
+    // usual" member is never mistaken for an outage sitting in the same list.
+    detectorLabel: (k: string) => tr(`incidents.detector.${k}`, k),
+
     // INCIDENT-003 attribution: the user-language position label, the one-line
     // sentence ('' when there is no attribution — the caller then falls back to
     // the layer wording), and one clue as a short line with ✓/✗.

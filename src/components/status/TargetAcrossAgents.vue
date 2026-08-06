@@ -15,6 +15,7 @@ import {
   type KindSummary,
   type Sample,
   type TargetAgentStatusRow,
+  type TargetBaseline,
 } from '../../api'
 import MetricChart from '../MetricChart.vue'
 import MetricStatCards from '../MetricStatCards.vue'
@@ -38,6 +39,7 @@ import { availabilityTone, formatAvailability, type Tone } from '../../lib/targe
 import { targetIndex } from '../../targetStatus'
 import { fmtByUnit, isByteUnit } from '../../lib/format'
 import { agentLabel } from '../../lib/agentLabel'
+import { baselineSpans } from '../../lib/baselineBand'
 
 const props = defineProps<{
   family: string
@@ -74,6 +76,7 @@ let dataSeq = 0
 let faultSeq = 0
 let fluxSeq = 0
 let availSeq = 0
+let baselineSeq = 0
 
 const skey = (agentId: string, kind: string) => `${agentId}::${kind}`
 
@@ -147,6 +150,25 @@ function bandPoints(agentId: string): Pt[] {
 
 function statusSamplesFor(agentId: string, kind: string): Sample[] {
   return band.value?.kind === kind ? samplesFor(agentId, bandSampleKind.value) : samplesFor(agentId, kind)
+}
+
+// ALERT-003: the learned "usual" corridor for the chart's judged latency metric,
+// per Agent. Keyed by agent id because the same target seen from two vantage
+// points has two genuinely different normals — averaging them would draw a
+// corridor neither Agent has ever measured.
+const baselines = ref<Record<string, TargetBaseline>>({})
+// Only the FIRST prober's corridor is drawn. The chart overlays one line per
+// Agent, and one shaded rectangle per Agent would stack into a grey wash that
+// says nothing about any of them; with several Agents the corridor is dropped
+// rather than made ambiguous.
+const baselineForChart = computed(() =>
+  props.probers.length === 1 ? (baselines.value[props.probers[0].agent.id] ?? null) : null,
+)
+function spansFor(kind: string) {
+  const b = baselineForChart.value
+  if (!b || b.metric_kind !== kind) return []
+  const now = Date.now()
+  return baselineSpans(b, now - props.rangeSec * 1000, now)
 }
 
 // One overlaid line per agent for a given kind.
@@ -311,6 +333,31 @@ async function loadData() {
   loading.value = false
 }
 
+// The learned baselines behind the chart corridor. Advisory in every direction: a
+// system series has no target to ask about, a target kind with no latency concept
+// answers nothing, and a failure leaves the chart undecorated rather than
+// blocking it. Reloaded with the data because a target's history grows.
+async function loadBaselines() {
+  // Single-flight guarded like every other loader here. Without it, switching
+  // target while a request is in flight lets the older response land last and
+  // shade the NEW target with the old one's learned corridor — most visible when
+  // both are probed by the same Agent on the same metric, where nothing about
+  // the drawn band looks wrong.
+  const seq = ++baselineSeq
+  if (!props.monitorId || props.probers.length !== 1) {
+    baselines.value = {}
+    return
+  }
+  const agentID = props.probers[0].agent.id
+  try {
+    const b = await api.targetBaseline(props.monitorId, agentID)
+    if (seq !== baselineSeq) return
+    baselines.value = { [agentID]: b }
+  } catch {
+    if (seq === baselineSeq) baselines.value = {}
+  }
+}
+
 // Confirmed fault history for this target, newest confirmation first. Signals are
 // target-scoped (one request covers every Agent), and each row carries its own
 // frozen evidence, so nothing here is re-derived from metric samples. A
@@ -431,6 +478,7 @@ function reload() {
   loadFaults()
   loadFluctuations()
   loadAvailability()
+  loadBaselines()
 }
 
 watch([
@@ -515,7 +563,13 @@ onMounted(reload)
 
     <!-- one trend chart per selected numeric kind, one line per agent -->
     <div class="card chart-card" v-for="k in numericKinds.filter((x) => selectedNumeric.includes(x))" :key="k">
-      <MetricChart :title="`${familyLabel} · ${metricLabel(k)}`" :metrics="chartMetrics(k)" :range-sec="rangeSec" />
+      <MetricChart
+        :title="`${familyLabel} · ${metricLabel(k)}`"
+        :metrics="chartMetrics(k)"
+        :range-sec="rangeSec"
+        :baseline-spans="spansFor(k)"
+      />
+      <p v-if="spansFor(k).length" class="empty-line hint">{{ t('metrics.baselineBand') }}</p>
       <p v-if="!loading && !chartHasData(k)" class="empty-line hint">{{ t('metrics.noDataRange') }}</p>
     </div>
 
