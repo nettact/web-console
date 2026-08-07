@@ -171,7 +171,7 @@ async function onSave() {
         config: cfg,
       })
     } else {
-      await api.createChannel(label, 'webhook', cfg)
+      await api.createChannel(label, 'webhook', cfg, props.stormMerge)
       resetFields()
     }
     emit('saved')
@@ -213,7 +213,7 @@ async function onTest() {
         <span class="wh-lbl">{{ t('settings.webhook.method') }}</span>
         <ComboInput v-model="method" :options="METHODS" placeholder="POST" />
       </label>
-      <label class="wh-field">
+      <label class="wh-field wh-lang">
         <span class="wh-lbl">{{ t('settings.langLabel') }}</span>
         <select v-model="lang">
           <option v-for="l in LANGS" :key="l.value" :value="l.value">{{ l.label }}</option>
@@ -302,25 +302,29 @@ async function onTest() {
   padding: 4px 0;
 }
 .wh-grid {
-  display: flex;
-  flex-wrap: wrap;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 8rem 8rem;
   gap: 12px;
 }
 .wh-field {
   display: flex;
   flex-direction: column;
   gap: 4px;
-  min-width: 120px;
+  min-width: 0;
 }
 .wh-field.wh-url {
-  flex: 1 1 260px;
+  grid-column: 1 / -1;
+  grid-row: 1;
 }
 .wh-field.wh-name {
-  flex: 0 1 160px;
+  grid-column: 1;
 }
 .wh-field.wh-method {
-  flex: 0 0 140px;
+  grid-column: 2;
 }
+.wh-field.wh-lang { grid-column: 3; }
+.wh-field input,
+.wh-field select { width: 100%; min-width: 0; }
 .wh-lbl {
   font-size: 12px;
   color: var(--text-dim);
@@ -424,5 +428,12 @@ async function onTest() {
   border: 1px solid var(--border);
   font-size: 12px;
   overflow-x: auto;
+}
+@media (max-width: 520px) {
+  .wh-grid { grid-template-columns: minmax(0, 1fr); }
+  .wh-field.wh-url,
+  .wh-field.wh-name,
+  .wh-field.wh-method,
+  .wh-field.wh-lang { grid-column: 1; grid-row: auto; }
 }
 </style>

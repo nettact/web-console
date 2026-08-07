@@ -24,7 +24,10 @@ import {
   type SelectionGroup,
 } from '../lib/onboardingPresets'
 import EnrollExamples from '../components/EnrollExamples.vue'
-import ChannelAddForm from '../components/ChannelAddForm.vue'
+import ChannelEditor from '../components/ChannelEditor.vue'
+import ChannelTypeMark from '../components/ChannelTypeMark.vue'
+import { channelTypeDescriptor } from '../lib/channelTypes'
+import { pushProvider } from '../lib/pushProviders'
 
 const SITE = 'site_default'
 const { t, locale } = useI18n()
@@ -310,6 +313,7 @@ const channels = ref<Channel[]>([])
 const channelsLoaded = ref(false)
 const notifyError = ref('')
 const notifyApplying = ref(false)
+const showChannelCreator = ref(false)
 // A channel only receives alerts while it is enabled — notification.Notify filters
 // on enabled=1 regardless of the rule's channel list — so a *disabled* system
 // channel is not a working destination and must not suppress the recommendation.
@@ -327,6 +331,9 @@ const sysWanted = ref(false)
 const sysTouched = ref(false)
 const sysLang = ref(locale.value.toLowerCase().startsWith('zh') ? 'zh' : 'en')
 const showSysCard = computed(() => suggestSystem.value && !hasEnabledSystem.value)
+const listedChannels = computed(() => showSysCard.value
+  ? channels.value.filter((channel) => channel.type !== 'system')
+  : channels.value)
 
 function onSysToggle(v: boolean): void {
   sysWanted.value = v
@@ -356,6 +363,25 @@ async function loadChannels(): Promise<void> {
   const lang = systemChannel.value?.config.lang
   if (lang === 'zh' || lang === 'en') sysLang.value = lang
   if (!sysTouched.value) sysWanted.value = showSysCard.value
+}
+
+function onboardingChannelTypeLabel(channel: Channel): string {
+  const descriptor = channelTypeDescriptor(channel.type)
+  return descriptor.labelKey ? t(descriptor.labelKey) : channel.type
+}
+
+function onboardingChannelTarget(channel: Channel): string {
+  if (channel.type === 'webhook') return channel.config.url || 'Webhook'
+  if (channel.type === 'email') return channel.config.to || 'Email'
+  if (channel.type === 'system') return t('settings.sysNotifyConfig')
+  const provider = pushProvider(channel.type)
+  if (!provider) return onboardingChannelTypeLabel(channel)
+  return provider.summaryKeys.map((key) => channel.config[key]).filter(Boolean).join(' · ') || onboardingChannelTypeLabel(channel)
+}
+
+async function onOnboardingChannelAdded(): Promise<void> {
+  await loadChannels()
+  showChannelCreator.value = false
 }
 
 // wireChannelsToPolicy adds the channels created in this wizard to the site's
@@ -408,7 +434,7 @@ async function applyNotifyAndNext(): Promise<void> {
           config: { lang: sysLang.value },
         })
       } else {
-        await api.createChannel(t('settings.sysNotify'), 'system', { lang: sysLang.value })
+        await api.createChannel(t('settings.sysNotify'), 'system', { lang: sysLang.value }, true)
       }
       // Re-read so the new channel's id is available to wireChannelsToPolicy, and
       // so coming back doesn't re-offer the card.
@@ -575,6 +601,7 @@ async function genToken(): Promise<void> {
             :checked="sysWanted"
             @change="onSysToggle(($event.target as HTMLInputElement).checked)"
           />
+          <ChannelTypeMark type="system" />
           <span class="sys-body">
             <span class="sys-title">
               {{ t('settings.sysNotify') }}
@@ -588,23 +615,39 @@ async function genToken(): Promise<void> {
           </select>
         </label>
 
-        <div v-if="channels.length" class="ch-existing">
+        <div v-if="listedChannels.length" class="ch-existing">
           <h3>{{ t('setup.notifyExisting') }}</h3>
-          <span v-for="c in channels" :key="c.id" class="ch-chip" :class="{ off: !c.enabled }">
-            <b>{{ c.type }}</b>{{ c.name }}
-            <em v-if="!c.enabled">{{ t('setup.notifyDisabled') }}</em>
-          </span>
+          <div class="ch-existing-list">
+            <div v-for="channel in listedChannels" :key="channel.id" class="ch-existing-row" :class="{ off: !channel.enabled }">
+              <ChannelTypeMark :type="channel.type" size="sm" />
+              <span class="ch-existing-copy">
+                <strong>{{ channel.name }}</strong>
+                <small>{{ onboardingChannelTarget(channel) }}</small>
+              </span>
+              <span class="ch-existing-state" :class="{ enabled: channel.enabled }">
+                {{ channel.enabled ? t('setup.notifyWillReceive') : t('setup.notifyDisabled') }}
+              </span>
+            </div>
+          </div>
         </div>
 
-        <h3 v-if="channelsLoaded" class="ch-add-title">
-          {{ showSysCard || channels.length ? t('setup.notifyAddOther') : t('setup.notifyAdd') }}
-        </h3>
-        <ChannelAddForm
-          v-if="channelsLoaded"
-          :native-notify="nativeNotify"
-          :exclude="showSysCard ? ['system'] : []"
-          @added="loadChannels"
-        />
+        <div v-if="channelsLoaded" class="ch-create">
+          <button v-if="!showChannelCreator" type="button" class="btn ch-create-open" @click="showChannelCreator = true">
+            <span aria-hidden="true">+</span>
+            {{ showSysCard || channels.length ? t('setup.notifyAddAction') : t('setup.notifyAdd') }}
+          </button>
+          <div v-else class="ch-create-flow">
+            <div class="ch-create-head">
+              <h3>{{ t('setup.notifyAddOther') }}</h3>
+              <button type="button" class="link-btn" @click="showChannelCreator = false">{{ t('settings.webhook.cancel') }}</button>
+            </div>
+            <ChannelEditor
+              :native-notify="nativeNotify"
+              :exclude="showSysCard ? ['system'] : []"
+              @added="onOnboardingChannelAdded"
+            />
+          </div>
+        </div>
         <p class="muted skip-hint">{{ t('setup.notifySkipHint') }}</p>
       </section>
 
@@ -964,45 +1007,74 @@ async function genToken(): Promise<void> {
   margin-top: 16px;
 }
 .ch-existing h3,
-.ch-add-title {
+.ch-create-head h3 {
   font-size: 13px;
   color: var(--text-dim);
   margin: 0 0 6px;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
+  letter-spacing: 0;
 }
-.ch-add-title {
-  margin-top: 20px;
+.ch-existing-list {
+  border-top: 1px solid var(--border);
 }
-.ch-chip {
-  display: inline-flex;
+.ch-existing-row {
+  display: flex;
   align-items: center;
-  gap: 7px;
-  margin: 0 8px 8px 0;
-  padding: 5px 12px 5px 6px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-pill, 999px);
-  font-size: 12.5px;
+  gap: 10px;
+  min-height: 58px;
+  padding: 9px 2px;
+  border-bottom: 1px solid var(--border);
 }
-.ch-chip.off {
-  opacity: 0.6;
+.ch-existing-row.off { opacity: .62; }
+.ch-existing-copy {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  flex-direction: column;
+  gap: 2px;
 }
-.ch-chip em {
+.ch-existing-copy strong,
+.ch-existing-copy small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ch-existing-copy strong { color: var(--text); font-size: 13px; }
+.ch-existing-copy small {
   color: var(--text-muted);
-  font-size: 11px;
-  font-style: normal;
+  font-family: var(--mono, var(--font-outlier));
+  font-size: 11.5px;
 }
-.ch-chip b {
-  padding: 1px 7px;
-  border-radius: var(--radius-pill, 999px);
-  background: var(--surface-2, rgba(148, 163, 184, 0.12));
-  color: var(--text-dim);
+.ch-existing-state {
+  flex: 0 0 auto;
+  color: var(--text-muted);
   font-size: 10.5px;
-  font-weight: 650;
-  text-transform: uppercase;
+  white-space: nowrap;
 }
+.ch-existing-state.enabled { color: var(--color-success-text); }
+.ch-create { margin-top: 18px; }
+.ch-create-open { gap: 7px; width: 100%; }
+.ch-create-flow {
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+}
+.ch-create-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+.ch-create-head h3 { margin: 0; }
 .skip-hint {
   margin-top: 16px;
+}
+@media (max-width: 520px) {
+  .sys-card { align-items: flex-start; flex-wrap: wrap; }
+  .sys-card > input { margin-top: 10px; }
+  .sys-lang { margin-left: calc(44px + 12px); }
+  .ch-existing-row { align-items: flex-start; }
+  .ch-existing-state { width: 100%; padding-left: 42px; }
+  .ch-existing-row { flex-wrap: wrap; }
 }
 .enroll-actions {
   display: flex;

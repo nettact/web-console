@@ -113,7 +113,7 @@ async function onSave() {
         config: cfg,
       })
     } else {
-      await api.createChannel(label, props.provider.type, cfg)
+      await api.createChannel(label, props.provider.type, cfg, props.stormMerge)
       resetFields()
     }
     emit('saved')
@@ -160,9 +160,15 @@ async function onTest() {
         <span class="wh-lbl">{{ t('settings.namePlaceholder') }}</span>
         <input v-model="name" :placeholder="t('settings.namePlaceholder')" />
       </label>
+      <label class="wh-field wh-lang">
+        <span class="wh-lbl">{{ t('settings.langLabel') }}</span>
+        <select v-model="lang">
+          <option v-for="l in LANGS" :key="l.value" :value="l.value">{{ l.label }}</option>
+        </select>
+      </label>
       <label
         v-for="f in provider.fields" :key="f.key"
-        class="wh-field" :class="['wh-f-' + f.key, { 'wh-wide': f.multiline }]">
+        class="wh-field wh-provider-field" :class="['wh-f-' + f.key, { 'wh-wide': f.multiline }]">
         <span class="wh-lbl">{{ t(f.labelKey) }}</span>
         <textarea
           v-if="f.multiline"
@@ -171,12 +177,6 @@ async function onTest() {
           v-else v-model="values[f.key]"
           :type="f.secret ? 'password' : 'text'" :placeholder="f.placeholder" />
         <span v-if="f.hintKey" class="hint tiny">{{ t(f.hintKey) }}</span>
-      </label>
-      <label class="wh-field">
-        <span class="wh-lbl">{{ t('settings.langLabel') }}</span>
-        <select v-model="lang">
-          <option v-for="l in LANGS" :key="l.value" :value="l.value">{{ l.label }}</option>
-        </select>
       </label>
     </div>
 
@@ -220,23 +220,23 @@ async function onTest() {
   white-space: nowrap;
 }
 .wh-grid {
-  display: flex;
-  flex-wrap: wrap;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 8rem;
   gap: 12px;
 }
 .wh-field {
   display: flex;
   flex-direction: column;
   gap: 4px;
-  min-width: 120px;
-  flex: 0 1 220px;
+  min-width: 0;
 }
 .wh-field.wh-name {
-  flex: 0 1 160px;
+  grid-column: 1;
 }
-.wh-field.wh-wide {
-  flex: 1 1 280px;
-}
+.wh-field.wh-lang { grid-column: 2; }
+.wh-field.wh-provider-field { grid-column: 1 / -1; }
+.wh-field input,
+.wh-field select { width: 100%; min-width: 0; }
 .wh-field textarea {
   width: 100%;
   font-family: var(--font-mono, monospace);
@@ -285,5 +285,11 @@ async function onTest() {
   word-break: break-all;
   font-size: 12px;
   color: var(--text-dim);
+}
+@media (max-width: 520px) {
+  .wh-grid { grid-template-columns: minmax(0, 1fr); }
+  .wh-field.wh-name,
+  .wh-field.wh-lang,
+  .wh-field.wh-provider-field { grid-column: 1; }
 }
 </style>

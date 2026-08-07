@@ -26,24 +26,26 @@ import {
   updateNoticeReadToken,
 } from '../updateInfo'
 import { pushToast } from '../toasts'
-import { isPushType, pushProvider } from '../lib/pushProviders'
-import PushChannelForm from '../components/PushChannelForm.vue'
-import WebhookChannelForm from '../components/WebhookChannelForm.vue'
-import ChannelAddForm from '../components/ChannelAddForm.vue'
+import { pushProvider } from '../lib/pushProviders'
+import { channelTypeDescriptor } from '../lib/channelTypes'
+import ChannelDrawer from '../components/ChannelDrawer.vue'
+import ChannelEditor from '../components/ChannelEditor.vue'
+import ChannelTypeMark from '../components/ChannelTypeMark.vue'
 import DataCleanup from '../components/DataCleanup.vue'
 import LocalAgentServers from '../components/LocalAgentServers.vue'
 import PolicyFields from '../components/PolicyFields.vue'
-import InfoTip from '../components/InfoTip.vue'
 
 const { t } = useI18n()
 const router = useRouter()
 
 const SITE = 'site_default'
+const NOTIFICATION_SECTIONS = ['channels', 'policies', 'delivery'] as const
 
 // Secondary navigation: the page grew too dense for one scroll, so its panels are
 // split across underline tabs (same pattern as Processes.vue). All tab bodies stay
 // mounted (v-show) so their one-shot on-mount loads/state persist across switches.
 const tab = ref<'general' | 'notifications' | 'data'>('general')
+const notificationSection = ref<'channels' | 'policies' | 'delivery'>('channels')
 
 const quota = ref<Quota | null>(null)
 const stats = ref<StorageStats | null>(null)
@@ -55,11 +57,11 @@ const serverInfo = ref<ServerInfo | null>(null)
 const error = ref('')
 
 const channels = ref<Channel[]>([])
-// 添加渠道的表单（含类型选择）在 ChannelAddForm 中，与初始化引导共用。
-// Webhook and push add/edit are delegated to WebhookChannelForm /
-// PushChannelForm; editingId marks which existing channel row is expanded for
-// editing ('' = none).
-const editingId = ref('')
+const channelSearch = ref('')
+const channelTypeFilter = ref('')
+const channelStatusFilter = ref('')
+const channelDrawerOpen = ref(false)
+const editingChannel = ref<Channel | null>(null)
 
 // 控制台地址：通知里深链回本事故详情页的基础 URL（如 http://localhost:12450）。
 const consoleUrl = ref('')
@@ -469,6 +471,23 @@ const defaultPolicy = computed(() => policies.value.find((p) => p.is_default) ??
 // from and no delete action to offer.
 const agentPolicy = computed(() => policies.value.find((p) => p.scope_kind === 'agent') ?? null)
 const overrides = computed(() => policies.value.filter((p) => !p.is_default && p.scope_kind !== 'agent'))
+const enabledChannelCount = computed(() => channels.value.filter((channel) => channel.enabled).length)
+const channelTypesInUse = computed(() => [...new Set(channels.value.map((channel) => channel.type))])
+const filteredChannels = computed(() => {
+  const query = channelSearch.value.trim().toLocaleLowerCase()
+  return channels.value.filter((channel) => {
+    if (channelTypeFilter.value && channel.type !== channelTypeFilter.value) return false
+    if (channelStatusFilter.value === 'enabled' && !channel.enabled) return false
+    if (channelStatusFilter.value === 'disabled' && channel.enabled) return false
+    if (!query) return true
+    return [channel.name, channelTypeLabel(channel), channelConfigLabel(channel)]
+      .some((value) => value.toLocaleLowerCase().includes(query))
+  })
+})
+
+function channelUsageCount(channel: Channel): number {
+  return policies.value.filter((policy) => policy.channel_ids.includes(channel.id)).length
+}
 
 function toInput(p: NotificationPolicy): NotificationPolicyInput {
   return {
@@ -752,29 +771,42 @@ async function saveUpdateNotice(v: boolean) {
   }
 }
 
-// The channel forms perform the create/update themselves (so they can surface
-// failures inline); the parent only closes the editor and refreshes the list.
+function openAddChannel() {
+  editingChannel.value = null
+  channelDrawerOpen.value = true
+}
+
+function openEditChannel(channel: Channel) {
+  editingChannel.value = channel
+  channelDrawerOpen.value = true
+}
+
+function closeChannelDrawer() {
+  channelDrawerOpen.value = false
+  editingChannel.value = null
+}
+
 async function onChannelSaved() {
-  editingId.value = ''
-  await load()
+  closeChannelDrawer()
+  // Policies too, not just the channel list: the server checks a newly created
+  // channel into the site default and Agent-connectivity policies, so the panels
+  // below would keep showing it unticked until the next page load — looking
+  // exactly like the wiring did not happen.
+  await Promise.all([load(), loadPolicies()])
 }
 async function toggleChannel(c: Channel) {
   await api.updateChannel(c.id, { name: c.name, enabled: !c.enabled, storm_merge: c.storm_merge })
   await load()
 }
-// Per-channel storm merging (ALERT-001): one summary when many faults break out
-// at once, or one message per fault. On by default; off suits a machine consumer
-// that needs a record per incident.
-async function toggleStormMerge(c: Channel) {
-  await api.updateChannel(c.id, { name: c.name, enabled: c.enabled, storm_merge: !c.storm_merge })
+async function removeChannel(channel: Channel) {
+  const count = channelUsageCount(channel)
+  const message = count
+    ? t('settings.channelManager.deleteConfirmUsed', { name: channel.name, count })
+    : t('settings.channelManager.deleteConfirm', { name: channel.name })
+  if (!confirm(message)) return
+  await api.deleteChannel(channel.id)
   await load()
-}
-async function renameChannel(c: Channel) {
-  await api.updateChannel(c.id, { name: c.name, enabled: c.enabled, storm_merge: c.storm_merge })
-}
-async function removeChannel(id: string) {
-  await api.deleteChannel(id)
-  await load()
+  await loadPolicies()
 }
 // Config summary shown in the channel table's Config column. Push channels are
 // credentials-only, so there is nothing to show beyond whatever non-secret
@@ -794,8 +826,8 @@ function channelConfigLabel(c: Channel): string {
 // Type badge text: a push channel's raw type string ("wxpusher") is not what the
 // platform is called anywhere else in the UI.
 function channelTypeLabel(c: Channel): string {
-  const push = pushProvider(c.type)
-  return push ? t(push.labelKey) : c.type
+  const descriptor = channelTypeDescriptor(c.type)
+  return descriptor.labelKey ? t(descriptor.labelKey) : c.type
 }
 onMounted(() => {
   load()
@@ -1189,86 +1221,114 @@ onMounted(() => {
       role="tabpanel"
       aria-labelledby="settings-tab-notifications"
     >
-    <section class="panel">
-      <div class="panel-head"><h3>{{ t('settings.channels') }}</h3><span class="count">{{ channels.length }}</span></div>
-      <div class="panel-body">
-        <p class="hint">{{ t('settings.channelsHint') }}</p>
-
-        <ChannelAddForm :native-notify="serverInfo?.native_notify === true" @added="load" />
-      </div>
-      <div
-        class="table-wrap"
-        role="region"
-        tabindex="0"
-        :aria-label="t('settings.channels')"
+    <div class="notification-subnav" role="tablist" :aria-label="t('settings.tabs.notifications')">
+      <button
+        v-for="section in NOTIFICATION_SECTIONS"
+        :key="section"
+        type="button"
+        role="tab"
+        :aria-selected="notificationSection === section"
+        class="notification-subnav-item"
+        :class="{ active: notificationSection === section }"
+        @click="notificationSection = section"
       >
-        <table class="data-table">
-          <thead><tr><th>{{ t('settings.thName') }}</th><th>{{ t('settings.thType') }}</th><th>{{ t('settings.thConfig') }}</th><th class="center">{{ t('settings.thEnabled') }}</th><th class="center">
-            {{ t('settings.thStormMerge') }}
-            <InfoTip :text="t('settings.alertStorm.channelHint')" />
-          </th><th></th></tr></thead>
-          <tbody>
-            <tr v-if="!channels.length"><td colspan="6" class="hint">{{ t('settings.noChannels') }}</td></tr>
-            <template v-for="c in channels" :key="c.id">
-              <tr>
-                <td><input v-model="c.name" class="name-in" @blur="renameChannel(c)" /></td>
-                <td><span class="badge neutral">{{ channelTypeLabel(c) }}</span></td>
-                <td class="mono">{{ channelConfigLabel(c) }}</td>
-                <td class="center"><input type="checkbox" :checked="c.enabled" @change="toggleChannel(c)" /></td>
-                <td class="center">
-                  <input
-                    type="checkbox"
-                    :checked="c.storm_merge"
-                    :aria-label="t('settings.thStormMerge')"
-                    @change="toggleStormMerge(c)"
-                  />
-                </td>
-                <td class="row-actions">
-                  <button
-                    v-if="c.type === 'webhook' || isPushType(c.type)" class="link-btn"
-                    @click="editingId = editingId === c.id ? '' : c.id">
-                    {{ editingId === c.id ? t('settings.webhook.cancel') : t('settings.webhook.edit') }}
-                  </button>
-                  <button class="link-btn danger" @click="removeChannel(c.id)">{{ t('common.delete') }}</button>
-                </td>
-              </tr>
-              <tr v-if="editingId === c.id" class="wh-edit-row">
-                <td colspan="6">
-                  <WebhookChannelForm
-                    v-if="c.type === 'webhook'"
-                    mode="edit"
-                    :channel-id="c.id"
-                    :enabled="c.enabled"
-                    :storm-merge="c.storm_merge"
-                    :initial-name="c.name"
-                    :initial-config="c.config"
-                    @saved="onChannelSaved"
-                    @cancel="editingId = ''"
-                  />
-                  <PushChannelForm
-                    v-else-if="pushProvider(c.type)"
-                    :provider="pushProvider(c.type)!"
-                    mode="edit"
-                    :channel-id="c.id"
-                    :enabled="c.enabled"
-                    :storm-merge="c.storm_merge"
-                    :initial-name="c.name"
-                    :initial-config="c.config"
-                    @saved="onChannelSaved"
-                    @cancel="editingId = ''"
-                  />
-                </td>
-              </tr>
-            </template>
-          </tbody>
-        </table>
+        {{ t(`settings.notificationSections.${section}`) }}
+      </button>
+    </div>
+
+    <section v-show="notificationSection === 'channels'" class="panel channel-workspace">
+      <div class="panel-head channel-workspace-head">
+        <div>
+          <h3>{{ t('settings.channels') }}</h3>
+          <p>{{ t('settings.channelsHint') }}</p>
+        </div>
+        <button type="button" class="btn btn-primary" @click="openAddChannel">
+          <span aria-hidden="true">+</span>{{ t('settings.channelManager.add') }}
+        </button>
+      </div>
+
+      <div v-if="channels.length" class="channel-toolbar">
+        <label class="channel-search">
+          <span class="sr-only">{{ t('settings.channelManager.search') }}</span>
+          <input v-model="channelSearch" type="search" :placeholder="t('settings.channelManager.search')" />
+        </label>
+        <select v-model="channelTypeFilter" :aria-label="t('settings.channelManager.allTypes')">
+          <option value="">{{ t('settings.channelManager.allTypes') }}</option>
+          <option v-for="type in channelTypesInUse" :key="type" :value="type">
+            {{ channelTypeLabel(channels.find((channel) => channel.type === type)!) }}
+          </option>
+        </select>
+        <select v-model="channelStatusFilter" :aria-label="t('settings.channelManager.allStatuses')">
+          <option value="">{{ t('settings.channelManager.allStatuses') }}</option>
+          <option value="enabled">{{ t('settings.channelManager.enabled') }}</option>
+          <option value="disabled">{{ t('settings.channelManager.disabled') }}</option>
+        </select>
+        <span class="channel-summary">
+          {{ t('settings.channelManager.summary', { enabled: enabledChannelCount, total: channels.length }) }}
+        </span>
+      </div>
+
+      <div v-if="!channels.length" class="channel-empty">
+        <p>{{ t('settings.noChannels') }}</p>
+        <button type="button" class="btn btn-primary" @click="openAddChannel">
+          <span aria-hidden="true">+</span>{{ t('settings.channelManager.add') }}
+        </button>
+      </div>
+
+      <div v-else class="channel-index" role="table" :aria-label="t('settings.channels')">
+        <div class="channel-index-head" role="row">
+          <span role="columnheader">{{ t('settings.channelManager.colChannel') }}</span>
+          <span role="columnheader">{{ t('settings.channelManager.colDestination') }}</span>
+          <span role="columnheader">{{ t('settings.channelManager.colUsage') }}</span>
+          <span role="columnheader">{{ t('settings.channelManager.colState') }}</span>
+          <span role="columnheader" class="sr-only">{{ t('settings.channelManager.actions') }}</span>
+        </div>
+        <div v-if="!filteredChannels.length" class="channel-no-match">{{ t('settings.channelManager.noMatch') }}</div>
+        <div v-for="channel in filteredChannels" v-else :key="channel.id" class="channel-index-row" role="row">
+          <div class="channel-identity" role="cell">
+            <ChannelTypeMark :type="channel.type" />
+            <span>
+              <strong>{{ channel.name }}</strong>
+              <small>{{ channelTypeLabel(channel) }} · {{ channel.storm_merge ? t('settings.channelManager.stormMerged') : t('settings.channelManager.individual') }}</small>
+            </span>
+          </div>
+          <div class="channel-destination mono" role="cell">{{ channelConfigLabel(channel) || '—' }}</div>
+          <div class="channel-usage" role="cell">
+            {{ channelUsageCount(channel) ? t('settings.channelManager.policyCount', { count: channelUsageCount(channel) }) : t('settings.channelManager.unused') }}
+          </div>
+          <label class="channel-state" role="cell">
+            <input type="checkbox" :checked="channel.enabled" @change="toggleChannel(channel)" />
+            <span>{{ channel.enabled ? t('settings.channelManager.enabled') : t('settings.channelManager.disabled') }}</span>
+          </label>
+          <div class="channel-actions" role="cell">
+            <button type="button" class="link-btn" @click="openEditChannel(channel)">{{ t('settings.channelManager.edit') }}</button>
+            <button type="button" class="link-btn danger" @click="removeChannel(channel)">{{ t('settings.channelManager.delete') }}</button>
+          </div>
+        </div>
       </div>
     </section>
+
+    <ChannelDrawer
+      :open="channelDrawerOpen"
+      :title="editingChannel ? t('settings.channelManager.drawerEditTitle', { name: editingChannel.name }) : t('settings.channelManager.drawerAddTitle')"
+      :description="editingChannel ? t('settings.channelManager.drawerEditHint') : t('settings.channelManager.drawerAddHint')"
+      @close="closeChannelDrawer"
+    >
+      <ChannelEditor
+        :key="editingChannel?.id || 'new-channel'"
+        :mode="editingChannel ? 'edit' : 'add'"
+        :channel="editingChannel"
+        :native-notify="serverInfo?.native_notify === true"
+        @added="onChannelSaved"
+        @saved="onChannelSaved"
+        @cancel="closeChannelDrawer"
+      />
+    </ChannelDrawer>
 
     <!-- Alert-storm suppression (ALERT-001). Sits under Notifications, not with
          the detector timings: it decides how many MESSAGES leave, never whether a
          fault is recorded. Every fault is in the fault centre either way. -->
-    <section class="panel">
+    <section v-show="notificationSection === 'delivery'" class="panel">
       <div class="panel-head"><h3>{{ t('settings.alertStorm.title') }}</h3></div>
       <div class="panel-body">
         <p class="hint">{{ t('settings.alertStorm.hint') }}</p>
@@ -1300,6 +1360,7 @@ onMounted(() => {
 
     <!-- Non-blocking: no channel is a legal configuration, and detection is on
          regardless — say both plainly so it never reads as "nothing is watching". -->
+    <div v-show="notificationSection === 'policies'" class="notification-policy-stack">
     <p v-if="!channels.length" class="notice-box">{{ t('notificationPolicy.noChannelsNotice') }}</p>
     <p v-if="policyError" class="err">{{ policyError }}</p>
 
@@ -1489,6 +1550,7 @@ onMounted(() => {
         </div>
       </div>
     </section>
+    </div>
     </div><!-- /notifications -->
 
     <div
@@ -1581,6 +1643,166 @@ onMounted(() => {
   scrollbar-width: none;
 }
 .tabs::-webkit-scrollbar { display: none; }
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+.notification-subnav {
+  display: flex;
+  gap: var(--space-lg);
+  margin-bottom: var(--space-sm);
+  overflow-x: auto;
+  border-bottom: var(--rule-hair) solid var(--color-rule);
+  scrollbar-width: none;
+}
+.notification-subnav::-webkit-scrollbar { display: none; }
+.notification-subnav-item {
+  position: relative;
+  min-height: 2.75rem;
+  padding: 0;
+  border: 0;
+  color: var(--color-muted);
+  background: transparent;
+  font-size: var(--text-sm);
+  font-weight: 650;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.notification-subnav-item::after {
+  content: '';
+  position: absolute;
+  right: 0;
+  bottom: -1px;
+  left: 0;
+  height: var(--rule-fine);
+  background: var(--color-accent);
+  opacity: 0;
+  transform: scaleX(.5);
+  transition: opacity var(--dur-micro) var(--ease-out), transform var(--dur-micro) var(--ease-out);
+}
+.notification-subnav-item:hover,
+.notification-subnav-item.active { color: var(--color-ink); }
+.notification-subnav-item.active::after { opacity: 1; transform: scaleX(1); }
+.notification-subnav-item:focus-visible { outline: var(--rule-fine) solid var(--color-focus); outline-offset: var(--space-3xs); }
+.channel-workspace { overflow: visible; }
+.channel-workspace-head {
+  align-items: center;
+  min-height: 4.5rem;
+  padding-block: var(--space-sm);
+}
+.channel-workspace-head > div { min-width: 0; }
+.channel-workspace-head h3 { margin: 0; }
+.channel-workspace-head p {
+  margin: var(--space-3xs) 0 0;
+  color: var(--color-muted);
+  font-size: var(--text-sm);
+}
+.channel-workspace-head .btn { flex: 0 0 auto; gap: var(--space-2xs); }
+.channel-toolbar {
+  display: grid;
+  grid-template-columns: minmax(15rem, 1fr) 10rem 10rem auto;
+  gap: var(--space-xs);
+  align-items: center;
+  padding: var(--space-sm);
+  border-bottom: var(--rule-hair) solid var(--color-rule);
+}
+.channel-search input,
+.channel-toolbar select { width: 100%; min-width: 0; }
+.channel-summary {
+  color: var(--color-muted);
+  font-size: var(--text-xs);
+  text-align: right;
+  white-space: nowrap;
+}
+.channel-index { min-width: 0; }
+.channel-index-head,
+.channel-index-row {
+  display: grid;
+  grid-template-columns: minmax(16rem, 1.55fr) minmax(9rem, .8fr) minmax(7rem, .55fr) minmax(7rem, .5fr) 10rem;
+  gap: var(--space-sm);
+  align-items: center;
+}
+.channel-index-head {
+  min-height: 2.75rem;
+  padding: 0 var(--space-sm);
+  color: var(--color-muted);
+  background: var(--color-glass-subtle);
+  border-bottom: var(--rule-hair) solid var(--color-rule);
+  font-size: var(--text-xs);
+  font-weight: 650;
+}
+.channel-index-head > [role='columnheader'] {
+  justify-self: stretch;
+  text-align: left;
+}
+.channel-index-row {
+  position: relative;
+  min-height: 4.75rem;
+  padding: var(--space-xs) var(--space-sm);
+  border-bottom: var(--rule-hair) solid var(--color-rule);
+}
+.channel-index-row:last-child { border-bottom: 0; }
+.channel-index-row:hover { background: var(--color-glass-hover); }
+.channel-identity {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  min-width: 0;
+}
+.channel-identity > .channel-type-mark { align-self: center; }
+.channel-identity > span {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: var(--space-3xs);
+}
+.channel-identity strong,
+.channel-identity small,
+.channel-destination,
+.channel-usage { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.channel-identity strong { font-size: var(--text-sm); }
+.channel-identity small,
+.channel-usage { color: var(--color-muted); font-size: var(--text-xs); }
+.channel-destination { color: var(--color-ink-2); font-size: var(--text-xs); }
+.channel-state {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2xs);
+  min-height: 2.75rem;
+  color: var(--color-ink-2);
+  font-size: var(--text-xs);
+  white-space: nowrap;
+}
+.channel-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-xs);
+  white-space: nowrap;
+}
+.channel-actions .link-btn {
+  min-height: 2.75rem;
+  padding-inline: var(--space-2xs);
+}
+.channel-empty,
+.channel-no-match {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 10rem;
+  color: var(--color-muted);
+  font-size: var(--text-sm);
+}
+.channel-empty { flex-direction: column; gap: var(--space-sm); }
+.channel-empty p { margin: 0; }
+.notification-policy-stack > .panel:last-child { margin-bottom: 0; }
 .tab {
   display: inline-flex;
   align-items: center;
@@ -1871,6 +2093,23 @@ input.port-in {
   border: 1px solid color-mix(in srgb, var(--color-warning) 40%, transparent);
 }
 
+@media (max-width: 1200px) {
+  .channel-index-head { display: none; }
+  .channel-index-row {
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: var(--space-xs);
+    padding-block: var(--space-sm);
+  }
+  .channel-identity { grid-column: 1; grid-row: 1; }
+  .channel-actions { grid-column: 2; grid-row: 1; }
+  .channel-destination,
+  .channel-usage,
+  .channel-state { grid-column: 1 / -1; }
+  .channel-destination,
+  .channel-usage,
+  .channel-state { padding-left: calc(2.25rem + var(--space-xs)); }
+}
+
 @media (max-width: 768px) {
   .settings-head {
     margin-bottom: var(--space-sm);
@@ -1884,6 +2123,14 @@ input.port-in {
   .settings-tabs .tab {
     flex: 1 0 auto;
   }
+  .notification-subnav { gap: var(--space-md); }
+  .channel-workspace-head {
+    align-items: stretch;
+    flex-direction: column;
+  }
+  .channel-workspace-head .btn { width: 100%; }
+  .channel-toolbar { grid-template-columns: minmax(0, 1fr); }
+  .channel-summary { text-align: left; }
   .panel-body,
   .panel-head {
     padding-inline: var(--space-sm);

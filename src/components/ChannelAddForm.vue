@@ -74,7 +74,7 @@ async function addEmail() {
   error.value = ''
   try {
     const { name, ...cfg } = email
-    await api.createChannel(name || 'Email', 'email', { ...cfg })
+    await api.createChannel(name || 'Email', 'email', { ...cfg }, true)
   } catch (e) {
     error.value = String((e as Error).message || e)
     return
@@ -86,7 +86,7 @@ async function addEmail() {
 async function addSystem() {
   error.value = ''
   try {
-    await api.createChannel(system.name || t('settings.sysNotify'), 'system', { lang: system.lang })
+    await api.createChannel(system.name || t('settings.sysNotify'), 'system', { lang: system.lang }, true)
   } catch (e) {
     error.value = String((e as Error).message || e)
     return

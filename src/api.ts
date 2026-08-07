@@ -2383,10 +2383,10 @@ export const api = {
       `/api/v1/targets/${encodeURIComponent(targetID)}/availability?windows=${windows.join(',')}`,
     ),
   channels: () => req<Channel[]>('GET', '/api/v1/channels'),
-  // A new channel always starts with storm merging on; it is changed afterwards
-  // through updateChannel.
-  createChannel: (name: string, type: string, config: Record<string, string>) =>
-    req<{ id: string }>('POST', '/api/v1/channels', { name, type, config }),
+  // Creation carries the delivery grouping choice explicitly so add and edit
+  // expose the same channel behavior instead of silently forcing a default.
+  createChannel: (name: string, type: string, config: Record<string, string>, stormMerge: boolean) =>
+    req<{ id: string }>('POST', '/api/v1/channels', { name, type, config, storm_merge: stormMerge }),
   // A full PUT of the channel's flags: every caller must send the current
   // storm_merge along with name/enabled, or it is turned off.
   updateChannel: (

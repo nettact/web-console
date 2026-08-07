@@ -7,6 +7,9 @@ import { URL as NodeURL } from 'node:url'
 import { describe, expect, it } from 'vitest'
 import appSource from './App.vue?raw'
 import channelAddSource from './components/ChannelAddForm.vue?raw'
+import channelDrawerSource from './components/ChannelDrawer.vue?raw'
+import channelEditorSource from './components/ChannelEditor.vue?raw'
+import channelTypeMarkSource from './components/ChannelTypeMark.vue?raw'
 import comboInputSource from './components/ComboInput.vue?raw'
 import dataCleanupSource from './components/DataCleanup.vue?raw'
 import faultSignalsSource from './components/FaultSignalsTable.vue?raw'
@@ -206,6 +209,9 @@ describe('hard-coded status foregrounds', () => {
   it('does not use legacy solid aliases as text in shared components', () => {
     const sourceFiles = new Map([
       ['src/components/ChannelAddForm.vue', channelAddSource],
+      ['src/components/ChannelDrawer.vue', channelDrawerSource],
+      ['src/components/ChannelEditor.vue', channelEditorSource],
+      ['src/components/ChannelTypeMark.vue', channelTypeMarkSource],
       ['src/components/ComboInput.vue', comboInputSource],
       ['src/components/DataCleanup.vue', dataCleanupSource],
       ['src/components/InfoTip.vue', infoTipSource],

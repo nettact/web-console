@@ -21,6 +21,7 @@ type Props = {
   mode: 'add' | 'edit'
   channelId?: string
   enabled?: boolean
+  stormMerge?: boolean
   initialName?: string
   initialConfig?: Record<string, string>
 }
@@ -41,7 +42,7 @@ beforeEach(() => {
 
 describe('WebhookChannelForm', () => {
   it('creates a channel with default values omitted, then resets the form', async () => {
-    const page = render({ mode: 'add' })
+    const page = render({ mode: 'add', stormMerge: false })
     await page.get('.wh-url input').setValue('https://hooks.example.com/x')
     await page.get('.wh-actions .btn-primary').trigger('click')
     await flush()
@@ -51,6 +52,7 @@ describe('WebhookChannelForm', () => {
     expect(name).toBe('Webhook') // empty name falls back
     expect(type).toBe('webhook')
     expect(config).toEqual({ url: 'https://hooks.example.com/x', lang: 'zh' })
+    expect(createChannel.mock.calls[0][3]).toBe(false)
     expect(page.emitted('saved')).toHaveLength(1)
     // Add form is cleared so the next click can't create a duplicate.
     expect((page.get('.wh-url input').element as HTMLInputElement).value).toBe('')

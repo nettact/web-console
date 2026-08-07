@@ -50,7 +50,7 @@ beforeEach(() => {
 
 describe('PushChannelForm', () => {
   it('creates a telegram channel with empty optional keys omitted, then resets', async () => {
-    const page = render({ provider: telegram, mode: 'add' })
+    const page = render({ provider: telegram, mode: 'add', stormMerge: false })
     await page.get('.wh-f-bot_token input').setValue('123456:ABC')
     await page.get('.wh-f-chat_id input').setValue('-1001234')
     await page.get('.wh-actions .btn-primary').trigger('click')
@@ -62,6 +62,7 @@ describe('PushChannelForm', () => {
     expect(type).toBe('telegram')
     // api_base was left empty, so it is not in the config at all.
     expect(config).toEqual({ bot_token: '123456:ABC', chat_id: '-1001234', lang: 'zh' })
+    expect(createChannel.mock.calls[0][3]).toBe(false)
     expect(page.emitted('saved')).toHaveLength(1)
     // Add form is cleared so the next click can't create a duplicate.
     expect((page.get('.wh-f-chat_id input').element as HTMLInputElement).value).toBe('')
