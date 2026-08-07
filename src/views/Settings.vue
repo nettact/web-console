@@ -1780,6 +1780,11 @@ onMounted(() => {
   font-size: var(--text-xs);
   white-space: nowrap;
 }
+.channel-state > input[type='checkbox'] {
+  min-width: 0;
+  flex: 0 0 auto;
+  margin: 0;
+}
 .channel-actions {
   display: flex;
   align-items: center;

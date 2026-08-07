@@ -416,6 +416,9 @@ watch(
 </template>
 
 <style scoped>
+/* Hallmark · component: permission remediation dialog · genre: custom application
+ * contrast: solid reading surface over dimmed application chrome
+ */
 .prd-backdrop {
   position: fixed;
   inset: 0;
@@ -434,6 +437,9 @@ watch(
   display: flex;
   flex-direction: column;
   padding: 0;
+  background: var(--surface-solid);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
 }
 .prd-head {
   display: flex;

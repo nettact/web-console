@@ -156,6 +156,9 @@ watch(
 </template>
 
 <style scoped>
+/* Hallmark · component: reinstall dialog · genre: custom application
+ * contrast: solid reading surface over dimmed application chrome
+ */
 .rd-backdrop {
   position: fixed;
   inset: 0;
@@ -174,6 +177,9 @@ watch(
   display: flex;
   flex-direction: column;
   padding: 0;
+  background: var(--surface-solid);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
 }
 .rd-head {
   display: flex;
