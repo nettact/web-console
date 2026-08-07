@@ -9,7 +9,8 @@ import { useI18n } from 'vue-i18n'
 import { notifications, markRead, issueLink, issueReasonText } from '../notifications'
 import type { Issue } from '../api'
 import { toDateLocale } from '../i18n'
-import { serverInfo, ensureServerInfo } from '../serverInfo'
+import { agentIndex } from '../agentStatus'
+import { isDesktopFullAccess } from '../lib/agentPermissions'
 import PermissionChips from './status/PermissionChips.vue'
 import PermissionRemediationDialog from './status/PermissionRemediationDialog.vue'
 
@@ -61,12 +62,21 @@ function copyEnv(iss: Issue) {
 // would never surface this not-granted one. The dialog Teleports to <body>, so it
 // layers above the dropdown regardless of the panel's stacking context; it is
 // mounted outside the panel's v-if so it survives the panel closing.
-const remediation = ref<{ permId: string; env: string } | null>(null)
+const remediation = ref<{ permId: string; env: string; agentId: string } | null>(null)
 function openRemediation(iss: Issue, permId: string) {
-  ensureServerInfo()
   markRead([iss.id])
-  remediation.value = { permId, env: issueEnv(iss) }
+  remediation.value = { permId, env: issueEnv(iss), agentId: iss.agent_id }
 }
+// Resolved per issue's agent, not per server: the bell aggregates issues from
+// every agent, and on a desktop install only the embedded one is fixed at full
+// access. Derived rather than snapshotted at open time because the agent-status
+// batch is fetched independently of /issues — an issue can render, and be
+// clicked, before any status row exists. Freezing the answer there would show an
+// embedded agent the env/YAML instructions that cannot apply to it and keep
+// showing them after the batch landed; as a computed it corrects itself.
+const remediationDesktop = computed(() =>
+  isDesktopFullAccess(agentIndex.value.get(remediation.value?.agentId ?? '')?.policy_source),
+)
 
 // Close on outside click while the dropdown is open.
 function onDocClick(e: MouseEvent) {
@@ -163,7 +173,7 @@ onBeforeUnmount(() => document.removeEventListener('click', onDocClick, true))
       :perm-id="remediation?.permId || ''"
       :category="'permission_blocked'"
       :permissions-env="remediation?.env"
-      :desktop="serverInfo.desktop"
+      :desktop="remediationDesktop"
       @close="remediation = null"
     />
   </div>

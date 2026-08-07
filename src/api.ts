@@ -313,6 +313,11 @@ export interface AgentStatusRow {
   agent_version: string
   status: AgentOverallStatus
   presence: string // online | offline (raw registry status)
+  // default | environment | desktop_full_access — see Agent.policy_source. Carried
+  // per row because desktop-embedded is a property of THE AGENT, not of the server
+  // rendering this console: a desktop install lists its own embedded agent next to
+  // ordinary agents enrolled against it, and they take different remediation advice.
+  policy_source: string
   status_since: string | null
   last_seen_at: string | null
   first_connected_at: string | null

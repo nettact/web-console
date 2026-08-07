@@ -443,7 +443,21 @@ onBeforeUnmount(() => {
                 >
                   <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-1.2-1.1-1.7-1.9-3.2" /><path d="M10 21h4M3 3l18 18" /></svg>
                 </button>
-                <button class="icon-action" :title="t('agents.reinstallAction')" @click="reinstallAgent = r">
+                <!--
+                  Reinstall is offered only while the agent is not connected
+                  (offline, or enrolled but never connected). A live agent is
+                  proof the install works, so the button there is at best noise
+                  and at worst an invitation to tear down a healthy agent next to
+                  the delete button. `presence` is the raw connection fact rather
+                  than the rolled-up `status`, which folds a connected-but-faulty
+                  agent into `abnormal`.
+                -->
+                <button
+                  v-if="r.presence !== 'online'"
+                  class="icon-action"
+                  :title="t('agents.reinstallAction')"
+                  @click="reinstallAgent = r"
+                >
                   <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12a9 9 0 1 1 3 6.7M3 21v-5h5" /></svg>
                 </button>
                 <button class="icon-action danger" :disabled="busy" :title="t('common.delete')" @click="removeAgent(r)">

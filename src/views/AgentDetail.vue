@@ -19,6 +19,7 @@ import {
   agentPlatform,
   bucketAgentPermissions,
   categoryFor,
+  isDesktopFullAccess,
   permissionById,
   type RemediationCategory,
 } from '../lib/agentPermissions'
@@ -299,7 +300,7 @@ onMounted(() => {
       :permissions-env="remediation?.env"
       :requires="remediation?.requires"
       :grant-missing="remediation?.grantMissing"
-      :desktop="serverInfo.desktop"
+      :desktop="isDesktopFullAccess(agent?.policy_source)"
       @close="remediation = null"
     />
 

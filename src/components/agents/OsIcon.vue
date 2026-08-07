@@ -8,15 +8,21 @@ import { computed } from 'vue'
 
 const props = withDefaults(defineProps<{ platform: string; size?: number }>(), { size: 16 })
 
-type IconKey = 'windows' | 'apple' | 'ubuntu' | 'debian' | 'linux' | 'freebsd' | 'unknown'
+type IconKey = 'windows' | 'apple' | 'ubuntu' | 'debian' | 'openwrt' | 'linux' | 'freebsd' | 'unknown'
 
 const key = computed<IconKey>(() => {
   const p = (props.platform || '').toLowerCase()
   if (!p) return 'unknown'
-  if (p.includes('win')) return 'windows'
+  // Apple is tested before Windows on purpose: "darwin" contains "win", so the
+  // loose Windows match below claims every Mac if it goes first.
   if (p.includes('darwin') || p.includes('mac') || p.includes('apple') || p.includes('ios')) return 'apple'
+  if (p.includes('win')) return 'windows'
   if (p.includes('ubuntu')) return 'ubuntu'
   if (p.includes('debian')) return 'debian'
+  // OpenWrt before the Linux group: it IS Linux, but a router is not a PC and the
+  // distinction is the whole point of the icon on this list. `lede` covers the
+  // fork's os-release id, which some long-lived builds still report.
+  if (p.includes('openwrt') || p.includes('lede')) return 'openwrt'
   if (p.includes('freebsd') || p.includes('openbsd') || p.includes('netbsd') || p.includes('bsd')) return 'freebsd'
   // Other Linux distros (fedora, centos, rhel, arch, alpine, suse, rocky, …) and a
   // bare "linux" share the generic Tux mark.
@@ -32,7 +38,12 @@ const key = computed<IconKey>(() => {
 </script>
 
 <template>
-  <span class="os-icon" :style="{ width: size + 'px', height: size + 'px' }" :title="platform || 'unknown'">
+  <span
+    class="os-icon"
+    :data-icon="key"
+    :style="{ width: size + 'px', height: size + 'px' }"
+    :title="platform || 'unknown'"
+  >
     <!-- Windows -->
     <svg v-if="key === 'windows'" viewBox="0 0 24 24" aria-hidden="true">
       <path fill="#0078D4" d="M3 5.4 10.6 4.3v7.3H3V5.4zM11.6 4.15 21 2.8v8.8h-9.4V4.15zM3 12.6h7.6V20L3 18.9v-6.3zM11.6 12.6H21v8.6l-9.4-1.3v-7.3z" />
@@ -52,6 +63,16 @@ const key = computed<IconKey>(() => {
     <!-- Debian: red swirl (approximated) -->
     <svg v-else-if="key === 'debian'" viewBox="0 0 24 24" aria-hidden="true">
       <path fill="#A81D33" d="M13.2 6.9c2.5.3 4.3 2.5 4 5-.3 2.6-2.6 4.5-5.2 4.2-1-.1-1.9-.5-2.6-1.1.7.4 1.5.6 2.3.7 2.2.2 4.1-1.5 4.3-3.7.2-2.1-1.4-3.9-3.5-4.1-2.7-.3-5 1.7-5.2 4.4-.2 3.2 2.2 6 5.4 6.2 3.7.3 7-2.5 7.3-6.2.04-.5.02-1-.06-1.5" />
+    </svg>
+    <!-- OpenWrt: router in the project blue (a device mark, not a logo trace) -->
+    <svg v-else-if="key === 'openwrt'" viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M7.5 11.5V6.4M16.5 11.5V6.4" fill="none" stroke="#00B5E2" stroke-width="1.7" stroke-linecap="round" />
+      <circle cx="7.5" cy="5" r="1.3" fill="#00B5E2" />
+      <circle cx="16.5" cy="5" r="1.3" fill="#00B5E2" />
+      <rect x="3" y="11.5" width="18" height="7.5" rx="2" fill="#00B5E2" />
+      <circle cx="7" cy="15.25" r="1" fill="#fff" />
+      <circle cx="10.5" cy="15.25" r="1" fill="#fff" opacity=".7" />
+      <circle cx="14" cy="15.25" r="1" fill="#fff" opacity=".45" />
     </svg>
     <!-- FreeBSD / BSD: red mark -->
     <svg v-else-if="key === 'freebsd'" viewBox="0 0 24 24" aria-hidden="true">

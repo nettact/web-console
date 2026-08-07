@@ -193,3 +193,19 @@ export function categoryFor(p: AgentPermission, platform: EnrollPlatform): Remed
 export function permissionById(perms: AgentPermission[], id: string): AgentPermission | undefined {
   return perms.find((p) => p.id === id)
 }
+
+// Whether THIS agent runs embedded in the desktop app with its grant fixed at
+// full access — the one case where the env-var / YAML remediation instructions do
+// not apply and would be actively wrong advice.
+//
+// It keys off the agent's own `policy_source`, never off `serverInfo.desktop`.
+// Those two answer different questions and only coincide on a desktop install
+// that has no other agents: the server flag says "this console is served by the
+// desktop app", which is also true while you are looking at an ordinary agent the
+// user enrolled against that desktop server. Such an agent is configured with
+// NETTACT_AGENT_PERMISSIONS like any other, so telling its operator that
+// permissions are "fixed at full access, no configuration needed" leaves them
+// with no way to fix the permission they came here to fix.
+export function isDesktopFullAccess(policySource: string | undefined | null): boolean {
+  return policySource === 'desktop_full_access'
+}

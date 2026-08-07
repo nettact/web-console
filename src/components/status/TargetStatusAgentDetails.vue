@@ -1,12 +1,13 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import type { TargetAgentStatusRow, TargetFaultRef, TargetStatusRow } from '../../api'
 import { formatAvailability } from '../../lib/targetStatus'
 import { toDateLocale } from '../../i18n'
 import { notifications } from '../../notifications'
-import { serverInfo, ensureServerInfo } from '../../serverInfo'
+import { agentIndex } from '../../agentStatus'
+import { isDesktopFullAccess } from '../../lib/agentPermissions'
 import { useIncidentLabels } from '../../composables/useIncidentLabels'
 import MonitorStateBadge from './MonitorStateBadge.vue'
 import PermissionChips from './PermissionChips.vue'
@@ -40,6 +41,10 @@ const remediation = ref<{
   permId: string
   category: 'permission_blocked' | 'unsupported'
   env: string
+  // Which agent's row was clicked. This panel lists every agent applicable to the
+  // target, so the desktop question is per agent, not per server — see
+  // remediationDesktop below for why the id is kept rather than the answer.
+  agentId: string
 } | null>(null)
 
 function permissionsEnvFor(agentID: string): string {
@@ -60,14 +65,27 @@ function permissionsEnvFor(agentID: string): string {
 }
 
 function openRemediation(agent: TargetAgentStatusRow, permId: string): void {
-  ensureServerInfo()
   const category = agent.execution_state === 'unsupported' ? 'unsupported' : 'permission_blocked'
   remediation.value = {
     permId,
     category,
     env: category === 'permission_blocked' ? permissionsEnvFor(agent.agent_id) : '',
+    agentId: agent.agent_id,
   }
 }
+
+// Whether the clicked agent is the desktop app's embedded one, whose grant is
+// fixed at full access and for which the env/YAML instructions are wrong advice.
+// Derived rather than captured in openRemediation because the agent-status batch
+// is fetched independently of the target statuses this panel renders: a row can
+// be on screen, and clicked, before any status row for its agent exists. A
+// snapshot taken then would be wrong for the embedded agent and would stay wrong
+// after the batch landed; a computed re-resolves as soon as it does. An agent
+// still unknown reads as non-desktop — merely unhelpful for one agent, rather
+// than wrong for every other one.
+const remediationDesktop = computed(() =>
+  isDesktopFullAccess(agentIndex.value.get(remediation.value?.agentId ?? '')?.policy_source),
+)
 
 function fmtTime(value?: string): string {
   if (!value) return '—'
@@ -257,7 +275,7 @@ function openHistory(agentID: string): void {
       :perm-id="remediation?.permId || ''"
       :category="remediation?.category || 'permission_blocked'"
       :permissions-env="remediation?.env"
-      :desktop="serverInfo.desktop"
+      :desktop="remediationDesktop"
       @close="remediation = null"
     />
   </div>

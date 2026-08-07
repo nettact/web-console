@@ -24,6 +24,7 @@ function row(over: Partial<AgentStatusRow>): AgentStatusRow {
     agent_version: over.agent_version ?? 'v1',
     status: over.status ?? 'ok',
     presence: over.presence ?? 'online',
+    policy_source: over.policy_source ?? 'default',
     status_since: null,
     last_seen_at: null,
     first_connected_at: over.first_connected_at ?? '2026-07-24T00:00:00Z',

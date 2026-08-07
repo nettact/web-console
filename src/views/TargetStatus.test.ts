@@ -90,6 +90,7 @@ beforeEach(() => {
     agent_version: '0.1.0',
     status: 'abnormal',
     presence: 'online',
+    policy_source: 'default',
     status_since: '2026-07-18T04:55:00Z',
     last_seen_at: '2026-07-18T05:00:00Z',
     first_connected_at: '2026-07-01T00:00:00Z',
