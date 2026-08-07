@@ -1935,7 +1935,7 @@ export default {
     stale: 'Stale',
     noDataHint: 'No data (permission not granted, or never reported)',
     diskMountN: '{mount} · {n} volumes',
-    diskWorst: 'peak {pct}% · {n} disks',
+    diskWorst: 'peak {pct}% on {mount} · {n} disks',
     backToList: 'Back to agents',
     factStatusSince: 'Status since',
     factFirstConnected: 'First connected',

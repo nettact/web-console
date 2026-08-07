@@ -1928,7 +1928,7 @@ export default {
     stale: '过期',
     noDataHint: '无数据（未授予对应权限或从未上报）',
     diskMountN: '{mount} · 共 {n} 个分区',
-    diskWorst: '最高 {pct}% · 共 {n} 盘',
+    diskWorst: '最高 {pct}%（{mount}）· 共 {n} 盘',
     backToList: '返回 Agent 列表',
     factStatusSince: '状态起始',
     factFirstConnected: '首次接入',

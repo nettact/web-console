@@ -55,9 +55,15 @@ const metric = computed<MetricCell | null>(() => {
       const capacity = d.total ? `${fmtBytes(d.used)} / ${fmtBytes(d.total)}` : diskSub(d.mount, d.mounts)
       return {
         primary: `${pct(d.pct)}%`,
-        secondary: d.mounts > 1
-          ? t('agentStatus.diskWorst', { pct: pct(d.pct), n: d.mounts })
-          : capacity,
+        // With several mounts the headline percentage is the worst one, and
+        // which mount that is decides whether it means anything: a full data
+        // disk and a full recovery partition read identically at 100% until the
+        // mount is named. Naming it costs one word and turns "why is this router
+        // out of space?" into an answer.
+        secondary:
+          d.mounts > 1
+            ? t('agentStatus.diskWorst', { pct: pct(d.pct), mount: d.mount, n: d.mounts })
+            : capacity,
         ts: d.ts,
         stale: d.stale,
         percent: clamp(d.pct),
