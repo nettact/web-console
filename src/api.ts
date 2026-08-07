@@ -2394,7 +2394,14 @@ export const api = {
     body: { name: string; enabled: boolean; storm_merge: boolean; config?: Record<string, string> },
   ) => req<unknown>('PUT', `/api/v1/channels/${encodeURIComponent(id)}`, body),
   deleteChannel: (id: string) => req<unknown>('DELETE', `/api/v1/channels/${encodeURIComponent(id)}`),
-  // Send a sample incident to a webhook config without saving a channel.
-  testChannel: (type: string, config: Record<string, string>) =>
-    req<ChannelTestResult>('POST', '/api/v1/channels/test', { type, config }),
+  // Send a sample incident to a channel config without saving it. Pass channelId
+  // when testing an existing channel: the server then merges the stored secrets
+  // back in wherever the posted config still carries the •••••• mask, so editing
+  // a channel does not mean retyping its credentials just to test it.
+  testChannel: (type: string, config: Record<string, string>, channelId?: string) =>
+    req<ChannelTestResult>('POST', '/api/v1/channels/test', {
+      type,
+      config,
+      ...(channelId ? { channel_id: channelId } : {}),
+    }),
 }

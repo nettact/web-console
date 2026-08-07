@@ -26,6 +26,8 @@ import {
   updateNoticeReadToken,
 } from '../updateInfo'
 import { pushToast } from '../toasts'
+import { isPushType, pushProvider } from '../lib/pushProviders'
+import PushChannelForm from '../components/PushChannelForm.vue'
 import WebhookChannelForm from '../components/WebhookChannelForm.vue'
 import ChannelAddForm from '../components/ChannelAddForm.vue'
 import DataCleanup from '../components/DataCleanup.vue'
@@ -54,8 +56,9 @@ const error = ref('')
 
 const channels = ref<Channel[]>([])
 // 添加渠道的表单（含类型选择）在 ChannelAddForm 中，与初始化引导共用。
-// Webhook add/edit is delegated to WebhookChannelForm; editingId marks which
-// existing channel row is expanded for editing ('' = none).
+// Webhook and push add/edit are delegated to WebhookChannelForm /
+// PushChannelForm; editingId marks which existing channel row is expanded for
+// editing ('' = none).
 const editingId = ref('')
 
 // 控制台地址：通知里深链回本事故详情页的基础 URL（如 http://localhost:12450）。
@@ -749,9 +752,9 @@ async function saveUpdateNotice(v: boolean) {
   }
 }
 
-// WebhookChannelForm performs the create/update itself (so it can surface
+// The channel forms perform the create/update themselves (so they can surface
 // failures inline); the parent only closes the editor and refreshes the list.
-async function onWebhookSaved() {
+async function onChannelSaved() {
   editingId.value = ''
   await load()
 }
@@ -773,11 +776,26 @@ async function removeChannel(id: string) {
   await api.deleteChannel(id)
   await load()
 }
-// Config summary shown in the channel table's Config column.
+// Config summary shown in the channel table's Config column. Push channels are
+// credentials-only, so there is nothing to show beyond whatever non-secret
+// routing keys the descriptor nominates (a chat id, a UID list) — often nothing.
 function channelConfigLabel(c: Channel): string {
   if (c.type === 'webhook') return `${c.config.method || 'POST'} ${c.config.url || ''}`.trim()
   if (c.type === 'system') return t('settings.sysNotifyConfig')
+  const push = pushProvider(c.type)
+  if (push) {
+    return push.summaryKeys
+      .map((k) => (c.config[k] || '').trim())
+      .filter(Boolean)
+      .join(' · ')
+  }
   return `${c.config.from} → ${c.config.to} @ ${c.config.host}`
+}
+// Type badge text: a push channel's raw type string ("wxpusher") is not what the
+// platform is called anywhere else in the UI.
+function channelTypeLabel(c: Channel): string {
+  const push = pushProvider(c.type)
+  return push ? t(push.labelKey) : c.type
 }
 onMounted(() => {
   load()
@@ -1194,7 +1212,7 @@ onMounted(() => {
             <template v-for="c in channels" :key="c.id">
               <tr>
                 <td><input v-model="c.name" class="name-in" @blur="renameChannel(c)" /></td>
-                <td><span class="badge neutral">{{ c.type }}</span></td>
+                <td><span class="badge neutral">{{ channelTypeLabel(c) }}</span></td>
                 <td class="mono">{{ channelConfigLabel(c) }}</td>
                 <td class="center"><input type="checkbox" :checked="c.enabled" @change="toggleChannel(c)" /></td>
                 <td class="center">
@@ -1207,7 +1225,7 @@ onMounted(() => {
                 </td>
                 <td class="row-actions">
                   <button
-                    v-if="c.type === 'webhook'" class="link-btn"
+                    v-if="c.type === 'webhook' || isPushType(c.type)" class="link-btn"
                     @click="editingId = editingId === c.id ? '' : c.id">
                     {{ editingId === c.id ? t('settings.webhook.cancel') : t('settings.webhook.edit') }}
                   </button>
@@ -1217,13 +1235,26 @@ onMounted(() => {
               <tr v-if="editingId === c.id" class="wh-edit-row">
                 <td colspan="6">
                   <WebhookChannelForm
+                    v-if="c.type === 'webhook'"
                     mode="edit"
                     :channel-id="c.id"
                     :enabled="c.enabled"
                     :storm-merge="c.storm_merge"
                     :initial-name="c.name"
                     :initial-config="c.config"
-                    @saved="onWebhookSaved"
+                    @saved="onChannelSaved"
+                    @cancel="editingId = ''"
+                  />
+                  <PushChannelForm
+                    v-else-if="pushProvider(c.type)"
+                    :provider="pushProvider(c.type)!"
+                    mode="edit"
+                    :channel-id="c.id"
+                    :enabled="c.enabled"
+                    :storm-merge="c.storm_merge"
+                    :initial-name="c.name"
+                    :initial-config="c.config"
+                    @saved="onChannelSaved"
                     @cancel="editingId = ''"
                   />
                 </td>

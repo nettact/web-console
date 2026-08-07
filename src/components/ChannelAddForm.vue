@@ -1,12 +1,20 @@
 <script setup lang="ts">
-// 「添加通知渠道」表单：先选类型，再展示对应表单。新增渠道类型时在此登记即可
-// （CHANNEL_TYPES + 对应的 add* 函数与表单块），Settings 与初始化引导共用同一份。
+// 「添加通知渠道」表单：先选类型，再展示对应表单。Settings 与初始化引导共用同一份。
+//
+// 新增渠道类型时在此登记：
+//   - 推送类平台（钉钉 / 企业微信 / 飞书 / Telegram / Server酱 / WxPusher 一类）不必
+//     碰本文件 —— 在 `lib/pushProviders.ts` 加一个描述符即可，tab 与表单都从
+//     PUSH_PROVIDERS 派生，表单由通用的 PushChannelForm 渲染。
+//   - 结构特殊的类型才在这里加：CHANNEL_TYPES 追加一项 + 模板加一支 v-else-if
+//     （必要时再加一个 add* 函数）。
 //
 // 「系统通知」仅当 server 运行于 Windows/macOS（native_notify）时才提供。
 // webhook 的表单较复杂（headers / body 模板 / 发送测试），委托给 WebhookChannelForm。
 import { computed, reactive, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { api } from '../api'
+import { PUSH_PROVIDERS, pushProvider } from '../lib/pushProviders'
+import PushChannelForm from './PushChannelForm.vue'
 import WebhookChannelForm from './WebhookChannelForm.vue'
 
 const props = withDefaults(
@@ -30,6 +38,7 @@ const CHANNEL_TYPES = computed(() => {
   const types = [
     { value: 'webhook', label: 'Webhook' },
     { value: 'email', label: 'Email' },
+    ...PUSH_PROVIDERS.map((d) => ({ value: d.type, label: t(d.labelKey) })),
   ]
   if (props.nativeNotify) {
     types.push({ value: 'system', label: t('settings.sysNotify') })
@@ -101,6 +110,12 @@ async function addSystem() {
 
     <div v-if="addType === 'webhook'" class="wh-add">
       <WebhookChannelForm mode="add" @saved="emit('added')" />
+    </div>
+
+    <!-- 推送平台共用一个表单；:key 让切换 tab 时重新挂载，上一个平台填了一半的值
+         （如同名的 secret 字段）不会串到下一个。 -->
+    <div v-else-if="pushProvider(addType)" class="wh-add">
+      <PushChannelForm :key="addType" :provider="pushProvider(addType)!" mode="add" @saved="emit('added')" />
     </div>
 
     <div v-else-if="addType === 'email'" class="row field-row">
