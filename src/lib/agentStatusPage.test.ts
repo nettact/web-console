@@ -33,6 +33,7 @@ function row(over: Partial<AgentStatusRow>): AgentStatusRow {
     firing_faults: over.firing_faults ?? 0,
     active_issues: over.active_issues ?? 0,
     connectivity_alert: null,
+    probe_overload: over.probe_overload ?? null,
     resources: noResources,
     created_at: '2026-07-24T00:00:00Z',
     ...over,

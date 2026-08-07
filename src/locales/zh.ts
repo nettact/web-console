@@ -1838,6 +1838,10 @@ export default {
     factLastDisconnect: '最近断连原因',
     connAlertFiring: 'Agent 连接告警进行中',
     offlineSince: '自 {time} 起离线',
+    probeOverload: '探测并发已达上限',
+    probeOverloadDetail: '该 Agent 因 {limit} 个并发探测槽位全部占满，跳过了 {n} 次探测。',
+    probeOverloadHint:
+      '被跳过的探测不会产生数据，相关监控项可能显示为数据过期。可调高 max_probe_concurrency、拉长检查间隔，或减少该 Agent 上的监控目标。',
     sectResources: '资源趋势',
     fullHistory: '完整历史',
     sectTargets: '关联目标',
@@ -1927,6 +1931,7 @@ export default {
       probe_icmp_loss_pct: '丢包率',
       probe_icmp_jitter_ms: '抖动',
       probe_icmp_samples: '有效采样数',
+      probe_icmp_sent: '发包数',
       probe_dns_resolve_ms: '解析时延',
       probe_dns_ok: '解析成功',
       probe_http_status: '状态码',

@@ -77,6 +77,10 @@ const agentOutdated = computed(() =>
 // (including an immediate mute) without a page reload. connFaults still backs the
 // history table below.
 const firingConn = computed(() => row.value?.connectivity_alert || null)
+// Same live-row source as firingConn: the server drops the notice once the agent
+// stops renewing it, so binding to the polled row is what makes it clear itself
+// after an operator raises the limit.
+const probeOverload = computed(() => row.value?.probe_overload || null)
 const associatedTargets = computed(() =>
   targetStatus.targets.filter((tt) => tt.agents.some((a) => a.agent_id === id.value)),
 )
@@ -306,6 +310,19 @@ onMounted(() => {
       <span class="hint">· {{ t('agentStatus.offlineSince', { time: fmt(firingConn.offline_since) }) }}</span>
     </section>
 
+    <!--
+      Why a monitor of this agent may be stale for a reason that is not the
+      network. Skipped probes produce no sample at all, so their monitors go
+      stale exactly as they would if the target had gone away — this is the only
+      place that says the cause was the agent running out of probe budget, and
+      names the knob to raise.
+    -->
+    <section v-if="probeOverload" class="card warn-banner">
+      <strong>{{ t('agentStatus.probeOverload') }}</strong>
+      <span>{{ t('agentStatus.probeOverloadDetail', { n: probeOverload.skipped, limit: probeOverload.limit }) }}</span>
+      <span class="hint">· {{ t('agentStatus.probeOverloadHint') }}</span>
+    </section>
+
     <div class="grid">
       <!-- resource trends -->
       <section class="card">
@@ -508,6 +525,17 @@ onMounted(() => {
   align-items: center;
   gap: var(--space-2xs);
   border-color: var(--color-danger);
+  background: var(--color-paper-2);
+}
+
+/* Overload is a capacity warning, not an outage: same shape as the connectivity
+   banner so it reads as one family, in the warning tone rather than danger. */
+.warn-banner {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2xs);
+  flex-wrap: wrap;
+  border-color: var(--color-warning);
   background: var(--color-paper-2);
 }
 

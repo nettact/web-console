@@ -48,7 +48,19 @@ export const CODE_KINDS = new Set([...NAT_CODE_KINDS, ...PROBE_ERROR_KINDS])
 // host.uptime_s is a monotonic counter: plotting it as a trend line is
 // meaningless, but the latest value ("up for N days") is useful — so it's an info
 // kind too, shown as a card only, never on the chart and never a picker chip.
-export const INFO_KINDS = new Set(['host.mem.total', 'host.uptime_s', 'probe.icmp.samples', ...CODE_KINDS])
+//
+// probe.icmp.sent joins them for the same reason as probe.icmp.samples: it is
+// the packet count a round was configured for on every healthy round, so as a
+// line it is a flat constant. What makes it worth showing at all is the round
+// where it DIPS — the agent's probe budget skipped echoes — which the card's
+// latest value states plainly.
+export const INFO_KINDS = new Set([
+  'host.mem.total',
+  'host.uptime_s',
+  'probe.icmp.samples',
+  'probe.icmp.sent',
+  ...CODE_KINDS,
+])
 
 // natCodeLabel maps a NAT result code to its category label. These are the RFC
 // 4787 / RFC 3489 terms, shown verbatim in English (they are standardized terms;
@@ -87,6 +99,7 @@ const METRIC_ORDER = [
   'probe.icmp.jitter_ms',
   'probe.icmp.loss_pct',
   'probe.icmp.samples',
+  'probe.icmp.sent',
   'probe.icmp.error_class',
   'probe.tcp.ok',
   'probe.tcp.connect_ms',
@@ -128,6 +141,7 @@ const KIND_COLORS: Record<string, string> = {
   'probe.icmp.loss_pct': '#fbbf24',
   'probe.icmp.jitter_ms': '#a78bfa',
   'probe.icmp.samples': '#94a3b8',
+  'probe.icmp.sent': '#64748b',
   'probe.icmp.error_class': '#f87171',
   'probe.dns.resolve_ms': '#818cf8',
   'probe.dns.ok': '#34d399',

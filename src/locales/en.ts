@@ -1845,6 +1845,11 @@ export default {
     factLastDisconnect: 'Last disconnect',
     connAlertFiring: 'Agent connectivity alert active',
     offlineSince: 'Offline since {time}',
+    probeOverload: 'Probe concurrency limit reached',
+    probeOverloadDetail:
+      'This agent skipped {n} probes because all {limit} concurrent probe slots were busy.',
+    probeOverloadHint:
+      'Skipped probes produce no data, so their monitors may show as stale. Raise max_probe_concurrency, lengthen check intervals, or monitor fewer targets from this agent.',
     sectResources: 'Resource trends',
     fullHistory: 'Full history',
     sectTargets: 'Associated targets',
@@ -1934,6 +1939,7 @@ export default {
       probe_icmp_loss_pct: 'Loss',
       probe_icmp_jitter_ms: 'Jitter',
       probe_icmp_samples: 'Valid samples',
+      probe_icmp_sent: 'Packets sent',
       probe_dns_resolve_ms: 'Resolve',
       probe_dns_ok: 'Resolve OK',
       probe_http_status: 'Status',

@@ -99,6 +99,7 @@ beforeEach(() => {
     firing_faults: 1,
     active_issues: 0,
     connectivity_alert: null,
+    probe_overload: null,
     resources: { cpu: null, memory: null, disk: null, net: null, load: null, uptime: null },
     created_at: '2026-07-01T00:00:00Z',
   }]

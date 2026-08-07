@@ -247,6 +247,19 @@ export interface AgentConnAlertRef {
   offline_since: string
 }
 
+// An agent's most recent report that its probe-concurrency budget refused work.
+//
+// It explains a silence: a probe the budget turned away leaves no sample, so its
+// monitor goes stale exactly as it would if the network had gone away. Only the
+// latest report is carried, and the server drops it once it stops being renewed,
+// so its presence means "this agent is overloaded now".
+export interface AgentProbeOverloadRef {
+  skipped: number // probe operations refused during the window
+  window_s: number // the window those refusals were counted over
+  limit: number // the configured max_probe_concurrency they competed for
+  reported_at: string
+}
+
 export interface ScalarSample {
   value: number
   unit: string
@@ -309,6 +322,7 @@ export interface AgentStatusRow {
   firing_faults: number
   active_issues: number
   connectivity_alert: AgentConnAlertRef | null
+  probe_overload: AgentProbeOverloadRef | null
   resources: AgentResources
   created_at: string
 }
