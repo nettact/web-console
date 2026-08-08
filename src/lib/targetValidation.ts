@@ -153,6 +153,15 @@ const PARAM_RANGES: Record<string, ReadonlyArray<{ key: string; labelKey: string
   ],
 }
 
+// timeout_ms is a common param but is not labelled the same everywhere: for the
+// ping kinds it bounds one echo, not one request, so MonitorForm labels it
+// `mform.perPingTimeout` there. The message has to name the field the user is
+// looking at, so those kinds override the label for that key.
+const PARAM_LABEL_OVERRIDES: Record<string, Record<string, string>> = {
+  icmp: { timeout_ms: 'mform.perPingTimeout' },
+  gateway: { timeout_ms: 'mform.perPingTimeout' },
+}
+
 /**
  * Check the numeric params the form exposes for this kind. Only fields the kind
  * actually consumes are checked, matching the server — a value left over from a
@@ -168,7 +177,9 @@ export function paramsRangeError(kind: string, params: Record<string, unknown> |
       if (raw === undefined || raw === null || raw === '') continue
       const v = Number(raw)
       if (!Number.isFinite(v)) continue // a non-numeric entry is dropped before save
-      if (v < r.min || v > r.max) return { labelKey: r.labelKey, min: r.min, max: r.max }
+      if (v < r.min || v > r.max) {
+        return { labelKey: PARAM_LABEL_OVERRIDES[kind]?.[r.key] ?? r.labelKey, min: r.min, max: r.max }
+      }
     }
   }
   return null

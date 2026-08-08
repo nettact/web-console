@@ -294,7 +294,7 @@ describe('MonitorForm save navigation', () => {
     apiMock.setTargets.mockResolvedValue({ ok: true, warnings: [] })
     const page = await render()
     await targetInput(page).setValue('1.1.1.1') // icmp is the default kind
-    await page.get('input[placeholder="3"]').setValue('101') // packet_count, max 100
+    await page.get('input[placeholder="5"]').setValue('101') // packet_count, max 100
     await flushPromises()
 
     await page.get('button.btn.btn-primary').trigger('click')
@@ -304,6 +304,28 @@ describe('MonitorForm save navigation', () => {
     const shown = page.get('.err').text()
     expect(shown).toContain(en.mform.packetCount) // names the offending field
     expect(shown).toContain('100') // and the bound it broke
+  })
+
+  // timeout_ms is one field with two meanings — for the ping kinds it bounds a
+  // single echo, everywhere else a whole request. Both labels rendering at once
+  // put two inputs on the same value, so each kind must show exactly one.
+  it('shows one timeout control per kind, labelled for that kind', async () => {
+    const labels = (page: ReturnType<typeof mount>) => page.findAll('label.field span').map((s) => s.text())
+
+    for (const kind of ['icmp', 'gateway']) {
+      const page = await render()
+      await page.get('select').setValue(kind)
+      await flushPromises()
+      expect(labels(page)).toContain(en.mform.perPingTimeout)
+      expect(labels(page)).not.toContain(en.mform.timeout)
+      page.unmount()
+    }
+
+    const page = await render()
+    await page.get('select').setValue('http')
+    await flushPromises()
+    expect(labels(page)).toContain(en.mform.timeout)
+    expect(labels(page)).not.toContain(en.mform.perPingTimeout)
   })
 
   it('leaves an already-schemed url untouched', async () => {

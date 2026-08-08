@@ -95,6 +95,12 @@ describe('paramsRangeError', () => {
     expect(paramsRangeError('gateway', { packet_count: 101 })?.labelKey).toBe('mform.packetCount')
   })
 
+  it('names timeout_ms by the label the kind actually shows', () => {
+    expect(paramsRangeError('icmp', { timeout_ms: 300001 })?.labelKey).toBe('mform.perPingTimeout')
+    expect(paramsRangeError('gateway', { timeout_ms: 300001 })?.labelKey).toBe('mform.perPingTimeout')
+    expect(paramsRangeError('http', { timeout_ms: 300001 })?.labelKey).toBe('mform.timeout')
+  })
+
   it('ignores params belonging to another kind, matching the server', () => {
     expect(paramsRangeError('http', { packet_count: 100000 })).toBeNull()
     expect(paramsRangeError('dns', { max_redirects: 999 })).toBeNull()

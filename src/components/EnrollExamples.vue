@@ -19,12 +19,26 @@ import {
   type EnrollPlatform,
 } from '../lib/permissionSelection'
 
-const props = defineProps<{ token: string }>()
+// `reinstall` is set by the dialog that mints a token bound to one agent. It
+// only changes the OpenWrt path, and it has to: every other platform's installer
+// wipes the local identity on a full install, while the router deliberately
+// keeps /etc/nettact across reinstalls and sysupgrades. Without saying so, the
+// agent would go on using the credential it already has, the bound token would
+// never be spent, and the dialog's promise would simply be false there.
+const props = withDefaults(defineProps<{ token: string; reinstall?: boolean }>(), {
+  reinstall: false,
+})
 
 type Tab = EnrollPlatform
-const tabs: Tab[] = ['windows', 'macos', 'linux', 'docker']
+const tabs: Tab[] = ['windows', 'macos', 'linux', 'docker', 'openwrt']
 const tab = ref<Tab>('windows')
 const autoUpdate = ref(true)
+// Router-only, and the one decision a router owner cannot avoid: the packages
+// ship no binary, so this says where the ~11 MB agent lands. RAM costs a
+// download per boot and no flash at all, which is the right default on the 8
+// and 16 MB devices that benefit most from having an agent at the edge.
+const storage = ref<'ram' | 'flash'>('ram')
+const showManual = ref(false)
 
 const { t, te } = useI18n()
 const { permLabel, permPurpose } = usePermissionMeta()
@@ -133,17 +147,110 @@ const docker = computed(
     `curl -fsSL https://d.nettact.org/agent/install.sh | bash -s -- --docker \\\n  --server-url ${shellQuote(url.value)} \\\n  --token ${shellQuote(tok.value)}${unixPolicyArg.value}${autoUpdate.value ? ' --auto-update' : ''}`,
 )
 
+// `wget` rather than `curl`: OpenWrt images carry uclient-fetch (or BusyBox
+// wget) and usually no curl at all.
+//
+// Downloaded to a file and run separately rather than piped into `sh`. A
+// pipeline reports the status of its LAST command, and `sh -s` fed an empty
+// stdin exits 0 — so a failed download (no DNS, no CA bundle, a 404) would
+// print nothing and look exactly like a successful install. `&&` makes the
+// download a precondition, and dropping `-q` keeps wget's error visible.
+//
+// `--mode` is emitted only for flash for the same reason the permission
+// argument is omitted at the default policy — a command should carry the
+// choices that were made, not restate the defaults.
+// Unlike the other platforms, this command states EVERY choice instead of
+// omitting the defaults. The installer only touches a setting the command names,
+// so on a rerun an omitted `--mode` would leave a flash router on flash while
+// the console shows RAM, and an omitted `--permissions` would keep a grant
+// broader than the one displayed. A command that does not match the screen it
+// was copied from is worse than a longer one.
+const openwrtPolicy = computed(() => policyValue.value || 'default')
+
+const openwrt = computed(
+  () =>
+    `wget -O /tmp/nettact-openwrt.sh https://d.nettact.org/agent/openwrt.sh && sh /tmp/nettact-openwrt.sh \\\n  --server-url ${shellQuote(url.value)} \\\n  --token ${shellQuote(tok.value)} \\\n  --mode ${storage.value} \\\n  --permissions ${shellQuote(openwrtPolicy.value)}${props.reinstall ? ' \\\n  --reinstall' : ''}`,
+)
+
 const snippet = computed(() => {
   if (tab.value === 'windows') return windows.value
   if (tab.value === 'docker') return docker.value
+  if (tab.value === 'openwrt') return openwrt.value
   return nativeUnix.value
 })
 
-const copied = ref(false)
-async function copy() {
-  await navigator.clipboard?.writeText(snippet.value)
-  copied.value = true
-  window.setTimeout(() => (copied.value = false), 1500)
+// --- the same thing by hand -------------------------------------------------
+// Shown under the OpenWrt tab because a router owner is the operator most likely
+// to refuse a piped script, and because the two packages plus UCI are what the
+// LuCI pages are configuring anyway. These are literally the steps the installer
+// above performs, so they stay in step with it.
+
+// The TLS transport is installed only when no provider is present: images using
+// libustream-openssl or -wolfssl already have one, and dropping mbedtls on top
+// would swap a working backend nobody asked to change.
+const manualInstall = `opkg update
+opkg install ca-bundle
+opkg list-installed | grep -q '^libustream-' || opkg install libustream-mbedtls
+opkg install https://d.nettact.org/agent/nettact-agent.ipk
+opkg install https://d.nettact.org/agent/luci-app-nettact.ipk`
+
+// UCI models the grant as a mode plus an optional list, so the console's policy
+// value has to be rendered as both — and the list has to be DELETED first.
+// `add_list` appends, so a rerun on a router that already has a custom grant
+// would union the two and keep permissions the operator just removed. The
+// default-policy branch sets the mode explicitly rather than emitting nothing,
+// because "nothing" leaves an earlier `none` or `custom` in place.
+const manualPermissionLines = computed(() => {
+  const clear = `uci -q delete nettact.main.permissions\n`
+  if (!policyValue.value) return `${clear}uci set nettact.main.permission_mode='default'\n`
+  if (policyValue.value === 'none') return `${clear}uci set nettact.main.permission_mode='none'\n`
+  return (
+    `${clear}uci set nettact.main.permission_mode='custom'\n` +
+    selected.value.map((id) => `uci add_list nettact.main.permissions='${id}'\n`).join('')
+  )
+})
+
+// `server_mode=single` is not optional: on a router previously set up for
+// several servers the agent reads its `config server` sections and ignores the
+// server_url and token written here. `enroll_token_file` is deleted for a
+// related reason — the two token sources are mutually exclusive, and a router
+// that already had the file form would produce a config the agent rejects at
+// startup. `restart` rather than `start` because `start` is a no-op on an
+// already-running service, so the settings just written would not take effect.
+//
+// The reinstall wipe comes LAST, after every uci write, and is CHAINED to them
+// with `&&`. These lines are pasted into an interactive shell, which has no
+// `set -e`: without the chain a failed `uci commit` would not stop the sequence,
+// and the router would lose its working credential to a configuration that
+// never landed.
+const manualConfigure = computed(
+  () =>
+    `uci set nettact.main.server_mode='single'
+uci set nettact.main.server_url=${shellQuote(url.value)}
+uci set nettact.main.enroll_token=${shellQuote(tok.value)}
+uci -q delete nettact.main.enroll_token_file
+uci set nettact.main.mode='${storage.value}'
+${manualPermissionLines.value}uci set nettact.main.enabled='1'
+uci commit nettact${
+      props.reinstall
+        ? ` && /etc/init.d/nettact enable \\
+  && /etc/init.d/nettact stop \\
+  && rm -f /etc/nettact/data/agent.json \\
+  && rm -rf /etc/nettact/data/wal \\
+  && /etc/init.d/nettact restart`
+        : `
+/etc/init.d/nettact enable
+/etc/init.d/nettact restart`
+    }`,
+)
+
+const copiedKey = ref('')
+async function copyText(text: string, key: string) {
+  await navigator.clipboard?.writeText(text)
+  copiedKey.value = key
+  window.setTimeout(() => {
+    if (copiedKey.value === key) copiedKey.value = ''
+  }, 1500)
 }
 
 onMounted(() => {
@@ -168,13 +275,31 @@ onMounted(() => {
       </button>
     </div>
 
-    <label class="auto-update">
+    <label v-if="tab !== 'openwrt'" class="auto-update">
       <input v-model="autoUpdate" type="checkbox" />
       <span>
         <strong>{{ $t('onboarding.autoUpdate') }}</strong>
         <small>{{ $t('onboarding.autoUpdateHint') }}</small>
       </span>
     </label>
+
+    <!-- Where the downloaded binary lives. Router-only: nothing on the other
+         platforms downloads itself at every boot. -->
+    <section v-else class="perm-picker">
+      <div class="perm-head">
+        <strong>{{ $t('onboarding.storageTitle') }}</strong>
+        <small>{{ $t('onboarding.storageHint') }}</small>
+      </div>
+      <div class="presets" role="radiogroup" :aria-label="$t('onboarding.storageTitle')">
+        <label v-for="s in (['ram', 'flash'] as const)" :key="s" class="preset">
+          <input v-model="storage" type="radio" :value="s" />
+          <span>
+            <strong>{{ $t(`onboarding.storage_${s}`) }}</strong>
+            <small>{{ $t(`onboarding.storageHint_${s}`) }}</small>
+          </span>
+        </label>
+      </div>
+    </section>
 
     <!-- Local permission policy, applied at install time. Hidden entirely when
          the catalog could not be loaded: the command below still enrolls a
@@ -254,13 +379,64 @@ onMounted(() => {
     </section>
 
     <div class="code-wrap">
-      <button class="copy" @click="copy">{{ copied ? $t('common.saved') : $t('agents.copy') }}</button>
+      <button class="copy" @click="copyText(snippet, 'cmd')">
+        {{ copiedKey === 'cmd' ? $t('common.saved') : $t('agents.copy') }}
+      </button>
       <pre><code>{{ snippet }}</code></pre>
     </div>
 
+    <!-- The same install by hand. Collapsed, because the command above is the
+         primary path; the documentation link is not, so it stays visible. -->
+    <section v-if="tab === 'openwrt'" class="manual">
+      <div class="manual-head">
+        <strong>{{ $t('onboarding.manualTitle') }}</strong>
+        <a :href="$t('docs.openwrtUrl')" target="_blank" rel="noopener noreferrer">
+          {{ $t('onboarding.manualDocsLink') }} →
+        </a>
+      </div>
+      <button
+        type="button"
+        class="link-btn"
+        :aria-expanded="showManual"
+        @click="showManual = !showManual"
+      >
+        {{ showManual ? $t('onboarding.manualCollapse') : $t('onboarding.manualExpand') }}
+      </button>
+      <ol v-if="showManual" class="manual-steps">
+        <li>
+          <p>{{ $t('onboarding.manualStep1') }}</p>
+          <div class="code-wrap">
+            <button class="copy" @click="copyText(manualInstall, 'manual1')">
+              {{ copiedKey === 'manual1' ? $t('common.saved') : $t('agents.copy') }}
+            </button>
+            <pre><code>{{ manualInstall }}</code></pre>
+          </div>
+        </li>
+        <li>
+          <p>{{ $t('onboarding.manualStep2') }}</p>
+        </li>
+        <li>
+          <p>{{ $t('onboarding.manualStep3') }}</p>
+          <div class="code-wrap">
+            <button class="copy" @click="copyText(manualConfigure, 'manual2')">
+              {{ copiedKey === 'manual2' ? $t('common.saved') : $t('agents.copy') }}
+            </button>
+            <pre><code>{{ manualConfigure }}</code></pre>
+          </div>
+        </li>
+      </ol>
+    </section>
+
     <ul class="callouts">
-      <li>{{ $t('onboarding.calloutAdmin') }}</li>
-      <li>{{ $t('onboarding.calloutInstall') }}</li>
+      <li v-if="tab !== 'openwrt'">{{ $t('onboarding.calloutAdmin') }}</li>
+      <li v-if="tab !== 'openwrt'">{{ $t('onboarding.calloutInstall') }}</li>
+      <li v-if="tab === 'openwrt'">
+        {{ reinstall ? $t('onboarding.calloutOpenwrtReinstall') : $t('onboarding.calloutOpenwrtInstall') }}
+      </li>
+      <li v-if="tab === 'openwrt'">{{ $t('onboarding.calloutOpenwrtHttps') }}</li>
+      <li v-if="tab === 'openwrt' && storage === 'ram'">
+        {{ $t('onboarding.calloutOpenwrtRam') }}
+      </li>
       <li>{{ $t('onboarding.calloutTokenHistory') }}</li>
     </ul>
   </div>
@@ -472,6 +648,43 @@ code {
   display: flex;
   flex-direction: column;
   gap: 5px;
+  font-size: 12.5px;
+  color: var(--text-dim);
+  line-height: 1.55;
+}
+.manual {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+}
+.manual-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+.manual-head strong {
+  font-size: 13px;
+}
+.manual-head a {
+  font-size: 12.5px;
+  color: var(--color-accent-text);
+}
+.manual-steps {
+  margin: 0;
+  padding-left: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  color: var(--text);
+}
+.manual-steps p {
+  margin: 0 0 6px;
   font-size: 12.5px;
   color: var(--text-dim);
   line-height: 1.55;

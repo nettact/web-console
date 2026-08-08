@@ -141,7 +141,7 @@ watch(
                 <button class="link-btn" @click="copyToken">{{ copied ? t('common.saved') : t('agents.copy') }}</button>
               </div>
               <p v-if="copyFailed" class="rd-copy-failed">{{ t('agents.copyUnavailable') }}</p>
-              <EnrollExamples class="rd-examples" :token="token" />
+              <EnrollExamples class="rd-examples" :token="token" reinstall />
             </template>
             <p v-else class="rd-minting">{{ t('agents.reinstallMinting') }}</p>
           </div>

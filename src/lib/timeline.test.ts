@@ -1,5 +1,15 @@
 import { describe, expect, it } from 'vitest'
-import { availability, availabilityOutages, boolSegments, timelineSlices, type Seg, visibleTimelineBounds } from './timeline'
+import {
+  availability,
+  availabilityOutages,
+  boolSegments,
+  HEARTBEAT_MS,
+  type Pt,
+  type Seg,
+  timelineSlices,
+  uptimeSegments,
+  visibleTimelineBounds,
+} from './timeline'
 
 describe('visibleTimelineBounds', () => {
   it('starts at the first observed sample when monitoring began inside the selected window', () => {
@@ -77,5 +87,61 @@ describe('rolled-up availability', () => {
   it('uses the bucket success ratio without rounding away failures', () => {
     expect(availability(points, 3 * minute)).toBeCloseTo(5 / 6)
     expect(availabilityOutages(points)).toBe(1)
+  })
+})
+
+const MINUTE = 60 * 1000
+
+// An uptime counter series, `n` points spaced `gap` apart ending at `end`, whose
+// value climbs by `gap` per point the way the agent reports it (seconds).
+function uptimeSeries(end: number, gap: number, n: number, startUptimeS = 3600): Pt[] {
+  const pts: Pt[] = []
+  for (let i = n - 1; i >= 0; i--) pts.push({ t: end - i * gap, v: startUptimeS + (n - 1 - i) * (gap / 1000) })
+  return pts
+}
+
+describe('uptimeSegments trailing edge', () => {
+  const now = 1_700_000_000_000
+
+  // The regression this covers: ranges over 2h read the 1-minute rollup, whose
+  // newest bucket trails now by the in-progress bucket plus the rollup worker's
+  // cadence. That lag is missing data, not an outage, and drawing it as one put
+  // a red "offline" band under an agent that never went down.
+  it('does not fabricate an outage from rollup right-edge lag', () => {
+    const { segs } = uptimeSegments(uptimeSeries(now - 5 * MINUTE, MINUTE, 60), now)
+    expect(segs.some((seg) => !seg.ok)).toBe(false)
+    expect(segs[segs.length - 1].end).toBeLessThanOrEqual(now)
+  })
+
+  it('stops at the stale horizon instead of extending the last state to now', () => {
+    const { segs } = uptimeSegments(uptimeSeries(now - 30 * MINUTE, 30_000, 20), now)
+    expect(segs[segs.length - 1].end).toBeLessThan(now)
+    expect(segs.some((seg) => !seg.ok)).toBe(false)
+  })
+
+  it('still reaches now while heartbeats are current', () => {
+    const { segs } = uptimeSegments(uptimeSeries(now - 10_000, 30_000, 20), now)
+    expect(segs[segs.length - 1].end).toBe(now)
+    expect(segs.every((seg) => seg.ok)).toBe(true)
+  })
+})
+
+describe('uptimeSegments observed outages', () => {
+  const now = 1_700_000_000_000
+
+  it('still marks a gap between two samples as offline', () => {
+    const before = uptimeSeries(now - 10 * MINUTE, 30_000, 10)
+    const after = uptimeSeries(now - 10_000, 30_000, 10, 60)
+    const down = uptimeSegments([...before, ...after], now).segs.filter((seg) => !seg.ok)
+
+    expect(down).toHaveLength(1)
+    expect(down[0].start).toBe(before[before.length - 1].t + HEARTBEAT_MS)
+    expect(down[0].end).toBe(after[0].t)
+  })
+
+  it('reports a counter reset as a restart', () => {
+    const before = uptimeSeries(now - MINUTE, 30_000, 4)
+    const after = uptimeSeries(now - 10_000, 30_000, 2, 5)
+    expect(uptimeSegments([...before, ...after], now).restarts).toEqual([after[0].t])
   })
 })

@@ -2929,6 +2929,7 @@ export default {
   // 文档站深链。中英各指向自己的语言目录；权限详情锚点由权限 ID 点换连字符得到。
   docs: {
     permissionsUrl: 'https://nettact.org/zh/permissions',
+    openwrtUrl: 'https://nettact.org/zh/openwrt',
   },
 
   // 硬性「平台/构建不支持」类受阻权限的可用平台说明（按权限 id 查找）。缺失时
@@ -3117,10 +3118,31 @@ export default {
     tab_macos: 'macOS',
     tab_linux: 'Linux',
     tab_docker: 'Docker',
+    tab_openwrt: 'OpenWrt',
     autoUpdate: '启用自动更新',
     autoUpdateHint: '每天检查一次新版本；更新后会自动重启 Agent。',
+    // 路由器的二进制存放位置。OpenWrt 包里不含可执行文件——按设备 CPU 现下——
+    // 所以这里决定它落在哪。
+    storageTitle: 'Agent 二进制存放位置',
+    storageHint: '路由器安装包不含可执行文件；首次启动时按本机架构下载约 11 MB 的构建。',
+    storage_ram: '内存（推荐）',
+    storageHint_ram: '每次开机下载到 /tmp。完全不占用 flash，代价是每次重启都要重新下载一次。',
+    storage_flash: 'Flash',
+    storageHint_flash: '一次性下载到 /usr/lib/nettact。断网也能启动运行，需要 overlay 上约 12 MB 空闲空间。',
     calloutAdmin: '原生安装需使用管理员或 root 权限；Docker 安装需有 Docker daemon 访问权限。',
     calloutInstall: '命令会下载安装 Agent、写入安全配置，并注册为开机自动运行的后台服务。',
+    calloutOpenwrtInstall: '命令会安装 nettact-agent 与 luci-app-nettact 两个包，把设置写入 /etc/config/nettact，并等到路由器报告已连接为止。身份保存在 /etc/nettact，所以重装或 sysupgrade 都不需要重新注册。',
+    calloutOpenwrtReinstall: '命令会丢弃这台路由器已保存的凭据和待上传队列,用上面的令牌重新注册,然后装好软件包并等到它报告已连接。少了这一步,路由器会继续用原有凭据,重装令牌根本不会被用掉。',
+    calloutOpenwrtHttps: '走 HTTPS 下载需要路由器上有 ca-bundle 和 libustream-mbedtls。官方固件自带；若下载报 SSL 错误，先执行 opkg update && opkg install ca-bundle libustream-mbedtls。',
+    calloutOpenwrtRam: '内存模式下每次重启都会重新下载二进制，所以重启一次就等于更新一次。',
+    // 手动路径，给不愿意把脚本直接管道进 shell 的人。
+    manualTitle: '想手动安装？',
+    manualDocsLink: 'OpenWrt 文档',
+    manualExpand: '展开手动步骤',
+    manualCollapse: '收起手动步骤',
+    manualStep1: '安装两个软件包。luci-app-nettact 提供「服务 → NetTact」页面；不装它 agent 也能工作。',
+    manualStep2: '在 LuCI 里打开「服务 → NetTact」，填入服务器地址和注册令牌，选择存储模式并启用。',
+    manualStep3: '也可以直接在命令行里配置——和 LuCI 页面写入的是同一组设置。',
     calloutTokenHistory: '一次性令牌会出现在当前命令和 shell 历史中；注册成功后令牌立即失效。',
     // 接入时的权限选择。权限在安装时写入配置，装完再改需要改配置文件并重启 Agent。
     permTitle: '权限',

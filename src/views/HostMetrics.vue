@@ -438,7 +438,7 @@ onMounted(async () => {
         <template v-if="selectedGroup && selectedGroup.collection">
           <div class="card chart-card" v-for="c in collectionChartsData" :key="c.id">
             <p v-if="c.caption" class="chart-caption">{{ c.caption }}</p>
-            <MetricChart :title="c.title" :metrics="c.metrics" />
+            <MetricChart :title="c.title" :metrics="c.metrics" :range-sec="rangeSec" />
             <div v-if="c.status" class="legend">
               <span><i class="dot on"></i>{{ t('chart.normalEnabled') }}</span>
               <span><i class="dot off"></i>{{ t('chart.interruptedDisabled') }}</span>
@@ -467,12 +467,12 @@ onMounted(async () => {
           <MetricStatCards :cards="metricCards" />
 
           <div class="card chart-card" v-if="trendMetrics.length">
-            <MetricChart :title="chartTitle" :metrics="trendMetrics" />
+            <MetricChart :title="chartTitle" :metrics="trendMetrics" :range-sec="rangeSec" />
             <p v-if="!loading && !someData(trendMetrics)" class="empty-line hint">{{ t('metrics.noDataRange') }}</p>
           </div>
 
           <div class="card chart-card" v-for="m in statusMetrics" :key="m.key">
-            <MetricChart :title="`${chartTitle} · ${m.label}`" :metrics="[m]" />
+            <MetricChart :title="`${chartTitle} · ${m.label}`" :metrics="[m]" :range-sec="rangeSec" />
             <div class="legend">
               <span><i class="dot on"></i>{{ isUptimeMetric(m.kind) ? t('chart.online') : t('chart.normalEnabled') }}</span>
               <span><i class="dot off"></i>{{ isUptimeMetric(m.kind) ? t('chart.offlineFault') : t('chart.interruptedDisabled') }}</span>

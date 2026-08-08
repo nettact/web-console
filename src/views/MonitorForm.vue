@@ -69,6 +69,10 @@ function applyQueryPrefill() {
 
 const isHostMode = computed(() => form.kind === 'host')
 const isGatewayMode = computed(() => form.kind === 'gateway')
+// icmp and gateway share the ping cycle, so they share its params — including
+// timeout_ms, which for them means "per echo", not "per request". They get the
+// labelled per-ping field in the advanced panel instead of the generic timeout.
+const isPingMode = computed(() => form.kind === 'icmp' || form.kind === 'gateway')
 const hostSubject = computed<'whole' | 'disk' | 'wifi'>({
   get: () => (form.target === 'host' ? 'whole' : form.target === '*' ? 'wifi' : 'disk'),
   set: (v) => {
@@ -589,7 +593,7 @@ onMounted(loadAll)
             <span>{{ tr('mform.interval') }}</span>
             <input type="number" v-model.number="form.params!.interval_seconds" :placeholder="tr('monitoring.default')" />
           </label>
-          <label class="field" v-if="form.kind !== 'host'">
+          <label class="field" v-if="form.kind !== 'host' && !isPingMode">
             <span>{{ tr('mform.timeout') }}</span>
             <input type="number" v-model.number="form.params!.timeout_ms" :placeholder="tr('monitoring.default')" />
           </label>
@@ -603,12 +607,16 @@ onMounted(loadAll)
       <section class="panel" v-if="form.kind === 'icmp' || form.kind === 'gateway' || form.kind === 'dns' || form.kind === 'tcp'">
         <div class="panel-head"><h3>{{ tr('mform.secAdvanced') }}</h3></div>
         <div class="form-grid">
-          <template v-if="form.kind === 'icmp' || form.kind === 'gateway'">
+          <template v-if="isPingMode">
             <!-- min/max mirror the server bounds (server-core/api/probevalidate.go)
-                 so the browser blocks the obvious garbage before a round trip. -->
-            <label class="field"><span>{{ tr('mform.packetCount') }}</span><input type="number" min="0" max="100" v-model.number="form.params!.packet_count" placeholder="3" /></label>
-            <label class="field"><span>{{ tr('mform.packetSize') }}</span><input type="number" min="0" max="65500" v-model.number="form.params!.packet_size" placeholder="56" /></label>
-            <label class="field"><span>{{ tr('mform.perPingTimeout') }}</span><input type="number" min="0" max="300000" v-model.number="form.params!.timeout_ms" placeholder="2000" /></label>
+                 so the browser blocks the obvious garbage before a round trip.
+                 Placeholders are the real agent defaults for an empty field:
+                 protocol/config.DefaultPingCount (5), the 13-byte "nettact-probe"
+                 payload marker, DefaultPingEchoTimeout (1s), and the derived cycle
+                 deadline max(interval, count×perEcho) = 10s at those defaults. -->
+            <label class="field"><span>{{ tr('mform.packetCount') }}</span><input type="number" min="0" max="100" v-model.number="form.params!.packet_count" placeholder="5" /></label>
+            <label class="field"><span>{{ tr('mform.packetSize') }}</span><input type="number" min="0" max="65500" v-model.number="form.params!.packet_size" placeholder="13" /></label>
+            <label class="field"><span>{{ tr('mform.perPingTimeout') }}</span><input type="number" min="0" max="300000" v-model.number="form.params!.timeout_ms" placeholder="1000" /></label>
             <label class="field"><span>{{ tr('mform.globalTimeout') }}</span><input type="number" min="0" max="300000" v-model.number="form.params!.global_timeout_ms" placeholder="10000" /></label>
           </template>
           <template v-else-if="form.kind === 'dns'">

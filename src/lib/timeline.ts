@@ -143,13 +143,19 @@ export function availability(pts: Pt[], now: number): number {
   return total > 0 ? up / total : Math.min(Math.max(pts[pts.length - 1].v, 0), 1)
 }
 
-// How long an uptime sample is trusted as "current" before the agent counts as
-// offline. Like boolStaleMs it adapts to the sample cadence (max of 3× the
-// median gap and the 90s floor): raw heartbeats stay at the 90s floor, but a
-// downsampled series (1-minute / 1-hour rollup buckets, read at the 6h/24h/… >2h
-// ranges) tolerates its coarser spacing. Without this, the newest rollup bucket
-// — which always lags `now` by a minute or two just from bucketing — is misread
-// as an outage and paints a false offline band at the trailing edge.
+// How long an uptime sample is trusted as "current". Like boolStaleMs it adapts
+// to the sample cadence (max of 3× the median gap and the 90s floor): raw
+// heartbeats stay at the 90s floor, but a downsampled series (1-minute / 1-hour
+// rollup buckets, read at the 6h/24h/… >2h ranges) tolerates its coarser
+// spacing.
+//
+// This is a sample-and-hold horizon, NOT a fault threshold: it decides how far
+// the last known state is drawn forward, and how stale the summary card lets a
+// value get before it stops claiming the agent is up. It deliberately does not
+// try to cover the rollup pipeline's right-edge lag (an in-progress bucket plus
+// the worker's multi-minute cadence) — sizing it for that would swallow real
+// short outages at the coarse ranges. uptimeSegments instead stops drawing at
+// the end of the data rather than extrapolating absence into a fault.
 export function uptimeStaleMs(pts: Pt[]): number {
   return Math.max(3 * medianGap(pts), OFFLINE_GAP_MS)
 }
@@ -172,17 +178,18 @@ export function uptimeSegments(pts: Pt[], now: number): { segs: Seg[]; restarts:
       push(segs, prev.t, cur.t, true)
     }
   }
-  // Trailing edge: use the same stale cutoff as uptimeOnline so the chart and the
-  // "online/offline" summary never disagree. A lone sample (an agent that just
-  // connected) carries no cadence to judge freshness against, so it's held online
-  // to now rather than fabricating an outage from a single point.
+  // Trailing edge: hold the newest sample forward until it goes stale, then STOP
+  // — never extend a red band to now. Past the last sample the series says
+  // nothing, and nothing is not evidence of an outage: ranges over 2h read the
+  // 1-minute rollup, whose right edge trails now by the in-progress bucket plus
+  // the rollup worker's cadence (minutes, not seconds), so extrapolating that
+  // absence into a fault painted an offline band across an agent that was up the
+  // whole time. Outages that were actually observed are gaps BETWEEN samples and
+  // still render, above. Same sample-and-hold convention as boolSegments —
+  // whether the agent is offline *right now* is a current-state question for the
+  // summary card, not something to infer from where the series happens to end.
   const last = pts[pts.length - 1]
-  if (pts.length >= 2 && now - last.t > stale) {
-    push(segs, last.t, last.t + HEARTBEAT_MS, true)
-    push(segs, last.t + HEARTBEAT_MS, now, false)
-  } else {
-    push(segs, last.t, now, true)
-  }
+  push(segs, last.t, Math.min(now, last.t + stale), true)
   return { segs, restarts }
 }
 

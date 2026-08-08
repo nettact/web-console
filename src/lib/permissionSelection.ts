@@ -9,7 +9,13 @@
 
 import type { PermissionCatalogEntry } from '../api'
 
-export type EnrollPlatform = 'windows' | 'macos' | 'linux' | 'docker'
+// OpenWrt is a platform for the CHOOSER, not a separate capability set: the
+// router build is Linux and classifies exactly like it below. What the lite
+// build drops — WireGuard egress for probes, and spilling the telemetry buffer
+// to disk — is not expressible as a permission, so there is nothing to mark
+// here. It runs as root under procd, so the raw-socket note below is satisfied
+// in practice on a router the way it is on Windows' SYSTEM task.
+export type EnrollPlatform = 'windows' | 'macos' | 'linux' | 'docker' | 'openwrt'
 
 // How a permission behaves on a given platform.
 //   ok         — works as soon as it is granted

@@ -2965,6 +2965,7 @@ export default {
   // per-permission anchor is the permission ID with dots swapped for hyphens.
   docs: {
     permissionsUrl: 'https://nettact.org/en/permissions',
+    openwrtUrl: 'https://nettact.org/en/openwrt',
   },
 
   // Platform-availability note for a hard "unsupported" block, looked up by
@@ -3162,10 +3163,31 @@ export default {
     tab_macos: 'macOS',
     tab_linux: 'Linux',
     tab_docker: 'Docker',
+    tab_openwrt: 'OpenWrt',
     autoUpdate: 'Enable automatic updates',
     autoUpdateHint: 'Check daily for a new version and restart the Agent after updating.',
+    // Router storage mode. The OpenWrt packages ship no binary — it is
+    // downloaded to match the device's CPU — so this is where it lands.
+    storageTitle: 'Where the Agent binary lives',
+    storageHint: 'The router packages contain no executable; the ~11 MB build for this device is downloaded on first start.',
+    storage_ram: 'RAM (recommended)',
+    storageHint_ram: 'Downloaded to /tmp on every boot. Uses no flash at all, at the cost of one download per reboot.',
+    storage_flash: 'Flash',
+    storageHint_flash: 'Downloaded once to /usr/lib/nettact. Boots and runs with no internet, needs ~12 MB free on the overlay.',
     calloutAdmin: 'Native installation requires administrator or root access; Docker installation requires access to the Docker daemon.',
     calloutInstall: 'The command downloads the Agent, writes a protected configuration, and registers it as an auto-starting background service.',
+    calloutOpenwrtInstall: 'The command installs the nettact-agent and luci-app-nettact packages, writes the settings into /etc/config/nettact, and waits until the router reports itself connected. The identity is kept in /etc/nettact, so reinstalling or a sysupgrade never means enrolling again.',
+    calloutOpenwrtReinstall: 'The command discards the credential and queued telemetry saved on this router so it enrolls again with the token above, then installs the packages and waits until it reports itself connected. Without that step the router would keep the credential it already has and the reinstall token would never be used.',
+    calloutOpenwrtHttps: 'Fetching over HTTPS needs ca-bundle and libustream-mbedtls on the router. Official images include them; if the download fails with an SSL error, run opkg update && opkg install ca-bundle libustream-mbedtls first.',
+    calloutOpenwrtRam: 'In RAM mode the binary is downloaded again after every reboot, so a reboot is also an update.',
+    // The manual route, for an operator who will not pipe a script into a shell.
+    manualTitle: 'Prefer to install it by hand?',
+    manualDocsLink: 'OpenWrt documentation',
+    manualExpand: 'Show the manual steps',
+    manualCollapse: 'Hide the manual steps',
+    manualStep1: 'Install both packages. luci-app-nettact adds the Services → NetTact pages; the agent package works without it.',
+    manualStep2: 'In LuCI, open Services → NetTact, fill in the server address and enrollment token, choose a storage mode, and enable it.',
+    manualStep3: 'Or configure it from the command line instead — these are the same settings the LuCI page writes.',
     // Permission choice at enrollment. The policy is written at install time;
     // changing it later means editing the config on the machine and restarting.
     permTitle: 'Permissions',
