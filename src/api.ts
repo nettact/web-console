@@ -1189,19 +1189,20 @@ export interface SnapshotTargetResult {
   error_class?: string
 }
 
-// Terminal + pre-terminal traceroute statuses. queued/running live server-side;
-// the rest are the agent's terminal results.
+// Traceroute statuses. Every report is terminal on arrival: the Agent decides,
+// runs and reports the whole thing, so there is no queued/running state for the
+// server to hold.
 export type TraceStatus =
-  | 'queued'
-  | 'running'
   | 'succeeded'
   | 'partial'
   | 'timed_out'
   | 'unsupported'
   | 'failed'
   | 'canceled'
-// One traceroute report as referenced from an incident. The execution record is
-// shared: the same report_id/content appears everywhere it is referenced.
+// One traceroute report as referenced from an incident. The Agent triggers these
+// itself when a target fails enough consecutive rounds and delivers them through
+// its outbox, so a report can arrive long after the sweep it describes — and,
+// during an outage, long before the fault it explains is confirmed here.
 export interface TraceSummary {
   report_id: string
   agent_id: string
@@ -1215,14 +1216,21 @@ export interface TraceSummary {
   reached: boolean
   reached_ttl?: number
   active_refs: number
-  requested_at: string
   started_at: string | null
   completed_at: string | null
-  deadline_at: string
-  // Present when the requested mode couldn't run and the Agent transparently
-  // fell back to another mode (currently tcp -> icmp only, when the Agent lacks
-  // admin rights or policy grant for TCP traceroute but can still run ICMP).
-  fallback_from?: string // '' | 'tcp' — the mode this report was originally requested as
+  // Server clock when the report arrived, which can be far later than
+  // completed_at: a trace collected while the link was down waits in the Agent's
+  // outbox, which is exactly why it is sent that way.
+  received_at: string
+  // WHY the Agent ran it. Nothing asked for this report, so the trigger is the
+  // only record of its cause.
+  trigger_reason?: string // consecutive_failures
+  trigger_streak?: number
+  first_failed_at?: string | null
+  // Present when the natural mode couldn't run and the Agent transparently fell
+  // back to another mode (currently tcp -> icmp only, when the Agent lacks admin
+  // rights or policy grant for TCP traceroute but can still run ICMP).
+  fallback_from?: string // '' | 'tcp' — the mode this report was originally planned as
   fallback_reason?: string // raw_socket_unavailable | permission_denied
   // What dest_host IS. A probe reaches its target through a resolver, a proxy or
   // a tunnel, and when the fault is on that leg the diagnostic traces THAT — so
@@ -1236,9 +1244,9 @@ export interface TraceSummary {
   // Which PATH the trace executed over — orthogonal to subject_kind (what was
   // examined). direct = the host network stack; wireguard_physical = the host-
   // stack path to the tunnel's outer endpoint; wireguard_inner = hop-by-hop
-  // inside the WireGuard tunnel. Attested by the Agent and verified server-side.
+  // inside the WireGuard tunnel.
   path_scope: string // direct | wireguard_physical | wireguard_inner
-  // The exact tunnel generation an in-tunnel trace was pinned to (empty for
+  // The exact tunnel generation an in-tunnel trace ran through (empty for
   // host-stack paths). A rotated config is a different path, so the Agent fails
   // closed on a mismatch instead of measuring something else.
   egress_id?: string

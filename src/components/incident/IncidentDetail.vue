@@ -185,10 +185,11 @@ async function load(): Promise<boolean | number> {
     traces.value = reports.filter((r): r is TraceReportView => !!r)
     loaded.value = true
     error.value = ''
-    // Keep polling only while there is live work to observe.
-    const snapActive = snap?.status === 'collecting'
-    const traceActive = sums.some((s) => s.status === 'queued' || s.status === 'running')
-    if (snapActive || traceActive) return true
+    // Keep polling only while there is live work to observe. Traceroute is not
+    // live work any more: the Agent runs it on its own and a report only exists
+    // once it is finished and uploaded, so there is no in-progress state to watch
+    // — a report that has not arrived yet arrives with the next telemetry packet.
+    if (snap?.status === 'collecting') return true
     // A pending delivery is live work too — the drawer should show it flip to
     // "sent" rather than looking stuck — but a notification delay is minutes,
     // not seconds. Sleep until just after the earliest one comes due instead of

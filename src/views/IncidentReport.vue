@@ -577,9 +577,13 @@ async function exportPdf() {
                 <span v-if="r.reached && r.reached_ttl" class="dim"> · TTL {{ r.reached_ttl }}</span>
               </dd>
             </div>
-            <div>
-              <dt>{{ t('incidents.trace.requestedAt') }}</dt>
-              <dd>{{ fmtDateTime(r.requested_at) }}</dd>
+            <div v-if="r.trigger_streak">
+              <dt>{{ t('incidents.trace.trigger') }}</dt>
+              <dd>{{ t('incidents.trace.triggerStreak', { n: r.trigger_streak }) }}</dd>
+            </div>
+            <div v-if="r.first_failed_at">
+              <dt>{{ t('incidents.trace.firstFailedAt') }}</dt>
+              <dd>{{ fmtDateTime(r.first_failed_at) }}</dd>
             </div>
             <div>
               <dt>{{ t('incidents.trace.startedAt') }}</dt>
@@ -621,7 +625,7 @@ async function exportPdf() {
               </tbody>
             </table>
           </div>
-          <p v-else-if="r.status !== 'queued' && r.status !== 'running'" class="hint">{{ t('incidents.trace.noHops') }}</p>
+          <p v-else class="hint">{{ t('incidents.trace.noHops') }}</p>
           <p class="disclaimer">{{ t('incidents.trace.starNote') }}</p>
           <p class="disclaimer">{{ t('incidents.trace.rootCauseNote') }}</p>
         </div>

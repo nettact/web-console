@@ -193,9 +193,12 @@ async function saveListen() {
 
 // Incident-evidence (INCIDENT-002) and path-diagnostic (DIAG-001) tuning, backed
 // by the flat settings API. Bounds mirror the server's validated ranges; time and
-// size fields are presented in friendly units and converted on save. There is
-// deliberately no cooldown / freshness / queue-grace / cross-fault reuse knob —
-// diagnostic report reuse is governed by alert lifecycles, not a timer.
+// size fields are presented in friendly units and converted on save.
+//
+// These are the POLICY the server states, not a schedule it keeps: the Agent
+// decides when to traceroute and runs it locally, so there is no server-side
+// concurrency knob — how many traces one machine may run at once belongs with
+// that machine's other probe budgets.
 const diag = reactive({
   snapshotDeadlineS: 10, // incident_snapshot_deadline_ms / 1000
   snapshotMaxKiB: 256, // incident_snapshot_max_bytes / 1024
@@ -203,9 +206,8 @@ const diag = reactive({
   totalTimeoutS: 300, // diag_total_timeout_ms / 1000
   maxHops: 30, // diag_max_hops
   attempts: 3, // diag_attempts_per_hop
-  agentConc: 4, // diag_agent_concurrency
-  globalConc: 16, // diag_global_concurrency
-  resolveHops: false, // diag_resolve_hops
+  consecutiveFailures: 3, // diag_consecutive_failures
+  cooldownMin: 15, // diag_cooldown_sec / 60
   retentionDays: 30, // evidence_retention_days
   fluctuationRetentionDays: 30, // fluctuation_retention_days
 })
@@ -216,8 +218,8 @@ const BOUNDS: Record<string, [number, number]> = {
   totalTimeoutS: [5, 600],
   maxHops: [1, 64],
   attempts: [1, 5],
-  agentConc: [1, 16],
-  globalConc: [1, 64],
+  consecutiveFailures: [1, 20],
+  cooldownMin: [1, 1440],
   retentionDays: [1, 365],
   fluctuationRetentionDays: [1, 365],
 }
@@ -235,9 +237,8 @@ function populateDiag(s: Record<string, string>) {
   diag.totalTimeoutS = Math.round(num('diag_total_timeout_ms', 300000) / 1000)
   diag.maxHops = num('diag_max_hops', 30)
   diag.attempts = num('diag_attempts_per_hop', 3)
-  diag.agentConc = num('diag_agent_concurrency', 4)
-  diag.globalConc = num('diag_global_concurrency', 16)
-  diag.resolveHops = num('diag_resolve_hops', 0) !== 0
+  diag.consecutiveFailures = num('diag_consecutive_failures', 3)
+  diag.cooldownMin = Math.max(1, Math.round(num('diag_cooldown_sec', 900) / 60))
   diag.retentionDays = num('evidence_retention_days', 30)
   diag.fluctuationRetentionDays = num('fluctuation_retention_days', 30)
 }
@@ -261,9 +262,8 @@ async function saveDiag() {
       diag_total_timeout_ms: String(diag.totalTimeoutS * 1000),
       diag_max_hops: String(diag.maxHops),
       diag_attempts_per_hop: String(diag.attempts),
-      diag_agent_concurrency: String(diag.agentConc),
-      diag_global_concurrency: String(diag.globalConc),
-      diag_resolve_hops: diag.resolveHops ? '1' : '0',
+      diag_consecutive_failures: String(diag.consecutiveFailures),
+      diag_cooldown_sec: String(diag.cooldownMin * 60),
       evidence_retention_days: String(diag.retentionDays),
       fluctuation_retention_days: String(diag.fluctuationRetentionDays),
     })
@@ -1111,27 +1111,22 @@ onMounted(() => {
             <span class="knob-help hint">{{ t('settings.diag.attemptsHelp') }}</span>
           </label>
           <label class="knob">
-            <span class="knob-label">{{ t('settings.diag.agentConc') }}</span>
+            <span class="knob-label">{{ t('settings.diag.consecutiveFailures') }}</span>
             <span class="knob-input">
-              <input type="number" v-model.number="diag.agentConc" min="1" max="16" step="1" :disabled="!diag.diagEnabled" />
-              <span class="unit">{{ t('settings.unit.perAgent') }}</span>
+              <input type="number" v-model.number="diag.consecutiveFailures" min="1" max="20" step="1" :disabled="!diag.diagEnabled" />
+              <span class="unit">{{ t('settings.unit.rounds') }}</span>
             </span>
-            <span class="knob-help hint">{{ t('settings.diag.agentConcHelp') }}</span>
+            <span class="knob-help hint">{{ t('settings.diag.consecutiveFailuresHelp') }}</span>
           </label>
           <label class="knob">
-            <span class="knob-label">{{ t('settings.diag.globalConc') }}</span>
+            <span class="knob-label">{{ t('settings.diag.cooldown') }}</span>
             <span class="knob-input">
-              <input type="number" v-model.number="diag.globalConc" min="1" max="64" step="1" :disabled="!diag.diagEnabled" />
-              <span class="unit">{{ t('settings.unit.global') }}</span>
+              <input type="number" v-model.number="diag.cooldownMin" min="1" max="1440" step="1" :disabled="!diag.diagEnabled" />
+              <span class="unit">{{ t('settings.unit.minutes') }}</span>
             </span>
-            <span class="knob-help hint">{{ t('settings.diag.globalConcHelp') }}</span>
+            <span class="knob-help hint">{{ t('settings.diag.cooldownHelp') }}</span>
           </label>
         </div>
-        <label class="toggle-row">
-          <input type="checkbox" v-model="diag.resolveHops" :disabled="!diag.diagEnabled" />
-          <span>{{ t('settings.diag.resolveHops') }}</span>
-          <span class="hint">{{ t('settings.diag.resolveHopsHelp') }}</span>
-        </label>
       </div>
       <div class="panel-foot">
         <button class="btn btn-primary" @click="saveDiag">{{ t('common.save') }}</button>

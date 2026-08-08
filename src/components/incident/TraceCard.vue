@@ -1,10 +1,12 @@
 <script setup lang="ts">
-// One shared traceroute report (DIAG-001). Every incident/alert/condition that
-// references this report reads the identical execution via its report id, so this
-// card is a faithful render of one execution: status, stable reason, detecting
-// Agent, destination, mode/port, timing, reached verdict and the full per-attempt
-// hop table. It deliberately never claims a traceroute proves a root cause or
-// carrier responsibility, and an intermediate `*` (timeout) is not a breakpoint.
+// One traceroute report (DIAG-001). The Agent decided to run it — a target had
+// failed enough consecutive rounds — executed it locally and delivered the result
+// through its outbox, so every report shown here is already finished. This card is
+// a faithful render of one execution: the trigger that caused it, status, stable
+// reason, detecting Agent, destination, mode/port, timing, reached verdict and the
+// full per-attempt hop table. It deliberately never claims a traceroute proves a
+// root cause or carrier responsibility, and an intermediate `*` (timeout) is not a
+// breakpoint.
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type { TraceReportView } from '../../api'
@@ -20,16 +22,25 @@ const {
   tracePathScopeLabel, tracePathScopeDetail, tracePathScopeReading,
 } = useIncidentLabels()
 
+// Why the Agent ran this trace. Nothing on the server asked for it, so without
+// this line a report reads as an execution that appeared from nowhere — and an
+// operator cannot tell a diagnostic of THIS outage from one of a previous blip.
+const triggerNote = computed(() => {
+  const r = props.report
+  if (r.trigger_reason !== 'consecutive_failures' || !r.trigger_streak) return ''
+  return t('incidents.trace.triggerStreak', { n: r.trigger_streak })
+})
+const firstFailedAt = computed(() => props.report.first_failed_at || null)
+
 // Long-form "why it couldn't trace" text, shown when the run ended on a terminal
 // failure reason (report.reason is only set for non-success terminal states).
 const reasonDetail = computed(() => (props.report.reason ? traceReasonDetail(props.report.reason) : ''))
 
 // TCP -> ICMP auto-fallback (the only kind currently supported): the Agent
-// couldn't run the requested TCP traceroute (no admin rights or no grant) and
-// transparently re-ran it as ICMP. report.mode already reflects the mode that
-// actually executed.
+// couldn't run a TCP traceroute (no admin rights or no grant) and planned it as
+// ICMP instead. report.mode already reflects the mode that actually executed.
 const isTcpFallback = computed(() => props.report.fallback_from === 'tcp')
-// "TCP:80" / "TCP" — the mode+port the run was originally requested as.
+// "TCP:80" / "TCP" — the mode+port the run was originally planned as.
 const fallbackFromLabel = computed(() => {
   const r = props.report
   const from = modeLabel(r.fallback_from || '')
@@ -47,9 +58,9 @@ const isSubjectTarget = computed(() => {
   const k = props.report.subject_kind
   return !k || k === 'target'
 })
-// A report that terminalized before dispatch (resolver_unknown, proxy_unknown, …)
-// names its subject KIND but has no destination, because the subject could not be
-// resolved. Its subject note would describe examining an endpoint that was never
+// A report that terminalized before any packet was sent (resolver_unknown,
+// proxy_unknown, …) names its subject KIND but has no destination, because the
+// subject could not be resolved. Its subject note would describe examining an endpoint that was never
 // identified, directly above the reason note explaining that none was — so the
 // note is suppressed there and the reason speaks alone. The badge stays: which
 // KIND of subject went undiagnosed is still worth saying.
@@ -68,11 +79,11 @@ const subjectDetail = computed(() =>
 const pathScoped = computed(
   () => !!props.report.path_scope && props.report.path_scope !== 'direct',
 )
-// The scope note describes the PLAN, so it is true of a queued report and of
-// one that refused to run (a rotated tunnel, a denied permission). How to READ
-// the path is a separate note, because a report with no hops has no path to
-// read — claiming one above a reason saying nothing was sent is exactly the
-// contradiction this split exists to avoid.
+// The scope note describes the PLAN, so it is true even of a report that refused
+// to run (a rotated tunnel, a denied permission). How to READ the path is a
+// separate note, because a report with no hops has no path to read — claiming one
+// above a reason saying nothing was sent is exactly the contradiction this split
+// exists to avoid.
 const pathScopeDetail = computed(() =>
   pathScoped.value ? tracePathScopeDetail(props.report.path_scope) : '',
 )
@@ -85,9 +96,7 @@ const pathScopeReading = computed(() =>
 const fmtDateTime = (s: string | null) =>
   s ? new Date(s).toLocaleString(toDateLocale(locale.value), { hour12: false }) : '—'
 
-const running = computed(() => props.report.status === 'queued' || props.report.status === 'running')
-
-// Elapsed time: start → finish (or start → deadline while still running).
+// Elapsed time: start → finish.
 const duration = computed(() => {
   const r = props.report
   if (!r.started_at) return '—'
@@ -135,10 +144,13 @@ function attemptAt(hop: TraceReportView['hops'][number], idx: number) {
         <span v-if="pathScoped" class="badge neutral" :title="pathScopeDetail || undefined">
           {{ tracePathScopeLabel(report.path_scope) }}
         </span>
+        <span v-if="triggerNote" class="badge neutral">{{ triggerNote }}</span>
         <span v-if="report.reason" class="hint reason">{{ traceReasonLabel(report.reason) }}</span>
       </div>
       <code class="rid" :title="report.report_id">{{ report.report_id }}</code>
     </div>
+
+    <p v-if="triggerNote" class="reason-detail" role="note">{{ t('incidents.trace.triggerNote') }}</p>
 
     <p v-if="fallbackDetail" class="fallback-detail" role="note">{{ fallbackDetail }}</p>
     <p v-if="subjectDetail" class="reason-detail" role="note">{{ subjectDetail }}</p>
@@ -163,13 +175,14 @@ function attemptAt(hop: TraceReportView['hops'][number], idx: number) {
           <span v-if="report.reached && report.reached_ttl" class="hint"> · TTL {{ report.reached_ttl }}</span>
         </dd>
       </div>
-      <div><dt>{{ t('incidents.trace.requestedAt') }}</dt><dd>{{ fmtDateTime(report.requested_at) }}</dd></div>
+      <div v-if="firstFailedAt">
+        <dt>{{ t('incidents.trace.firstFailedAt') }}</dt><dd>{{ fmtDateTime(firstFailedAt) }}</dd>
+      </div>
       <div><dt>{{ t('incidents.trace.startedAt') }}</dt><dd>{{ fmtDateTime(report.started_at) }}</dd></div>
       <div><dt>{{ t('incidents.trace.finishedAt') }}</dt><dd>{{ fmtDateTime(report.completed_at) }}</dd></div>
       <div><dt>{{ t('incidents.trace.duration') }}</dt><dd>{{ duration }}</dd></div>
+      <div><dt>{{ t('incidents.trace.receivedAt') }}</dt><dd>{{ fmtDateTime(report.received_at) }}</dd></div>
     </dl>
-
-    <p v-if="running" class="hint running-note">{{ t('incidents.trace.inProgress') }}</p>
 
     <!-- Semantic hop table: one row per TTL, one column per probe attempt. -->
     <div v-if="report.hops.length" class="table-wrap">
@@ -204,7 +217,7 @@ function attemptAt(hop: TraceReportView['hops'][number], idx: number) {
         </tbody>
       </table>
     </div>
-    <p v-else-if="!running" class="hint">{{ t('incidents.trace.noHops') }}</p>
+    <p v-else class="hint">{{ t('incidents.trace.noHops') }}</p>
 
     <!-- Interpretation disclaimers (always shown). -->
     <p class="disclaimer">{{ t('incidents.trace.starNote') }}</p>
@@ -260,9 +273,6 @@ function attemptAt(hop: TraceReportView['hops'][number], idx: number) {
   margin: 0;
   color: var(--text-dim);
   font-variant-numeric: tabular-nums;
-}
-.running-note {
-  margin: 4px 0;
 }
 /* Prominent-but-calm explanation of why a trace couldn't complete. */
 .reason-detail {

@@ -150,8 +150,6 @@ export function statusTone(status: string): 'ok' | 'warn' | 'open' | 'neutral' {
       return 'ok'
     case 'partial':
     case 'collecting':
-    case 'queued':
-    case 'running':
       return 'warn'
     case 'failed':
     case 'timed_out':
