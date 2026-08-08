@@ -11,17 +11,19 @@ import { useI18n } from 'vue-i18n'
 import { api, type Channel, type MonitorGroup, type ProbeTarget, type ServerInfo } from '../api'
 import { onboarding, loadOnboarding, saveOnboarding } from '../onboarding'
 import {
+  GLOBAL_OPTION,
   REGIONS,
   STUN_SERVERS,
   buildSelection,
   defaultStunServer,
   detectRegion,
-  isRegionID,
+  isSelectionID,
   presetExists,
   presetToTarget,
   type RegionID,
   type RegionPreset,
   type SelectionGroup,
+  type SelectionID,
 } from '../lib/onboardingPresets'
 import EnrollExamples from '../components/EnrollExamples.vue'
 import ChannelEditor from '../components/ChannelEditor.vue'
@@ -53,15 +55,23 @@ const steps = computed<Step[]>(() => [
 const step = ref<Step>('welcome')
 const stepIndex = computed(() => Math.max(0, steps.value.indexOf(step.value)))
 const recommended = ref<RegionID | null>(null)
-const selectedRegions = ref<Set<RegionID>>(new Set())
+const selectedRegions = ref<Set<SelectionID>>(new Set())
 const ready = ref(false)
 
-// Regions with the detected one (if any) pinned to the top and badged "recommended".
-const orderedRegions = computed(() => {
-  if (!recommended.value) return [...REGIONS]
+// The cards in the region step: the regions with the detected one (if any) pinned
+// to the top and badged "recommended", then Global. Global comes last and starts
+// unticked on purpose — its anchors (1.1.1.1 / 8.8.8.8) used to be created for
+// everyone whether or not they wanted them, and this step is where that choice
+// belongs.
+const regionOptions = computed<Array<{ id: SelectionID; labelKey: string }>>(() => {
   const rec = REGIONS.filter((r) => r.id === recommended.value)
   const rest = REGIONS.filter((r) => r.id !== recommended.value)
-  return [...rec, ...rest]
+  const cards: Array<{ id: SelectionID; labelKey: string }> = [...rec, ...rest].map((r) => ({
+    id: r.id,
+    labelKey: r.labelKey,
+  }))
+  cards.push(GLOBAL_OPTION)
+  return cards
 })
 
 onMounted(async () => {
@@ -76,21 +86,22 @@ onMounted(async () => {
   const s = onboarding.state
   if (!s) {
     // Never started: seed in_progress with the detected region pre-selected (if
-    // any — local + global groups are always offered regardless).
+    // any — the local LAN checks are created regardless). Global is left for the
+    // user to tick.
     selectedRegions.value = recommended.value ? new Set([recommended.value]) : new Set()
     step.value = 'welcome'
     await persist('welcome')
   } else if (s.status === 'done') {
     // Re-run from Settings: restart at welcome, keep the previously chosen regions
     // exactly (including an intentionally empty selection).
-    selectedRegions.value = new Set(s.regions.filter(isRegionID))
+    selectedRegions.value = new Set(s.regions.filter(isSelectionID))
     step.value = 'welcome'
     await persist('welcome')
   } else {
     // Resume in-progress: restore the saved regions exactly (an empty set is a
     // deliberate "local checks only" choice, not an absence of one — do NOT
     // silently re-add the detected region) and the saved step if still valid.
-    selectedRegions.value = new Set(s.regions.filter(isRegionID))
+    selectedRegions.value = new Set(s.regions.filter(isSelectionID))
     const resumeStep = steps.value.includes(s.step as Step) ? (s.step as Step) : 'welcome'
     step.value = resumeStep
     // The targets/notify steps' data is normally loaded on entry from the previous
@@ -102,20 +113,28 @@ onMounted(async () => {
   ready.value = true
 })
 
+// What the user ticked, in bucket order (global first, then catalog order) so the
+// selection is stable across renders and re-runs. This is also what gets persisted.
+function selectionList(): SelectionID[] {
+  const regions: SelectionID[] = REGIONS.map((r) => r.id).filter((id) => selectedRegions.value.has(id))
+  return selectedRegions.value.has('global') ? ['global', ...regions] : regions
+}
+
+// The regions alone — for the bits that ask a region question (which STUN server
+// this network can reach), where `global` has no answer to give.
 function selectedRegionList(): RegionID[] {
-  // Preserve catalog order for a stable target list.
   return REGIONS.map((r) => r.id).filter((id) => selectedRegions.value.has(id))
 }
 
 async function persist(nextStep: Step, patch: Record<string, unknown> = {}): Promise<void> {
   try {
-    await saveOnboarding({ status: 'in_progress', step: nextStep, regions: selectedRegionList(), ...patch })
+    await saveOnboarding({ status: 'in_progress', step: nextStep, regions: selectionList(), ...patch })
   } catch {
     // Best-effort: a failed save must not block navigation within the wizard.
   }
 }
 
-function toggleRegion(id: RegionID): void {
+function toggleRegion(id: SelectionID): void {
   const next = new Set(selectedRegions.value)
   if (next.has(id)) next.delete(id)
   else next.add(id)
@@ -145,7 +164,7 @@ async function goBack(): Promise<void> {
 
 async function skipAll(): Promise<void> {
   try {
-    await saveOnboarding({ status: 'done', step: 'done', regions: selectedRegionList() })
+    await saveOnboarding({ status: 'done', step: 'done', regions: selectionList() })
   } catch {
     /* ignore — leaving is more important than recording it */
   }
@@ -154,7 +173,7 @@ async function skipAll(): Promise<void> {
 
 async function finish(): Promise<void> {
   try {
-    await saveOnboarding({ status: 'done', step: 'done', regions: selectedRegionList() })
+    await saveOnboarding({ status: 'done', step: 'done', regions: selectionList() })
   } catch {
     /* ignore */
   }
@@ -181,9 +200,9 @@ function onStunChange(v: string): void {
   stunTouched.value = true
 }
 
-// The monitor-group buckets for the current region selection (local + global +
+// The monitor-group buckets for the current selection (local, global if ticked,
 // one per selected region), each mapping to its own monitor group.
-const selection = computed<SelectionGroup[]>(() => buildSelection(selectedRegionList()))
+const selection = computed<SelectionGroup[]>(() => buildSelection(selectionList()))
 
 interface DisplayPreset {
   preset: RegionPreset
@@ -534,7 +553,7 @@ async function genToken(): Promise<void> {
         <p class="lead">{{ t('setup.regionHint') }}</p>
         <div class="region-grid">
           <label
-            v-for="r in orderedRegions"
+            v-for="r in regionOptions"
             :key="r.id"
             class="region-card"
             :class="{ picked: selectedRegions.has(r.id) }"

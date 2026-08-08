@@ -19,6 +19,8 @@ export default {
     durHours: '{n} 小时',
     durDays: '{n} 天',
     noAgents: '暂无 agent',
+    copied: '已复制',
+    copyUnavailable: '当前环境无法访问剪贴板——请手动选中上方文本复制。',
   },
 
   nav: {
@@ -884,6 +886,13 @@ export default {
     denyUnsupported: '「{scope}」在该平台不受支持',
     denyFailed: '「{scope}」采集失败',
     remediationEnv: '在 agent 上设置 {env} 并重启以授予该权限。',
+    howToFix: '如何解决',
+    failReason: {
+      // Agent 端的运行时失败原因码（telemetry.SnapshotScopeResult.Reason）。
+      rate_limited: '刚刚已经采集过一次，agent 会在几秒内拒绝重复采集——稍等片刻再试即可。',
+      unknown_scope: '该 agent 不认识这个权限范围（多半是版本比控制台旧）。',
+      unsatisfied_dependency: '该范围依赖的基础范围本次没有请求或未获授权。',
+    },
     unsupportedExplain: '该 agent 的平台或构建不支持此项，授予权限也无法采集。',
     tabProcesses: '进程',
     tabConnections: '网络连接',
@@ -1736,6 +1745,7 @@ export default {
     account: {
       title: '账户与安全',
       hint: '修改当前登录账户的密码。保存成功后，其他设备上的登录会话将失效，本次会话保持登录。',
+      hintDesktop: '这台电脑的管理员密码是随机生成、从不展示的，所以无需填写当前密码。在这里设一个密码，就能从手机或另一台电脑登录本控制台（还需在下方「监听地址」里选择局域网）。保存后其他设备上已有的登录会话将失效。',
       current: '当前密码',
       new: '新密码',
       confirm: '确认新密码',
@@ -3147,6 +3157,7 @@ export default {
     tab_openwrt: 'OpenWrt',
     autoUpdate: '启用自动更新',
     autoUpdateHint: '每天检查一次新版本；更新后会自动重启 Agent。',
+    autoUpdateHintOpenwrt: '路由器上由一条 cron 每天检查一次；只有二进制确实更新了才重启 Agent。检查时间固定落在 02:00–05:00 之间（由本机 MAC 决定）。装好后也可以在 LuCI 的「服务 → NetTact」里改。',
     // 路由器的二进制存放位置。OpenWrt 包里不含可执行文件——按设备 CPU 现下——
     // 所以这里决定它落在哪。
     storageTitle: 'Agent 二进制存放位置',
@@ -3170,6 +3181,8 @@ export default {
     manualStep2: '在 LuCI 里打开「服务 → NetTact」，填入服务器地址和注册令牌，选择存储模式并启用。',
     manualStep3: '也可以直接在命令行里配置——和 LuCI 页面写入的是同一组设置。',
     calloutTokenHistory: '一次性令牌会出现在当前命令和 shell 历史中；注册成功后令牌立即失效。',
+    noTokenNotice: '尚未生成接入令牌：下面命令里的 <enrollment-token> 只是占位符，先点上面的「生成接入令牌」。',
+    noTokenCopy: '还没有生成接入令牌，已阻止复制——直接拿这条命令去装 agent 会在注册时失败。请先生成令牌。',
     // 接入时的权限选择。权限在安装时写入配置，装完再改需要改配置文件并重启 Agent。
     permTitle: '权限',
     permHint: '选择这台 Agent 允许采集什么。安装时写入，改动需重启 Agent。',
@@ -3224,7 +3237,7 @@ export default {
     begin: '开始设置',
     privacyNote: '配置仅保存在你的 NetTact 实例中',
     regionTitle: '选择你所在的区域',
-    regionHint: '可多选。我们会为每个选中的区域推荐当地专属的监控目标。已根据你的时区/语言为你预选了推荐区域。',
+    regionHint: '可多选。我们会为每个选中的区域推荐当地专属的监控目标；勾选「全球」会另外加上 1.1.1.1、8.8.8.8 等通用锚点。已根据你的时区/语言为你预选了推荐区域。',
     recommended: '推荐',
     targetsTitle: '推荐的监控目标',
     targetsHint: '勾选你想要创建的监控目标。每个区域会作为独立监控组加入，已存在的目标会被标记且不会重复创建。',

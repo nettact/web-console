@@ -18,9 +18,11 @@ import {
   hasProcessScopes,
   hasConnectionScopes,
 } from '../lib/permissions'
+import { isDesktopFullAccess, type RemediationCategory } from '../lib/agentPermissions'
 import { usePermissionMeta } from '../composables/usePermissionMeta'
+import PermissionRemediationDialog from '../components/status/PermissionRemediationDialog.vue'
 
-const { t } = useI18n()
+const { t, te } = useI18n()
 const { permLabel } = usePermissionMeta()
 
 // This page shows a live, on-demand snapshot of an agent's processes and network
@@ -357,8 +359,38 @@ function denySub(sc: SnapshotScopeResult): string {
     return env ? t('processes.remediationEnv', { env }) : ''
   }
   if (sc.status === 'unsupported') return t('processes.unsupportedExplain')
-  return sc.reason || ''
+  // A runtime failure carries a stable reason code. Translate the ones we know —
+  // an untranslated "rate_limited" in front of an operator explains nothing and
+  // reads like a defect.
+  if (!sc.reason) return ''
+  const key = `processes.failReason.${sc.reason}`
+  return te(key) ? t(key) : sc.reason
 }
+
+// --- how do I fix this? ------------------------------------------------------
+
+// A withheld scope is only ever fixed somewhere else: in the agent's local
+// permission policy, or not at all (a platform gap). Rather than restate that
+// here, hand the scope to the shared remediation dialog — the same one the
+// permission chips open — which explains the cause and gives the exact policy
+// change per run mode. Without this the page named a permission the reader had
+// no path to grant.
+const fixScope = ref<{ id: string; category: RemediationCategory } | null>(null)
+
+// Which scopes this page can offer a fix for. A runtime failure is not one of
+// them: nothing in the permission policy changes it.
+function fixable(sc: SnapshotScopeResult): boolean {
+  return sc.status === 'denied' || sc.status === 'unsupported'
+}
+function openFix(sc: SnapshotScopeResult): void {
+  fixScope.value = {
+    id: sc.scope,
+    category: sc.status === 'unsupported' ? 'unsupported' : 'permission_blocked',
+  }
+}
+// The agent whose policy the dialog is about to describe: an embedded desktop
+// agent has a fixed FullAccess policy, so the env/YAML instructions never apply.
+const fixDesktop = computed(() => isDesktopFullAccess(agent.value?.policy_source))
 
 async function onAgentChange() {
   connFilter.value = null
@@ -406,6 +438,9 @@ onBeforeUnmount(stopPoll)
         <li v-for="sc in denialScopes" :key="sc.scope">
           <span class="deny-head">{{ denyLine(sc) }}</span>
           <span v-if="denySub(sc)" class="deny-sub">{{ denySub(sc) }}</span>
+          <button v-if="fixable(sc)" type="button" class="link-btn deny-fix" @click="openFix(sc)">
+            {{ t('processes.howToFix') }} →
+          </button>
         </li>
       </ul>
     </div>
@@ -413,6 +448,13 @@ onBeforeUnmount(stopPoll)
     <div v-if="!permitted && agent && !denialScopes.length" class="card empty">
       <h3>{{ t('processes.noPermTitle') }}</h3>
       <p class="hint">{{ t('processes.noPermHint') }}</p>
+      <button
+        type="button"
+        class="btn btn-primary"
+        @click="openFix({ scope: 'host.process.basic.read', status: 'denied' })"
+      >
+        {{ t('processes.howToFix') }}
+      </button>
     </div>
 
     <template v-if="permitted">
@@ -602,6 +644,14 @@ onBeforeUnmount(stopPoll)
         </div>
       </section>
     </template>
+    <PermissionRemediationDialog
+      :open="!!fixScope"
+      :perm-id="fixScope?.id || ''"
+      :category="fixScope?.category || 'permission_blocked'"
+      :permissions-env="remediation?.permissions_env"
+      :desktop="fixDesktop"
+      @close="fixScope = null"
+    />
   </main>
 </template>
 
@@ -675,6 +725,14 @@ onBeforeUnmount(stopPoll)
   font-size: 12px;
   color: var(--text-dim);
   margin-top: 2px;
+}
+.deny-fix {
+  display: inline-block;
+  margin-top: 3px;
+  font-size: 12px;
+}
+.empty .btn {
+  margin-top: var(--space-sm);
 }
 .tabs {
   display: flex;

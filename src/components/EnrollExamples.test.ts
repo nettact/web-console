@@ -1,6 +1,6 @@
-import { mount } from '@vue/test-utils'
+import { flushPromises, mount } from '@vue/test-utils'
 import { createI18n } from 'vue-i18n'
-import { beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import en from '../locales/en'
 import EnrollExamples from './EnrollExamples.vue'
@@ -50,10 +50,10 @@ function seedConsoleBase(url = "https://net'tact.example:12450") {
   setConsoleBase(url)
 }
 
-function mountExamples() {
+function mountExamples(token = "to'ken") {
   const i18n = createI18n({ legacy: false, locale: 'en', messages: { en } })
   return mount(EnrollExamples, {
-    props: { token: "to'ken" },
+    props: { token },
     global: { plugins: [i18n] },
   })
 }
@@ -115,6 +115,67 @@ describe('EnrollExamples', () => {
     setConsoleBase('')
     expect(consoleBase.url).toBe(window.location.origin)
     expect(code(mountExamples())).toContain(`-ServerUrl '${window.location.origin}'`)
+  })
+})
+
+describe('EnrollExamples copy button', () => {
+  beforeEach(() => {
+    seedCatalog()
+    seedConsoleBase()
+  })
+
+  afterEach(() => {
+    Reflect.deleteProperty(navigator, 'clipboard')
+    Reflect.deleteProperty(document, 'execCommand')
+  })
+
+  // A plain-HTTP LAN console has no `navigator.clipboard` at all, which is where
+  // the button used to silently do nothing while still saying "Copied". The
+  // command must reach the clipboard by the legacy path, and the confirmation
+  // must only appear when it actually did.
+  it('copies the install command without the async Clipboard API', async () => {
+    let copied = ''
+    ;(document as unknown as { execCommand: unknown }).execCommand = vi.fn(() => {
+      copied = (document.activeElement as HTMLTextAreaElement).value
+      return true
+    })
+    const wrapper = mountExamples()
+
+    await wrapper.find('.copy').trigger('click')
+    await flushPromises()
+
+    expect(copied).toBe(code(wrapper))
+    expect(wrapper.find('.copy').text()).toBe(en.common.copied)
+    expect(wrapper.find('.copy-failed').exists()).toBe(false)
+  })
+
+  // Whatever leaves this screen is pasted into a root shell somewhere else. A
+  // command carrying `<enrollment-token>` fails at enrollment minutes later, so
+  // the copy is refused outright until a token exists.
+  it('refuses to copy an install command that has no token in it', async () => {
+    const exec = vi.fn(() => true)
+    ;(document as unknown as { execCommand: unknown }).execCommand = exec
+    const wrapper = mountExamples('')
+
+    expect(wrapper.text()).toContain(en.onboarding.noTokenNotice)
+
+    await wrapper.find('.copy').trigger('click')
+    await flushPromises()
+
+    expect(exec).not.toHaveBeenCalled()
+    expect(wrapper.find('.copy').text()).toBe(en.agents.copy)
+    expect(wrapper.text()).toContain(en.onboarding.noTokenCopy)
+  })
+
+  it('says so instead of confirming a copy that never happened', async () => {
+    ;(document as unknown as { execCommand: unknown }).execCommand = vi.fn(() => false)
+    const wrapper = mountExamples()
+
+    await wrapper.find('.copy').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.find('.copy').text()).toBe(en.agents.copy)
+    expect(wrapper.find('.copy-failed').text()).toBe(en.common.copyUnavailable)
   })
 })
 
@@ -229,11 +290,17 @@ describe('EnrollExamples OpenWrt tab', () => {
     expect(code(wrapper)).toContain(`--token 'to'"'"'ken'`)
   })
 
-  it('carries no auto-update flag, because a router has no such mechanism', async () => {
+  // The router grew the same promise the other platforms have (a nightly cron in
+  // the package instead of a systemd timer), so the checkbox is offered here too
+  // — and an unticked box has to reach the installer as the ABSENCE of the flag,
+  // which is how it writes auto_update=0 rather than inheriting the last run.
+  it('carries the auto-update flag exactly when the box is ticked', async () => {
     const wrapper = await openOpenwrt(mountExamples())
+    expect(wrapper.find('.auto-update').exists()).toBe(true)
+    expect(code(wrapper)).toContain('--auto-update')
+
+    await wrapper.find<HTMLInputElement>('.auto-update input').setValue(false)
     expect(code(wrapper)).not.toContain('--auto-update')
-    // The checkbox is hidden rather than left there doing nothing.
-    expect(wrapper.find('.auto-update').exists()).toBe(false)
   })
 
   it('states every choice, including the defaults', async () => {

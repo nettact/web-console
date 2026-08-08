@@ -16,6 +16,7 @@
 import { nextTick, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { api, type AgentStatusRow } from '../api'
+import { copyToClipboard } from '../lib/clipboard'
 import EnrollExamples from './EnrollExamples.vue'
 
 const props = defineProps<{ open: boolean; agent: AgentStatusRow | null }>()
@@ -60,16 +61,14 @@ function onKeydown(e: KeyboardEvent) {
 }
 
 async function copyToken() {
-  copyFailed.value = false
-  try {
-    if (!navigator.clipboard?.writeText) throw new Error('clipboard unavailable')
-    await navigator.clipboard.writeText(token.value)
-  } catch {
-    // Plain-HTTP LAN consoles have no clipboard API; the token below is
-    // selectable text, so don't claim a copy that never happened.
+  // Plain-HTTP LAN consoles have no async Clipboard API; the helper falls back
+  // to execCommand, and when even that is refused the token below is selectable
+  // text — so don't claim a copy that never happened.
+  if (!(await copyToClipboard(token.value))) {
     copyFailed.value = true
     return
   }
+  copyFailed.value = false
   copied.value = true
   window.setTimeout(() => (copied.value = false), 1500)
 }
@@ -138,7 +137,7 @@ watch(
               <div class="rd-token">
                 <span class="rd-token-label">{{ t('agents.tokenOnce') }}</span>
                 <code>{{ token }}</code>
-                <button class="link-btn" @click="copyToken">{{ copied ? t('common.saved') : t('agents.copy') }}</button>
+                <button class="link-btn" @click="copyToken">{{ copied ? t('common.copied') : t('agents.copy') }}</button>
               </div>
               <p v-if="copyFailed" class="rd-copy-failed">{{ t('agents.copyUnavailable') }}</p>
               <EnrollExamples class="rd-examples" :token="token" reinstall />

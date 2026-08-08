@@ -16,6 +16,8 @@ export default {
     durHours: '{n} h',
     durDays: '{n} d',
     noAgents: 'No agents',
+    copied: 'Copied',
+    copyUnavailable: 'Clipboard is unavailable here — select the text above and copy it manually.',
   },
 
   nav: {
@@ -888,6 +890,13 @@ export default {
     denyUnsupported: '"{scope}" is not supported on this platform',
     denyFailed: 'Collection failed for "{scope}"',
     remediationEnv: 'Set {env} on the agent and restart to grant this permission.',
+    howToFix: 'How to fix this',
+    failReason: {
+      // Runtime failure codes from the agent (telemetry.SnapshotScopeResult.Reason).
+      rate_limited: 'A snapshot was just collected; the agent refuses another one for a few seconds — try again in a moment.',
+      unknown_scope: 'This agent does not know this permission scope (most likely an older build than the console).',
+      unsatisfied_dependency: 'The base scope this one depends on was not requested or not granted.',
+    },
     unsupportedExplain: "This agent's platform or build does not support it; granting permissions won't help.",
     tabProcesses: 'Processes',
     tabConnections: 'Connections',
@@ -1740,6 +1749,7 @@ export default {
     account: {
       title: 'Account & security',
       hint: 'Change the password of the currently signed-in account. On success, sessions on other devices are signed out while this session stays logged in.',
+      hintDesktop: 'This computer generated its admin password at random and never showed it, so there is no current password to enter. Set one here to sign in to this console from your phone or another computer (you also need to switch Listen address below to your local network). Saving signs out sessions on other devices.',
       current: 'Current password',
       new: 'New password',
       confirm: 'Confirm new password',
@@ -3192,6 +3202,7 @@ export default {
     tab_openwrt: 'OpenWrt',
     autoUpdate: 'Enable automatic updates',
     autoUpdateHint: 'Check daily for a new version and restart the Agent after updating.',
+    autoUpdateHintOpenwrt: "On a router this is a daily cron check; the Agent restarts only when the binary actually changed. It runs at a fixed time between 02:00 and 05:00 derived from the router's MAC. You can change it later under Services → NetTact in LuCI.",
     // Router storage mode. The OpenWrt packages ship no binary — it is
     // downloaded to match the device's CPU — so this is where it lands.
     storageTitle: 'Where the Agent binary lives',
@@ -3244,6 +3255,8 @@ export default {
     permComponentNote: '{n} of these also need the Intel PresentMon service installed on the target machine; the command below installs only the Agent. After installing it, open the permission on the Agent detail page for the install steps.',
     permReplaceNote: 'A permission list REPLACES the default set; it does not add to it.',
     calloutTokenHistory: 'The one-time token appears in this command and your shell history; it becomes invalid immediately after enrollment.',
+    noTokenNotice: 'No enrollment token yet: the <enrollment-token> below is a placeholder. Generate a token first.',
+    noTokenCopy: 'Nothing was copied — there is no enrollment token yet, and this command would fail at enrollment. Generate a token first.',
   },
 
   setup: {
@@ -3270,7 +3283,7 @@ export default {
     begin: 'Start setup',
     privacyNote: 'Configuration stays in your NetTact instance',
     regionTitle: 'Choose your region',
-    regionHint: 'Pick one or more. We recommend region-specific targets for each region you select. The suggested region has been pre-selected from your timezone and language.',
+    regionHint: 'Pick one or more. We recommend region-specific targets for each region you select; ticking Global adds the universal anchors (1.1.1.1, 8.8.8.8). The suggested region has been pre-selected from your timezone and language.',
     recommended: 'Recommended',
     targetsTitle: 'Recommended targets',
     targetsHint: 'Check the targets you want to create. Each region is added as its own monitor group; targets that already exist are marked and will not be duplicated.',

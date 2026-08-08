@@ -7,7 +7,8 @@
 //   - local  — region-independent LAN checks (gateway + NAT); lands in the site's
 //              default monitor group.
 //   - global — universally-reachable anycast anchors (1.1.1.1 / 8.8.8.8) plus a
-//              global site; its own "Global" monitor group, always offered.
+//              global site; its own "Global" monitor group, created only when the
+//              user ticks it in the region step (it is a choice, not a freebie).
 //   - <region> — region-specific anchors; one monitor group per selected region.
 // Splitting regions into their own groups keeps region health independent, and
 // keeps the shared anycast anchors out of every region (they live once, globally).
@@ -23,10 +24,17 @@ import type { ProbeParams, ProbeTarget } from '../api'
 
 export type RegionID = 'cn' | 'hmt' | 'apac' | 'eu' | 'na' | 'sa' | 'me' | 'af'
 
+// What the region step can carry. `global` is not a region — it is the universal
+// anchor bucket offered as one more checkbox next to them, because a user who
+// only cares about their own region should not be handed 1.1.1.1 / 8.8.8.8
+// monitors they never asked for. `local` is deliberately NOT in here: LAN checks
+// are region-independent and always created.
+export type SelectionID = RegionID | 'global'
+
 export type PresetKind = 'icmp' | 'http' | 'dns' | 'gateway' | 'nat'
 
 // The monitor-group bucket a preset belongs to.
-export type GroupKey = 'local' | 'global' | RegionID
+export type GroupKey = 'local' | SelectionID
 
 // One recommended target. `key` is a stable id used for the checkbox model and
 // must be unique across the whole selection.
@@ -120,13 +128,13 @@ export const STUN_SERVERS = [
 // defaultStunServer picks a STUN server the user's network can actually reach: the
 // mainland-China server only when cn is among the chosen regions, else a global one
 // (stun.miwifi.com is unreachable outside the mainland).
-export function defaultStunServer(regionIDs: readonly RegionID[]): string {
-  return regionIDs.includes('cn') ? NAT_STUN_CN : NAT_STUN_GLOBAL
+export function defaultStunServer(ids: readonly SelectionID[]): string {
+  return ids.includes('cn') ? NAT_STUN_CN : NAT_STUN_GLOBAL
 }
 
 // natPresetFor builds the NAT preset with a region-appropriate default STUN server.
-export function natPresetFor(regionIDs: readonly RegionID[]): RegionPreset {
-  return { key: 'nat', kind: 'nat', target: defaultStunServer(regionIDs), nameKey: 'setup.preset_nat', checked: true }
+export function natPresetFor(ids: readonly SelectionID[]): RegionPreset {
+  return { key: 'nat', kind: 'nat', target: defaultStunServer(ids), nameKey: 'setup.preset_nat', checked: true }
 }
 
 // ---- global bucket (universal anycast anchors + a global site) ----
@@ -217,8 +225,23 @@ export const REGIONS: readonly Region[] = [
 
 const REGION_IDS = new Set<string>(REGIONS.map((r) => r.id))
 
+// The one non-region choice in the region step. Shaped like a Region's identity
+// half so the chooser can render it from the same template; it carries no presets
+// of its own because its bucket is assembled by buildSelection.
+export const GLOBAL_OPTION: { id: SelectionID; labelKey: string } = {
+  id: 'global',
+  labelKey: 'setup.group_global',
+}
+
 export function isRegionID(id: string): id is RegionID {
   return REGION_IDS.has(id)
+}
+
+// isSelectionID accepts everything the region step can persist — the regions plus
+// `global`. Used when restoring a saved selection, where anything else (an id from
+// a newer catalog) is dropped.
+export function isSelectionID(id: string): id is SelectionID {
+  return id === 'global' || REGION_IDS.has(id)
 }
 
 export function regionByID(id: string): Region | undefined {
@@ -226,16 +249,18 @@ export function regionByID(id: string): Region | undefined {
 }
 
 // buildSelection returns the monitor-group buckets the wizard will create: the
-// local network group, the global anchors group, and one group per chosen region
-// (in catalog order). Buckets never share a target by construction, so there is no
-// cross-bucket de-duplication to do.
-export function buildSelection(regionIDs: readonly RegionID[]): SelectionGroup[] {
+// local network group, the global anchors group when it was chosen, and one group
+// per chosen region (in catalog order). Buckets never share a target by
+// construction, so there is no cross-bucket de-duplication to do.
+export function buildSelection(ids: readonly SelectionID[]): SelectionGroup[] {
   const out: SelectionGroup[] = [
-    { key: 'local', nameKey: 'setup.group_local', presets: [GATEWAY_PRESET, natPresetFor(regionIDs)] },
-    { key: 'global', nameKey: 'setup.group_global', presets: [...GLOBAL_PRESETS] },
+    { key: 'local', nameKey: 'setup.group_local', presets: [GATEWAY_PRESET, natPresetFor(ids)] },
   ]
+  if (ids.includes('global')) {
+    out.push({ key: 'global', nameKey: 'setup.group_global', presets: [...GLOBAL_PRESETS] })
+  }
   for (const region of REGIONS) {
-    if (regionIDs.includes(region.id)) {
+    if (ids.includes(region.id)) {
       out.push({ key: region.id, nameKey: region.labelKey, presets: region.presets })
     }
   }
@@ -329,8 +354,8 @@ const SA_ZONES = new Set<string>([
 
 // detectRegion guesses a single recommended region from the browser timezone
 // (falling back to language). Returns null when no specific region matches — the
-// local + global groups are always offered regardless, so a null just means "no
-// region pre-selected". Used only to seed the UI (pin + pre-check the suggestion).
+// local checks are created regardless, so a null just means "no region
+// pre-selected". Used only to seed the UI (pin + pre-check the suggestion).
 export function detectRegion(): RegionID | null {
   let tz = ''
   try {

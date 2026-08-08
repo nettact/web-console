@@ -16,6 +16,7 @@ import {
   matchesGroup,
   type AgentFilter,
 } from '../lib/agentStatusPage'
+import { copyToClipboard } from '../lib/clipboard'
 import MonitorStateBadge from '../components/status/MonitorStateBadge.vue'
 import AgentResourceCell from '../components/agents/AgentResourceCell.vue'
 import OsIcon from '../components/agents/OsIcon.vue'
@@ -221,6 +222,8 @@ const groupFilterOptions = computed(() => groups.value.map((g) => ({ id: g.id, n
 async function createToken() {
   error.value = ''
   newToken.value = ''
+  tokenCopied.value = false
+  tokenCopyFailed.value = false
   try {
     const r = await api.createToken(note.value)
     newToken.value = r.token
@@ -230,8 +233,16 @@ async function createToken() {
     error.value = String((e as Error).message || e)
   }
 }
-function copyToken() {
-  navigator.clipboard?.writeText(newToken.value)
+// The token is shown as selectable text next to this button, so a refused copy
+// is recoverable by hand — but only if we say the copy did not happen.
+const tokenCopied = ref(false)
+const tokenCopyFailed = ref(false)
+async function copyToken() {
+  const ok = await copyToClipboard(newToken.value)
+  tokenCopied.value = ok
+  tokenCopyFailed.value = !ok
+  if (!ok) return
+  window.setTimeout(() => (tokenCopied.value = false), 1500)
 }
 type TokenState = 'used' | 'expired' | 'available' | 'revoked'
 function tokenState(tok: EnrollmentToken): TokenState {
@@ -444,16 +455,14 @@ onBeforeUnmount(() => {
                   <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-1.2-1.1-1.7-1.9-3.2" /><path d="M10 21h4M3 3l18 18" /></svg>
                 </button>
                 <!--
-                  Reinstall is offered only while the agent is not connected
-                  (offline, or enrolled but never connected). A live agent is
-                  proof the install works, so the button there is at best noise
-                  and at worst an invitation to tear down a healthy agent next to
-                  the delete button. `presence` is the raw connection fact rather
-                  than the rolled-up `status`, which folds a connected-but-faulty
-                  agent into `abnormal`.
+                  Reinstall is offered for every agent, online or not. It is not
+                  only a repair tool: the local permission policy is applied at
+                  install time, so re-running the installer is how an operator
+                  changes what a healthy, connected agent is allowed to collect.
+                  Gating it on `presence` hid that path behind taking the agent
+                  down first.
                 -->
                 <button
-                  v-if="r.presence !== 'online'"
                   class="icon-action"
                   :title="t('agents.reinstallAction')"
                   @click="reinstallAgent = r"
@@ -507,8 +516,11 @@ onBeforeUnmount(() => {
         <div v-if="newToken" class="token">
           <span class="token-label">{{ t('agents.tokenOnce') }}</span>
           <code>{{ newToken }}</code>
-          <button class="link-btn" @click="copyToken">{{ t('agents.copy') }}</button>
+          <button type="button" class="link-btn" @click="copyToken">
+            {{ tokenCopied ? t('common.copied') : t('agents.copy') }}
+          </button>
         </div>
+        <p v-if="tokenCopyFailed" class="hint warn">{{ t('agents.copyUnavailable') }}</p>
         <EnrollExamples class="enroll-examples" :token="newToken" />
       </div>
       <div class="table-wrap">
@@ -554,6 +566,9 @@ onBeforeUnmount(() => {
   justify-content: space-between;
   gap: var(--space-md);
   margin-bottom: var(--space-md);
+}
+.hint.warn {
+  color: var(--color-warning-text, var(--text-muted));
 }
 .agents-hero h2 {
   min-width: 0;

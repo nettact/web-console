@@ -11,6 +11,7 @@ import type { Issue } from '../api'
 import { toDateLocale } from '../i18n'
 import { agentIndex } from '../agentStatus'
 import { isDesktopFullAccess } from '../lib/agentPermissions'
+import { copyToClipboard } from '../lib/clipboard'
 import PermissionChips from './status/PermissionChips.vue'
 import PermissionRemediationDialog from './status/PermissionRemediationDialog.vue'
 
@@ -46,10 +47,12 @@ function issueEnv(iss: Issue): string {
   return iss.reason === 'permission_blocked' ? iss.remediation?.permissions_env || '' : ''
 }
 const copiedId = ref('')
-function copyEnv(iss: Issue) {
+async function copyEnv(iss: Issue) {
   const env = issueEnv(iss)
   if (!env) return
-  navigator.clipboard?.writeText(env)
+  // Only confirm a copy that actually landed — `navigator.clipboard` is absent
+  // on a plain-HTTP console, so the helper owns the execCommand fallback.
+  if (!(await copyToClipboard(env))) return
   copiedId.value = iss.id
   window.setTimeout(() => {
     if (copiedId.value === iss.id) copiedId.value = ''
@@ -128,7 +131,7 @@ onBeforeUnmount(() => document.removeEventListener('click', onDocClick, true))
               <code class="rem-env">{{ $t('issues.remediationEnv', { env: issueEnv(iss) }) }}</code>
               <div class="rem-actions">
                 <button type="button" class="rem-btn" @click.stop.prevent="copyEnv(iss)">
-                  {{ copiedId === iss.id ? $t('common.saved') : $t('agents.copy') }}
+                  {{ copiedId === iss.id ? $t('common.copied') : $t('agents.copy') }}
                 </button>
               </div>
               <PermissionChips

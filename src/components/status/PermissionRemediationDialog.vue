@@ -45,6 +45,7 @@ import { computed, nextTick, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { usePermissionMeta } from '../../composables/usePermissionMeta'
 import { unsupportedReasonState, type RemediationCategory } from '../../lib/agentPermissions'
+import { copyToClipboard } from '../../lib/clipboard'
 
 const props = defineProps<{
   open: boolean
@@ -182,9 +183,17 @@ const snippet = computed<string>(() => {
 const verifyCommand = 'sc.exe query PresentMonSharedService'
 
 // Local "copied" feedback, one per copy target so the label reverts independently.
-const copiedKey = ref<'' | 'env' | 'snippet' | 'verify'>('')
-function copyText(text: string, key: 'env' | 'snippet' | 'verify') {
-  navigator.clipboard?.writeText(text)
+// `failedKey` is its counterpart: `navigator.clipboard` does not exist on a
+// plain-HTTP console, and when even the helper's fallback is refused the operator
+// has to be told to select the snippet by hand rather than left clicking a button
+// that does nothing.
+type CopyKey = 'env' | 'snippet' | 'verify'
+const copiedKey = ref<'' | CopyKey>('')
+const failedKey = ref<'' | CopyKey>('')
+async function copyText(text: string, key: CopyKey) {
+  const ok = await copyToClipboard(text)
+  failedKey.value = ok ? '' : key
+  if (!ok) return
   copiedKey.value = key
   window.setTimeout(() => {
     if (copiedKey.value === key) copiedKey.value = ''
@@ -225,6 +234,7 @@ watch(
       lastFocused = document.activeElement as HTMLElement | null
       tab.value = 'powershell'
       copiedKey.value = ''
+      failedKey.value = ''
       await nextTick()
       closeBtn.value?.focus()
     } else if (lastFocused) {
@@ -300,10 +310,11 @@ watch(
               <p class="prd-label">{{ t('permRemediation.componentVerifyLabel') }}</p>
               <div class="code-wrap">
                 <button class="copy" @click="copyText(verifyCommand, 'verify')">
-                  {{ copiedKey === 'verify' ? t('common.saved') : t('agents.copy') }}
+                  {{ copiedKey === 'verify' ? t('common.copied') : t('agents.copy') }}
                 </button>
                 <pre><code>{{ verifyCommand }}</code></pre>
               </div>
+              <p v-if="failedKey === 'verify'" class="prd-note warn">{{ t('common.copyUnavailable') }}</p>
               <!-- Only when the cause is a guess: these two paragraphs exist to
                    cover what the guess could not rule out. With a reason in hand
                    they would be speculation about a question already answered. -->
@@ -370,10 +381,11 @@ watch(
                 <p class="prd-label">{{ t('permRemediation.envLabel') }}</p>
                 <div class="code-wrap">
                   <button class="copy" @click="copyText(permissionsEnv || '', 'env')">
-                    {{ copiedKey === 'env' ? t('common.saved') : t('agents.copy') }}
+                    {{ copiedKey === 'env' ? t('common.copied') : t('agents.copy') }}
                   </button>
                   <pre><code>{{ permissionsEnv }}</code></pre>
                 </div>
+                <p v-if="failedKey === 'env'" class="prd-note warn">{{ t('common.copyUnavailable') }}</p>
 
                 <p class="prd-label">{{ t('permRemediation.runModeLabel') }}</p>
                 <div class="tabs" role="tablist">
@@ -391,10 +403,11 @@ watch(
                 </div>
                 <div class="code-wrap">
                   <button class="copy" @click="copyText(snippet, 'snippet')">
-                    {{ copiedKey === 'snippet' ? t('common.saved') : t('agents.copy') }}
+                    {{ copiedKey === 'snippet' ? t('common.copied') : t('agents.copy') }}
                   </button>
                   <pre><code>{{ snippet }}</code></pre>
                 </div>
+                <p v-if="failedKey === 'snippet'" class="prd-note warn">{{ t('common.copyUnavailable') }}</p>
                 <p class="prd-note">{{ t('permRemediation.yamlNote') }}</p>
                 <p class="prd-note strong">{{ t('permRemediation.restartNote') }}</p>
               </template>
@@ -522,6 +535,9 @@ watch(
 }
 .prd-note.strong {
   color: var(--text);
+}
+.prd-note.warn {
+  color: var(--color-warning-text, var(--text-dim));
 }
 .prd-label {
   margin: 14px 0 6px;

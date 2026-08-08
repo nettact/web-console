@@ -3,6 +3,7 @@ import {
   REGIONS,
   STUN_SERVERS,
   buildSelection,
+  isSelectionID,
   defaultStunServer,
   detectRegion,
   natPresetFor,
@@ -66,7 +67,7 @@ describe('catalog invariants', () => {
   it('no DNS preset resolves a host an HTTP preset in the same bucket already hits', () => {
     // A successful HTTP probe already proves the name resolved, so such a DNS
     // probe would be pure duplication.
-    for (const bucket of buildSelection(REGIONS.map((r) => r.id))) {
+    for (const bucket of buildSelection(['global', ...REGIONS.map((r) => r.id)])) {
       const httpHosts = new Set(
         bucket.presets.filter((p) => p.kind === 'http').map((p) => new URL(p.target).hostname),
       )
@@ -101,10 +102,19 @@ describe('NAT STUN server selection', () => {
 })
 
 describe('buildSelection', () => {
-  it('always leads with the local then global buckets', () => {
+  it('always leads with the local bucket', () => {
     const sel = buildSelection([])
-    expect(sel.map((g) => g.key)).toEqual(['local', 'global'])
+    expect(sel.map((g) => g.key)).toEqual(['local'])
     expect(sel[0].presets.map((p) => p.kind)).toEqual(['gateway', 'nat'])
+  })
+
+  // The anycast anchors used to be created for everyone; they are a choice now,
+  // so an unticked Global must leave 1.1.1.1 / 8.8.8.8 out of the wizard entirely.
+  it('adds the global bucket only when global was chosen', () => {
+    expect(buildSelection(['eu']).map((g) => g.key)).not.toContain('global')
+
+    const sel = buildSelection(['global'])
+    expect(sel.map((g) => g.key)).toEqual(['local', 'global'])
     const globalTargets = sel[1].presets.map((p) => p.target)
     expect(globalTargets).toContain('1.1.1.1')
     expect(globalTargets).toContain('8.8.8.8')
@@ -112,7 +122,8 @@ describe('buildSelection', () => {
 
   it('adds one bucket per selected region, in catalog order', () => {
     const sel = buildSelection(['eu', 'cn'])
-    expect(sel.map((g) => g.key)).toEqual(['local', 'global', 'cn', 'eu'])
+    expect(sel.map((g) => g.key)).toEqual(['local', 'cn', 'eu'])
+    expect(buildSelection(['eu', 'global', 'cn']).map((g) => g.key)).toEqual(['local', 'global', 'cn', 'eu'])
   })
 
   it('puts region-specific targets in their own bucket', () => {
@@ -136,7 +147,7 @@ describe('buildSelection', () => {
   })
 
   it('never repeats the anycast anchors across region buckets', () => {
-    const sel = buildSelection(['cn', 'apac', 'eu', 'na'])
+    const sel = buildSelection(['global', 'cn', 'apac', 'eu', 'na'])
     const anchorCount = sel
       .flatMap((g) => g.presets)
       .filter((p) => p.target === '1.1.1.1' || p.target === '8.8.8.8').length
@@ -193,10 +204,20 @@ describe('presetToTarget', () => {
 })
 
 describe('isRegionID', () => {
-  it('recognizes catalog ids and rejects others (including the removed global)', () => {
+  it('recognizes catalog ids and rejects others (global is not a region)', () => {
     expect(isRegionID('cn')).toBe(true)
     expect(isRegionID('global')).toBe(false)
     expect(isRegionID('nope')).toBe(false)
+  })
+})
+
+describe('isSelectionID', () => {
+  // What a persisted selection may contain: the regions plus the global choice.
+  it('accepts regions and global, rejects anything else', () => {
+    expect(isSelectionID('cn')).toBe(true)
+    expect(isSelectionID('global')).toBe(true)
+    expect(isSelectionID('local')).toBe(false)
+    expect(isSelectionID('nope')).toBe(false)
   })
 })
 

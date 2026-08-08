@@ -69,9 +69,14 @@ const consoleSaved = ref(false)
 
 // 账户与安全（AUTH-001）：修改当前登录用户的密码。契约：旧密码错误返回 403
 // （ApiError.status===403，作字段错误展示）；会话缺失/过期返回 401（AuthError，
-// 清空登录态并送回登录页）；新密码强度不符返回 400。desktop 模式下管理员密码随机
-// 生成且从不展示，用户无从填写「当前密码」，故整个面板对 desktop 隐藏（见模板）。
+// 清空登录态并送回登录页）；新密码强度不符返回 400。
 // 强度口径与服务端一致：≥8 个 Unicode 码点且 ≤72 UTF-8 字节。
+//
+// desktop 模式下管理员密码是随机生成且从不展示的：会话由托盘签发的一次性回环令牌
+// 在进程内换取，没人（包括机主）能填出「当前密码」。所以那里不显示当前密码字段，
+// 服务端也不校验它（见 server-core identity.SetPassword 的说明）——否则这台机器的
+// 账号密码将永远无法设置，也就永远无法从手机或另一台电脑登录，而这正是这个面板在
+// desktop 上存在的唯一理由。
 const PW_MIN = 8 // 最少码点数
 const PW_MAX_BYTES = 72 // 最多 UTF-8 字节数（bcrypt 上限）
 const pwCodePoints = (s: string) => [...s].length
@@ -79,10 +84,12 @@ const pwBytes = (s: string) => new TextEncoder().encode(s).length
 const pw = reactive({ old: '', next: '', confirm: '' })
 const pwError = ref('')
 const pwSaved = ref(false)
-// 前端预校验：新密码码点数达标、字节数不超限、两次一致，且当前密码已填。
+// desktop 上没有「当前密码」这一步，其余校验一致。
+const pwNeedsOld = computed(() => serverInfo.value?.listen?.desktop !== true)
+// 前端预校验：新密码码点数达标、字节数不超限、两次一致，且（非 desktop 时）当前密码已填。
 const pwValid = computed(
   () =>
-    pw.old.length > 0 &&
+    (!pwNeedsOld.value || pw.old.length > 0) &&
     pwCodePoints(pw.next) >= PW_MIN &&
     pwBytes(pw.next) <= PW_MAX_BYTES &&
     pw.next === pw.confirm,
@@ -102,7 +109,7 @@ async function savePassword() {
     return
   }
   try {
-    await api.changePassword(pw.old, pw.next)
+    await api.changePassword(pwNeedsOld.value ? pw.old : '', pw.next)
     pw.old = ''
     pw.next = ''
     pw.confirm = ''
@@ -936,12 +943,12 @@ onMounted(() => {
       </div>
     </section>
 
-    <section class="panel" v-if="serverInfo && !serverInfo.listen?.desktop">
+    <section class="panel" v-if="serverInfo">
       <div class="panel-head"><h3>{{ t('settings.account.title') }}</h3></div>
       <div class="panel-body">
-        <p class="hint">{{ t('settings.account.hint') }}</p>
+        <p class="hint">{{ pwNeedsOld ? t('settings.account.hint') : t('settings.account.hintDesktop') }}</p>
         <div class="pw-form">
-          <label class="pw-field">
+          <label class="pw-field" v-if="pwNeedsOld">
             <span class="knob-label">{{ t('settings.account.current') }}</span>
             <input type="password" v-model="pw.old" autocomplete="current-password" />
           </label>
@@ -1689,6 +1696,7 @@ onMounted(() => {
 .channel-workspace { overflow: visible; }
 .channel-workspace-head {
   align-items: center;
+  justify-content: space-between;
   min-height: 4.5rem;
   padding-block: var(--space-sm);
 }

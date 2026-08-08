@@ -6,6 +6,7 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type { PermissionCatalogEntry } from '../api'
+import { copyToClipboard } from '../lib/clipboard'
 import { consoleBase, ensureConsoleBase } from '../consoleBaseUrl'
 import { permissionCatalog, ensurePermissionCatalog } from '../permissionCatalog'
 import { usePermissionMeta } from '../composables/usePermissionMeta'
@@ -50,8 +51,12 @@ const presetLabel = (id: string) => (te(`onboarding.preset_${id}`) ? t(`onboardi
 const presetHint = (id: string) =>
   te(`onboarding.presetHint_${id}`) ? t(`onboarding.presetHint_${id}`) : ''
 
-// A real token when one was just generated, else a clear placeholder.
+// A real token when one was just generated, else a clear placeholder. The
+// placeholder is not a working command: an installer given `<enrollment-token>`
+// gets a 401 at enrollment and leaves an agent that never connects, so every
+// copy path below refuses while it is showing (see copyText).
 const tok = computed(() => props.token || '<enrollment-token>')
+const hasToken = computed(() => !!props.token)
 // The configured console address (Settings → console URL), never this browser's
 // origin: the operator's own address often isn't reachable from the machine the
 // Agent is being installed on.
@@ -169,7 +174,7 @@ const openwrtPolicy = computed(() => policyValue.value || 'default')
 
 const openwrt = computed(
   () =>
-    `wget -O /tmp/nettact-openwrt.sh https://d.nettact.org/agent/openwrt.sh && sh /tmp/nettact-openwrt.sh \\\n  --server-url ${shellQuote(url.value)} \\\n  --token ${shellQuote(tok.value)} \\\n  --mode ${storage.value} \\\n  --permissions ${shellQuote(openwrtPolicy.value)}${props.reinstall ? ' \\\n  --reinstall' : ''}`,
+    `wget -O /tmp/nettact-openwrt.sh https://d.nettact.org/agent/openwrt.sh && sh /tmp/nettact-openwrt.sh \\\n  --server-url ${shellQuote(url.value)} \\\n  --token ${shellQuote(tok.value)} \\\n  --mode ${storage.value} \\\n  --permissions ${shellQuote(openwrtPolicy.value)}${autoUpdate.value ? ' \\\n  --auto-update' : ''}${props.reinstall ? ' \\\n  --reinstall' : ''}`,
 )
 
 const snippet = computed(() => {
@@ -244,9 +249,30 @@ uci commit nettact${
     }`,
 )
 
+// "Copied" is only shown when the clipboard actually took the text. On a
+// plain-HTTP LAN console the async Clipboard API does not exist and the helper
+// falls back to execCommand; if even that is refused, say so instead of flashing
+// a confirmation over an unchanged clipboard — the command below is selectable.
+//
+// Before a token exists the copy is refused outright rather than handing over a
+// command with `<enrollment-token>` in it. Copying is the last thing that happens
+// on this screen: whatever leaves it is pasted into a root shell on another
+// machine, and a placeholder there fails at enrollment, minutes later, somewhere
+// the operator is no longer looking.
 const copiedKey = ref('')
+const failedKey = ref('')
+const noTokenKey = ref('')
 async function copyText(text: string, key: string) {
-  await navigator.clipboard?.writeText(text)
+  if (!hasToken.value) {
+    copiedKey.value = ''
+    failedKey.value = ''
+    noTokenKey.value = key
+    return
+  }
+  noTokenKey.value = ''
+  const ok = await copyToClipboard(text)
+  failedKey.value = ok ? '' : key
+  if (!ok) return
   copiedKey.value = key
   window.setTimeout(() => {
     if (copiedKey.value === key) copiedKey.value = ''
@@ -275,17 +301,20 @@ onMounted(() => {
       </button>
     </div>
 
-    <label v-if="tab !== 'openwrt'" class="auto-update">
+    <!-- Offered on every platform, the router included: there the installer
+         writes a UCI flag and the package runs a nightly cron check, which is
+         the same promise by different machinery. -->
+    <label class="auto-update">
       <input v-model="autoUpdate" type="checkbox" />
       <span>
         <strong>{{ $t('onboarding.autoUpdate') }}</strong>
-        <small>{{ $t('onboarding.autoUpdateHint') }}</small>
+        <small>{{ tab === 'openwrt' ? $t('onboarding.autoUpdateHintOpenwrt') : $t('onboarding.autoUpdateHint') }}</small>
       </span>
     </label>
 
     <!-- Where the downloaded binary lives. Router-only: nothing on the other
          platforms downloads itself at every boot. -->
-    <section v-else class="perm-picker">
+    <section v-if="tab === 'openwrt'" class="perm-picker">
       <div class="perm-head">
         <strong>{{ $t('onboarding.storageTitle') }}</strong>
         <small>{{ $t('onboarding.storageHint') }}</small>
@@ -378,12 +407,16 @@ onMounted(() => {
       </p>
     </section>
 
+    <p v-if="!hasToken" class="no-token" role="status">{{ $t('onboarding.noTokenNotice') }}</p>
+
     <div class="code-wrap">
-      <button class="copy" @click="copyText(snippet, 'cmd')">
-        {{ copiedKey === 'cmd' ? $t('common.saved') : $t('agents.copy') }}
+      <button type="button" class="copy" @click="copyText(snippet, 'cmd')">
+        {{ copiedKey === 'cmd' ? $t('common.copied') : $t('agents.copy') }}
       </button>
       <pre><code>{{ snippet }}</code></pre>
     </div>
+    <p v-if="noTokenKey === 'cmd'" class="no-token" role="alert">{{ $t('onboarding.noTokenCopy') }}</p>
+    <p v-else-if="failedKey === 'cmd'" class="copy-failed">{{ $t('common.copyUnavailable') }}</p>
 
     <!-- The same install by hand. Collapsed, because the command above is the
          primary path; the documentation link is not, so it stays visible. -->
@@ -406,11 +439,13 @@ onMounted(() => {
         <li>
           <p>{{ $t('onboarding.manualStep1') }}</p>
           <div class="code-wrap">
-            <button class="copy" @click="copyText(manualInstall, 'manual1')">
-              {{ copiedKey === 'manual1' ? $t('common.saved') : $t('agents.copy') }}
+            <button type="button" class="copy" @click="copyText(manualInstall, 'manual1')">
+              {{ copiedKey === 'manual1' ? $t('common.copied') : $t('agents.copy') }}
             </button>
             <pre><code>{{ manualInstall }}</code></pre>
           </div>
+          <p v-if="noTokenKey === 'manual1'" class="no-token" role="alert">{{ $t('onboarding.noTokenCopy') }}</p>
+          <p v-else-if="failedKey === 'manual1'" class="copy-failed">{{ $t('common.copyUnavailable') }}</p>
         </li>
         <li>
           <p>{{ $t('onboarding.manualStep2') }}</p>
@@ -418,11 +453,13 @@ onMounted(() => {
         <li>
           <p>{{ $t('onboarding.manualStep3') }}</p>
           <div class="code-wrap">
-            <button class="copy" @click="copyText(manualConfigure, 'manual2')">
-              {{ copiedKey === 'manual2' ? $t('common.saved') : $t('agents.copy') }}
+            <button type="button" class="copy" @click="copyText(manualConfigure, 'manual2')">
+              {{ copiedKey === 'manual2' ? $t('common.copied') : $t('agents.copy') }}
             </button>
             <pre><code>{{ manualConfigure }}</code></pre>
           </div>
+          <p v-if="noTokenKey === 'manual2'" class="no-token" role="alert">{{ $t('onboarding.noTokenCopy') }}</p>
+          <p v-else-if="failedKey === 'manual2'" class="copy-failed">{{ $t('common.copyUnavailable') }}</p>
         </li>
       </ol>
     </section>
@@ -623,6 +660,18 @@ onMounted(() => {
 .copy:hover {
   color: var(--text);
   border-color: var(--border-strong);
+}
+.copy-failed {
+  margin: 0;
+  font-size: 12px;
+  color: var(--color-warning-text, var(--text-dim));
+  line-height: 1.55;
+}
+.no-token {
+  margin: 0;
+  font-size: 12.5px;
+  color: var(--color-warning-text, var(--text-dim));
+  line-height: 1.55;
 }
 pre {
   margin: 0;
