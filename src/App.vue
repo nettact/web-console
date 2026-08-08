@@ -80,7 +80,6 @@ const nav = [
   { to: '/', label: 'nav.overview' },
   { to: '/incidents', label: 'nav.incidents' },
   { to: '/host-metrics', label: 'nav.hostMetrics' },
-  { to: '/game-performance', label: 'nav.gamePerformance' },
   { to: '/target-status', label: 'nav.targetStatus' },
   { to: '/processes', label: 'nav.processes' },
   { to: '/agents', label: 'nav.agents' },
@@ -201,12 +200,6 @@ async function dismissUpdate(): Promise<void> {
               stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
               <path d="M3 3v18h18" />
               <path d="M7 14l3.5-4 3 3L21 6" />
-            </svg>
-            <!-- 游戏性能：手柄 -->
-            <svg v-else-if="n.to === '/game-performance'" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-              stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M6.5 7h11a4.5 4.5 0 0 1 4.4 5.4l-.9 4.3A2.6 2.6 0 0 1 18.5 19c-1 0-1.7-.6-2.3-1.3L15 16H9l-1.2 1.7C7.2 18.4 6.5 19 5.5 19a2.6 2.6 0 0 1-2.5-2.3l-.9-4.3A4.5 4.5 0 0 1 6.5 7Z" />
-              <path d="M8 10.5v3M6.5 12h3M15.5 11h.01M17.5 13h.01" />
             </svg>
             <!-- 事故 -->
             <svg v-else-if="n.to === '/incidents'" viewBox="0 0 24 24" fill="none" stroke="currentColor"

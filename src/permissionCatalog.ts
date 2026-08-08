@@ -22,6 +22,16 @@ export const permissionCatalog = reactive<{
 
 let inflight: Promise<void> | null = null
 
+// Game monitoring is paused: its console entry points are hidden, so the chooser
+// must not be able to grant a permission nothing in the UI can show the result
+// of. The catalog is server-sent and the server still publishes these, so the
+// filter lives here — the one place catalog data enters the console — rather
+// than in each picker. Bundles are filtered too: `full` is defined as every
+// compiled permission, which would otherwise reintroduce them behind one radio.
+// Only the authorization pickers read this store; the Agent detail page's
+// read-only permission inventory comes from the agent and is unaffected.
+const isGamePermission = (id: string) => id.startsWith('game.')
+
 export function ensurePermissionCatalog(): Promise<void> {
   if (permissionCatalog.loaded) return Promise.resolve()
   if (inflight) return inflight
@@ -30,8 +40,11 @@ export function ensurePermissionCatalog(): Promise<void> {
   inflight = Promise.resolve()
     .then(() => api.permissionCatalog())
     .then((c) => {
-      permissionCatalog.permissions = c.permissions || []
-      permissionCatalog.bundles = c.bundles || []
+      permissionCatalog.permissions = (c.permissions || []).filter((p) => !isGamePermission(p.id))
+      permissionCatalog.bundles = (c.bundles || []).map((b) => ({
+        ...b,
+        permissions: (b.permissions || []).filter((id) => !isGamePermission(id)),
+      }))
       permissionCatalog.loaded = true
     })
     .catch(() => {
