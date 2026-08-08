@@ -19,7 +19,14 @@ export const RANGES = [
 // host.temp.sensor.c is the per-sensor detail behind the host.temp.c aggregate:
 // a group fetches one target, so per-sensor targets cannot render here. It stays
 // available through the API until a dedicated sensor view exists.
-export const HIDDEN_KINDS = new Set(['agent.wal_pending', 'host.temp.sensor.c'])
+// host.cpu.cores is inventory, not a measurement — a flat line at the core count
+// is a chart nobody would look at twice. It exists so the server can read a load
+// average per core; see telemetry.HostCPUCores.
+export const HIDDEN_KINDS = new Set([
+  'agent.wal_pending',
+  'host.temp.sensor.c',
+  'host.cpu.cores',
+])
 
 // The server serves raw (unaggregated) samples only for ranges up to 2h; beyond
 // that /metrics returns bucket averages. Categorical CODE_KINDS must never be

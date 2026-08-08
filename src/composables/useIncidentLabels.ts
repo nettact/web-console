@@ -5,6 +5,7 @@
 // trace components so the vocabulary stays in one place.
 import { useI18n } from 'vue-i18n'
 import type { AttributionClue } from '../api'
+import { splitDetectorKey } from '../lib/detection'
 import { useMetricMeta } from './useMetricMeta'
 
 // Comparator → math symbol (locale-independent; a screen-reader label is provided
@@ -102,7 +103,21 @@ export function useIncidentLabels() {
 
     // Which detector reached the verdict. Rendered so a "markedly slower than
     // usual" member is never mistaken for an outage sitting in the same list.
-    detectorLabel: (k: string) => tr(`incidents.detector.${k}`, k),
+    //
+    // The system-status families that watch several things per machine carry
+    // their subject in the key, and it is the subject that makes the label useful
+    // — "disk" among four disks says nothing, "disk · C:" says everything. Mount
+    // points are shown verbatim (they are the operator's own path); the two
+    // network directions get translated words.
+    detectorLabel: (k: string) => {
+      const { family, subject } = splitDetectorKey(k)
+      const base = tr(`incidents.detector.${family}`, family)
+      if (!subject) return base
+      const sub = te(`incidents.detector.subject_${subject}`)
+        ? t(`incidents.detector.subject_${subject}`)
+        : subject
+      return `${base} · ${sub}`
+    },
 
     // INCIDENT-003 attribution: the user-language position label, the one-line
     // sentence ('' when there is no attribution — the caller then falls back to

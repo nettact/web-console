@@ -7,6 +7,7 @@ import {
   type DetectionProfile,
   type DetectionSettingsInput,
   type Channel,
+  type HostDetection,
   type MonitorGroup,
   type ProbeParams,
   type ProbeTarget,
@@ -73,12 +74,6 @@ const isGatewayMode = computed(() => form.kind === 'gateway')
 // timeout_ms, which for them means "per echo", not "per request". They get the
 // labelled per-ping field in the advanced panel instead of the generic timeout.
 const isPingMode = computed(() => form.kind === 'icmp' || form.kind === 'gateway')
-const hostSubject = computed<'whole' | 'disk' | 'wifi'>({
-  get: () => (form.target === 'host' ? 'whole' : form.target === '*' ? 'wifi' : 'disk'),
-  set: (v) => {
-    form.target = v === 'whole' ? 'host' : v === 'wifi' ? '*' : ''
-  },
-})
 const headersText = ref('')
 const error = ref('')
 const saved = ref(false)
@@ -229,8 +224,7 @@ async function loadDetection(id: string) {
 }
 // Runs only after the target itself is saved, because the settings hang off its
 // id (a create has no id until then).
-async function saveDetection(): Promise<boolean> {
-  if (!showDetection.value || !form.id || !detectionChanged()) return true
+async function saveDetection(): Promise<boolean> {  if (!showDetection.value || !form.id || !detectionChanged()) return true
   try {
     const d = await api.updateDetectionSettings(form.id, {
       profile: detection.profile,
@@ -253,6 +247,210 @@ async function saveDetection(): Promise<boolean> {
     return false
   }
 }
+// ---- system-status detection (host anchors) ----
+//
+// A host anchor watches the machines its monitor group covers, and the five
+// families below are the whole of what it can say. Each is a sentence with two
+// blanks — a level and a duration — offered as bounded presets, because the
+// presets are the answer for almost everyone and a free number field invites
+// thresholds nobody can calibrate. "Custom" reveals the raw field for the rest.
+//
+// All five rows are visible at once rather than tucked behind a disclosure: this
+// IS the editor for a host monitor, and a primary editor nobody opens is a
+// feature nobody has.
+//
+// Network is the exception on every count: off by default, no preset levels, and
+// its two directions set independently — a home link's upstream saturates long
+// before its downstream does, and no universal Mbps figure exists to suggest.
+const PCT_PRESETS = [80, 90, 95]
+const DURATION_PRESETS = [60, 300, 900]
+const LOAD_PRESETS = [1.5, 2, 3]
+
+type HostFamilyKey = 'cpu' | 'mem' | 'load' | 'net' | 'disk'
+
+const hostDet = reactive<HostDetection>({
+  target_id: '',
+  cpu: { enabled: true, pct: 90, duration_s: 300 },
+  mem: { enabled: true, pct: 90, duration_s: 300 },
+  load: { enabled: true, per_core: 2, duration_s: 300 },
+  net: { enabled: false, rx_mbps: null, tx_mbps: null, duration_s: 300 },
+  disk: { enabled: true, pct: 90 },
+  revision: 1,
+})
+// Server state as last seen, so an untouched form never PATCHes — and never
+// bumps the revision that resets every running streak — just because the anchor
+// itself was saved.
+const hostDetBaseline = ref('')
+// Whether the anchor's stored thresholds are actually in hand. A NEW anchor has
+// none to fetch, so the defaults above are the truth and it starts ready; an
+// EDIT has to wait, because the panel is bound to those defaults until the
+// response lands and both editing and saving against them would be editing and
+// saving values the operator never chose.
+const hostDetReady = ref(!editingId.value)
+const hostDetError = ref('')
+// Which rows have their level/duration escaped into a free number field. Purely
+// presentational: the stored value is the same either way.
+const hostCustom = reactive<Record<string, boolean>>({})
+
+function hostSnapshot(): string {
+  return JSON.stringify([hostDet, hostNetRaw])
+}
+function hostDetChanged(): boolean {
+  return hostSnapshot() !== hostDetBaseline.value
+}
+// A preset select shows "custom" whenever the stored value is not one of the
+// offered ones, so an anchor configured through the API renders honestly instead
+// of silently snapping to the nearest preset.
+function hostPresetMode(key: HostFamilyKey, field: 'pct' | 'per_core' | 'duration_s', presets: number[]): boolean {
+  const id = `${key}.${field}`
+  if (hostCustom[id]) return false
+  const v = (hostDet[key] as Record<string, unknown>)[field]
+  return typeof v === 'number' && presets.includes(v)
+}
+function hostSetCustom(key: HostFamilyKey, field: string, on: boolean) {
+  hostCustom[`${key}.${field}`] = on
+}
+
+// Durations are seconds on the wire and minutes on screen. A raw 30–3600 second
+// box is exactly the kind of unit the UI conventions say to humanize, and it
+// reads badly next to presets that already say "5 min". A quarter-minute step
+// keeps the whole accepted range reachable (30s is 0.5).
+function hostDurationMinutes(key: HostFamilyKey): number {
+  return Math.round(((hostDet[key] as { duration_s: number }).duration_s / 60) * 100) / 100
+}
+function setHostDurationMinutes(key: HostFamilyKey, minutes: number) {
+  const s = Math.round(Number(minutes) * 60)
+  ;(hostDet[key] as { duration_s: number }).duration_s = Number.isFinite(s) ? s : 0
+}
+
+// Mirrors the server's ranges so a value it would reject is reported here, next
+// to the field that caused it, instead of after a round trip.
+// Only ENABLED families are validated. A family that is switched off has its
+// controls hidden, so refusing to save because of a value inside one would point
+// at a field the user cannot see — and the value is not going to be judged
+// against anything anyway.
+function hostRangeError(): string {
+  if (!isHostMode.value) return ''
+  const pct = (v: number) => Number.isFinite(v) && v > 0 && v <= 100
+  const dur = (v: number) => Number.isInteger(v) && v >= 30 && v <= 3600
+  for (const f of [hostDet.cpu, hostDet.mem] as const) {
+    if (!f.enabled) continue
+    if (!pct(f.pct)) return tr('mform.hostDet.errPct')
+    if (!dur(f.duration_s)) return tr('mform.hostDet.errDuration')
+  }
+  if (hostDet.disk.enabled && !pct(hostDet.disk.pct)) return tr('mform.hostDet.errPct')
+  if (hostDet.load.enabled) {
+    const v = hostDet.load.per_core
+    if (!(Number.isFinite(v) && v > 0 && v <= 100)) return tr('mform.hostDet.errLoad')
+    if (!dur(hostDet.load.duration_s)) return tr('mform.hostDet.errDuration')
+  }
+  if (hostDet.net.enabled) {
+    if (hostNetRawInvalid(hostNetRaw.rx) || hostNetRawInvalid(hostNetRaw.tx)) {
+      return tr('mform.hostDet.errNetRate')
+    }
+    // Enabling the family with neither direction set would be an alert the form
+    // shows as on and the server treats as off.
+    if (!hostNetRate(hostNetRaw.rx) && !hostNetRate(hostNetRaw.tx)) {
+      return tr('mform.hostDet.errNetDirection')
+    }
+    if (!dur(hostDet.net.duration_s)) return tr('mform.hostDet.errDuration')
+  }
+  return ''
+}
+
+// The Mbps fields are held as the raw strings the user typed, not as numbers.
+// Coercing on input would turn "0" and "-5" into null — the same value a blank
+// field has — so validation would see a perfectly valid one-direction setup and
+// the save would succeed while silently discarding what was on screen. The
+// conversion happens once, on the way into the PATCH.
+const hostNetRaw = reactive({ rx: '', tx: '' })
+
+// A blank field means "do not alert on this direction", which is null on the
+// wire — not 0, which would be a threshold every link is always above.
+function hostNetRate(raw: string): number | null {
+  const s = String(raw ?? '').trim()
+  if (!s) return null
+  const n = Number(s)
+  return Number.isFinite(n) ? n : null
+}
+// "" is a deliberate blank; anything else has to be a positive number.
+function hostNetRawInvalid(raw: string): boolean {
+  const s = String(raw ?? '').trim()
+  if (!s) return false
+  const n = Number(s)
+  return !Number.isFinite(n) || n <= 0
+}
+
+function applyHostDetection(d: HostDetection) {
+  hostDet.target_id = d.target_id
+  hostDet.cpu = { ...d.cpu }
+  hostDet.mem = { ...d.mem }
+  hostDet.load = { ...d.load }
+  hostDet.net = { ...d.net }
+  hostDet.disk = { ...d.disk }
+  hostDet.revision = d.revision
+  hostDet.updated_at = d.updated_at
+  hostNetRaw.rx = d.net.rx_mbps == null ? '' : String(d.net.rx_mbps)
+  hostNetRaw.tx = d.net.tx_mbps == null ? '' : String(d.net.tx_mbps)
+  // Anything the server holds that is not one of our presets opens its row's
+  // custom field, so the number stays visible and editable.
+  hostSetCustom('cpu', 'pct', !PCT_PRESETS.includes(d.cpu.pct))
+  hostSetCustom('mem', 'pct', !PCT_PRESETS.includes(d.mem.pct))
+  hostSetCustom('disk', 'pct', !PCT_PRESETS.includes(d.disk.pct))
+  hostSetCustom('load', 'per_core', !LOAD_PRESETS.includes(d.load.per_core))
+  hostSetCustom('cpu', 'duration_s', !DURATION_PRESETS.includes(d.cpu.duration_s))
+  hostSetCustom('mem', 'duration_s', !DURATION_PRESETS.includes(d.mem.duration_s))
+  hostSetCustom('load', 'duration_s', !DURATION_PRESETS.includes(d.load.duration_s))
+  hostSetCustom('net', 'duration_s', !DURATION_PRESETS.includes(d.net.duration_s))
+  hostDetBaseline.value = hostSnapshot()
+  hostDetReady.value = true
+  hostDetError.value = ''
+}
+
+async function loadHostDetection(id: string) {
+  try {
+    applyHostDetection(await api.hostDetection(id))
+    hostDetReady.value = true
+  } catch (e) {
+    // NOT "not materialized yet": the endpoint answers an unconfigured anchor
+    // with the defaults, so a rejection here is a real read failure (401, 500,
+    // a dropped connection). Treating it as a successful default snapshot would
+    // show every family at 90%/5min and then, on the first edit, PATCH those
+    // invented values over whatever the operator had actually stored. Say so and
+    // keep the panel out of use instead.
+    hostDetError.value = tr('mform.hostDet.loadErr', { err: String((e as Error).message || e) })
+  }
+}
+
+// Written only once the anchor's id exists, exactly like the probe sensitivity.
+async function saveHostDetection(): Promise<boolean> {
+  if (!isHostMode.value || !form.id || !hostDetChanged()) return true
+  try {
+    applyHostDetection(
+      await api.updateHostDetection(form.id, {
+        cpu: { ...hostDet.cpu },
+        mem: { ...hostDet.mem },
+        load: { ...hostDet.load },
+        net: {
+          ...hostDet.net,
+          rx_mbps: hostNetRate(hostNetRaw.rx),
+          tx_mbps: hostNetRate(hostNetRaw.tx),
+        },
+        disk: { ...hostDet.disk },
+      }),
+    )
+    return true
+  } catch (e) {
+    error.value = tr('mform.hostDet.saveErr', { err: String((e as Error).message || e) })
+    return false
+  }
+}
+
+// The families this anchor is actually watching, for the summary line and the
+// post-save toast.
+const hostEnabledFamilies = computed<HostFamilyKey[]>(() =>
+  (['cpu', 'mem', 'load', 'net', 'disk'] as HostFamilyKey[]).filter((k) => hostDet[k].enabled),
+)
 
 const defaultGroupId = computed(() => groups.value.find((g) => g.is_default)?.id || '')
 
@@ -341,6 +539,7 @@ async function loadAll() {
     applyKindDefaults()
     headersText.value = headersToText(form.params!.headers)
     if (showDetection.value) await loadDetection(editingId.value)
+    if (isHostMode.value) await loadHostDetection(editingId.value)
     return
   }
   if (!form.group_id) {
@@ -417,6 +616,17 @@ async function save() {
     error.value = detErr
     return
   }
+  // Saving a host anchor whose thresholds never loaded would PATCH the panel's
+  // defaults over the stored ones, so the save is refused rather than narrowed.
+  if (isHostMode.value && !hostDetReady.value) {
+    error.value = hostDetError.value || tr('mform.hostDet.loading')
+    return
+  }
+  const hostErr = hostRangeError()
+  if (hostErr) {
+    error.value = hostErr
+    return
+  }
   // An unhonorable proxy pin is rejected by the server (and would make the monitor
   // un-runnable rather than direct), so it is caught here where the field that caused
   // it is visible.
@@ -456,20 +666,26 @@ async function save() {
     // Sensitivity hangs off the target's id, so it is written only once that id
     // exists — right after the target itself was saved.
     const detectionOK = await saveDetection()
+    // Same reason, same moment: the thresholds hang off the anchor's id.
+    const hostOK = await saveHostDetection()
     // A save-time finding keeps the form open so the user sees it: which in-scope
     // agents cannot run this monitor, or a sensitivity write that failed. A clean
     // save goes straight back to the list, with the outcome carried in a toast.
     const warning = res.warnings.find((wgn) => wgn.monitor_id === form.id) ?? null
     saveWarning.value = warning
-    if (!warning && detectionOK) {
+    if (!warning && detectionOK && hostOK) {
       pushToast({
         tone: 'info',
         title: tr('mform.saved'),
         body: showDetection.value
           ? tr('mform.savedDetectionOn', { fail: detection.fail_rounds, recover: detection.recover_rounds })
-          : undefined,
+          : hostEnabledFamilies.value.length
+            ? tr('mform.hostDet.savedOn', {
+                families: hostEnabledFamilies.value.map((k) => tr(`monitoring.hostFam.${k}`)).join(' · '),
+              })
+            : tr('mform.hostDet.savedOff'),
       })
-      if (showDetection.value && !hasChannels.value) {
+      if ((showDetection.value || hostEnabledFamilies.value.length > 0) && !hasChannels.value) {
         pushToast({ tone: 'warn', title: tr('mform.savedNoChannels') })
       }
       router.push('/monitoring')
@@ -546,23 +762,10 @@ onMounted(loadAll)
             <span>{{ tr('mform.displayName') }}</span>
             <input v-model="form.name" :placeholder="tr('mform.displayNamePlaceholder')" />
           </label>
-          <!-- host: guided subject selector instead of a free-text target -->
-          <template v-if="isHostMode">
-            <label class="field">
-              <span>{{ tr('mform.hostSubject') }}</span>
-              <select v-model="hostSubject">
-                <option value="whole">{{ tr('mform.hostSubjectWhole') }}</option>
-                <option value="disk">{{ tr('mform.hostSubjectDisk') }}</option>
-                <option value="wifi">{{ tr('mform.hostSubjectWifi') }}</option>
-              </select>
-            </label>
-            <label class="field" v-if="hostSubject === 'disk'">
-              <span>{{ tr('mform.hostMountLabel') }}</span>
-              <input v-model="form.target" :placeholder="tr('mform.hostMountPlaceholder')" />
-            </label>
-            <p class="hint tiny wide" v-if="hostSubject === 'disk'">{{ tr('mform.hostMountHint') }}</p>
-            <p class="hint tiny wide" v-else-if="hostSubject === 'wifi'">{{ tr('mform.hostWifiHint') }}</p>
-          </template>
+          <!-- host: nothing to point at. A host anchor watches the whole machine
+               of every Agent its monitor group covers, so what it watches is
+               chosen in the system-status panel below, not here. -->
+          <p class="hint tiny wide" v-if="isHostMode">{{ tr('mform.hostScopeHint') }}</p>
           <!-- gateway: no free-text target — pick an optional NIC, else default -->
           <template v-else-if="isGatewayMode">
             <label class="field wide">
@@ -801,6 +1004,217 @@ onMounted(loadAll)
             </div>
           </div>
         </details>
+      </section>
+
+      <!-- System-status detection: the whole of what a host anchor does. Every
+           family is visible at once — this IS the editor, and an editor behind a
+           disclosure is a feature nobody finds. -->
+      <section class="panel" v-if="isHostMode">
+        <div class="panel-head"><h3>{{ tr('mform.hostDet.title') }}</h3></div>
+        <p class="hint panel-hint">{{ tr('mform.hostDet.intro') }}</p>
+        <!-- Until the anchor's stored thresholds are in hand the panel is bound to
+             the defaults, so editing it would edit values nobody chose and saving
+             it would write them over the real ones. -->
+        <p v-if="hostDetError" class="hint panel-hint err">{{ hostDetError }}</p>
+        <p v-else-if="!hostDetReady" class="hint panel-hint">{{ tr('mform.hostDet.loading') }}</p>
+        <div v-else class="panel-body host-det">
+          <!-- CPU / memory: the same sentence with a different noun. -->
+          <div v-for="fam in (['cpu', 'mem'] as const)" :key="fam" class="host-row">
+            <label class="check-row">
+              <input type="checkbox" v-model="hostDet[fam].enabled" />
+              <span class="check-text"><strong>{{ tr(`mform.hostDet.${fam}Title`) }}</strong></span>
+            </label>
+            <p class="host-sentence" v-if="hostDet[fam].enabled">
+              <span>{{ tr(`mform.hostDet.${fam}Lead`) }}</span>
+              <select
+                v-if="hostPresetMode(fam, 'pct', PCT_PRESETS)"
+                :value="hostDet[fam].pct"
+                @change="(e) => {
+                  const v = (e.target as HTMLSelectElement).value
+                  if (v === 'custom') hostSetCustom(fam, 'pct', true)
+                  else hostDet[fam].pct = Number(v)
+                }"
+              >
+                <option v-for="p in PCT_PRESETS" :key="p" :value="p">{{ p }}%</option>
+                <option value="custom">{{ tr('mform.hostDet.custom') }}</option>
+              </select>
+              <span v-else class="host-custom">
+                <input type="number" min="1" max="100" v-model.number="hostDet[fam].pct" /><span>%</span>
+              </span>
+              <span>{{ tr('mform.hostDet.forLead') }}</span>
+              <select
+                v-if="hostPresetMode(fam, 'duration_s', DURATION_PRESETS)"
+                :value="hostDet[fam].duration_s"
+                @change="(e) => {
+                  const v = (e.target as HTMLSelectElement).value
+                  if (v === 'custom') hostSetCustom(fam, 'duration_s', true)
+                  else hostDet[fam].duration_s = Number(v)
+                }"
+              >
+                <option v-for="d in DURATION_PRESETS" :key="d" :value="d">
+                  {{ tr('mform.hostDet.minutes', { n: d / 60 }) }}
+                </option>
+                <option value="custom">{{ tr('mform.hostDet.custom') }}</option>
+              </select>
+              <span v-else class="host-custom">
+                <input
+                  type="number" min="0.5" max="60" step="0.5"
+                  :value="hostDurationMinutes(fam)"
+                  @input="(e) => setHostDurationMinutes(fam, Number((e.target as HTMLInputElement).value))"
+                />
+                <span>{{ tr('mform.hostDet.minutesUnit') }}</span>
+              </span>
+            </p>
+          </div>
+
+          <!-- Load is per core, so one setting reads correctly on any machine. -->
+          <div class="host-row">
+            <label class="check-row">
+              <input type="checkbox" v-model="hostDet.load.enabled" />
+              <span class="check-text">
+                <strong>{{ tr('mform.hostDet.loadTitle') }}</strong>
+                <em class="hint tiny">{{ tr('mform.hostDet.loadHint') }}</em>
+              </span>
+            </label>
+            <p class="host-sentence" v-if="hostDet.load.enabled">
+              <span>{{ tr('mform.hostDet.loadLead') }}</span>
+              <select
+                v-if="hostPresetMode('load', 'per_core', LOAD_PRESETS)"
+                :value="hostDet.load.per_core"
+                @change="(e) => {
+                  const v = (e.target as HTMLSelectElement).value
+                  if (v === 'custom') hostSetCustom('load', 'per_core', true)
+                  else hostDet.load.per_core = Number(v)
+                }"
+              >
+                <option v-for="p in LOAD_PRESETS" :key="p" :value="p">{{ p }}</option>
+                <option value="custom">{{ tr('mform.hostDet.custom') }}</option>
+              </select>
+              <span v-else class="host-custom">
+                <input type="number" min="0.1" max="100" step="0.1" v-model.number="hostDet.load.per_core" />
+              </span>
+              <span>{{ tr('mform.hostDet.loadPerCore') }}</span>
+              <span>{{ tr('mform.hostDet.forLead') }}</span>
+              <select
+                v-if="hostPresetMode('load', 'duration_s', DURATION_PRESETS)"
+                :value="hostDet.load.duration_s"
+                @change="(e) => {
+                  const v = (e.target as HTMLSelectElement).value
+                  if (v === 'custom') hostSetCustom('load', 'duration_s', true)
+                  else hostDet.load.duration_s = Number(v)
+                }"
+              >
+                <option v-for="d in DURATION_PRESETS" :key="d" :value="d">
+                  {{ tr('mform.hostDet.minutes', { n: d / 60 }) }}
+                </option>
+                <option value="custom">{{ tr('mform.hostDet.custom') }}</option>
+              </select>
+              <span v-else class="host-custom">
+                <input
+                  type="number" min="0.5" max="60" step="0.5"
+                  :value="hostDurationMinutes('load')"
+                  @input="(e) => setHostDurationMinutes('load', Number((e.target as HTMLInputElement).value))"
+                />
+                <span>{{ tr('mform.hostDet.minutesUnit') }}</span>
+              </span>
+            </p>
+          </div>
+
+          <!-- Disk covers every partition the Agent reports, judged one by one. -->
+          <div class="host-row">
+            <label class="check-row">
+              <input type="checkbox" v-model="hostDet.disk.enabled" />
+              <span class="check-text">
+                <strong>{{ tr('mform.hostDet.diskTitle') }}</strong>
+                <em class="hint tiny">{{ tr('mform.hostDet.diskHint') }}</em>
+              </span>
+            </label>
+            <p class="host-sentence" v-if="hostDet.disk.enabled">
+              <span>{{ tr('mform.hostDet.diskLead') }}</span>
+              <select
+                v-if="hostPresetMode('disk', 'pct', PCT_PRESETS)"
+                :value="hostDet.disk.pct"
+                @change="(e) => {
+                  const v = (e.target as HTMLSelectElement).value
+                  if (v === 'custom') hostSetCustom('disk', 'pct', true)
+                  else hostDet.disk.pct = Number(v)
+                }"
+              >
+                <option v-for="p in PCT_PRESETS" :key="p" :value="p">{{ p }}%</option>
+                <option value="custom">{{ tr('mform.hostDet.custom') }}</option>
+              </select>
+              <span v-else class="host-custom">
+                <input type="number" min="1" max="100" v-model.number="hostDet.disk.pct" /><span>%</span>
+              </span>
+            </p>
+          </div>
+
+          <!-- Network: off by default and free-numeric, because the right figure
+               depends on a link speed nothing here can know. Blank = that
+               direction is not watched. -->
+          <div class="host-row">
+            <label class="check-row">
+              <input type="checkbox" v-model="hostDet.net.enabled" />
+              <span class="check-text">
+                <strong>{{ tr('mform.hostDet.netTitle') }}</strong>
+                <em class="hint tiny">{{ tr('mform.hostDet.netHint') }}</em>
+              </span>
+            </label>
+            <template v-if="hostDet.net.enabled">
+              <div class="form-grid host-net-grid">
+                <label class="field">
+                  <span>{{ tr('mform.hostDet.netRx') }}</span>
+                  <!-- text, not number: a number input coerces through v-model, and
+                       "0" or "-5" would arrive here already indistinguishable from a
+                       blank field — which is exactly the value this must preserve
+                       until validation has had a look at it. -->
+                  <input
+                    type="text" inputmode="decimal" :placeholder="tr('mform.hostDet.netBlank')"
+                    v-model="hostNetRaw.rx" :class="{ invalid: hostNetRawInvalid(hostNetRaw.rx) }"
+                  />
+                </label>
+                <label class="field">
+                  <span>{{ tr('mform.hostDet.netTx') }}</span>
+                  <!-- text, not number: a number input coerces through v-model, and
+                       "0" or "-5" would arrive here already indistinguishable from a
+                       blank field — which is exactly the value this must preserve
+                       until validation has had a look at it. -->
+                  <input
+                    type="text" inputmode="decimal" :placeholder="tr('mform.hostDet.netBlank')"
+                    v-model="hostNetRaw.tx" :class="{ invalid: hostNetRawInvalid(hostNetRaw.tx) }"
+                  />
+                </label>
+              </div>
+              <p class="host-sentence">
+                <span>{{ tr('mform.hostDet.forLead') }}</span>
+                <select
+                  v-if="hostPresetMode('net', 'duration_s', DURATION_PRESETS)"
+                  :value="hostDet.net.duration_s"
+                  @change="(e) => {
+                    const v = (e.target as HTMLSelectElement).value
+                    if (v === 'custom') hostSetCustom('net', 'duration_s', true)
+                    else hostDet.net.duration_s = Number(v)
+                  }"
+                >
+                  <option v-for="d in DURATION_PRESETS" :key="d" :value="d">
+                    {{ tr('mform.hostDet.minutes', { n: d / 60 }) }}
+                  </option>
+                  <option value="custom">{{ tr('mform.hostDet.custom') }}</option>
+                </select>
+                <span v-else class="host-custom">
+                  <input
+                    type="number" min="0.5" max="60" step="0.5"
+                    :value="hostDurationMinutes('net')"
+                    @input="(e) => setHostDurationMinutes('net', Number((e.target as HTMLInputElement).value))"
+                  />
+                  <span>{{ tr('mform.hostDet.minutesUnit') }}</span>
+                </span>
+              </p>
+            </template>
+          </div>
+
+          <p class="hint tiny" v-if="!hostEnabledFamilies.length">{{ tr('mform.hostDet.allOff') }}</p>
+        </div>
       </section>
 
       <!-- Monitor group is the final settings panel for every target type. A
@@ -1050,6 +1464,44 @@ onMounted(loadAll)
 .smart-list {
   margin-top: 2px;
   padding-inline-start: 22px;
+}
+/* System-status rows. Each is a toggle plus a sentence that wraps as a sentence
+   does, so a narrow window breaks between words rather than clipping a control. */
+.host-det {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding-top: 4px;
+  padding-bottom: 14px;
+}
+.host-row + .host-row {
+  border-top: 1px solid var(--border);
+  padding-top: 6px;
+}
+.host-sentence {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin: 0 0 8px;
+  padding-inline-start: 22px;
+  font-size: 13px;
+  color: var(--text);
+}
+.host-sentence select {
+  width: auto;
+  min-width: 92px;
+}
+.host-custom {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.host-custom input {
+  width: 88px;
+}
+.host-net-grid {
+  padding: 2px 0 0 22px;
 }
 .advanced {
   border-top: 1px solid var(--border);

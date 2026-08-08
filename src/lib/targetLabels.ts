@@ -29,12 +29,11 @@ export function typeLabel(t: ProbeTarget, tr: Tr): string {
   }
 }
 
-// Readable subject label. Host anchors carry a metric-series string as their
-// target ("host" for the whole machine, "*" for all wireless adapters, a mount
-// point for disk); gateway carries no user target (shows the chosen NIC).
+// Readable subject label. A host anchor watches the whole machine of every Agent
+// its group covers, so it has no subject to name — the families it watches are
+// shown as chips instead. Gateway carries no user target (shows the chosen NIC).
 export function targetLabel(t: ProbeTarget, tr: Tr): string {
-  if (t.kind === 'host' && t.target === 'host') return tr('monitoring.hostWhole')
-  if (t.kind === 'host' && t.target === '*') return tr('monitoring.hostWifi')
+  if (t.kind === 'host') return tr('monitoring.hostSystem')
   if (t.kind === 'gateway') return t.params?.interface || tr('monitoring.gatewayDefault')
   return t.target
 }

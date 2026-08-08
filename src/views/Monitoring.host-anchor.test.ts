@@ -9,6 +9,7 @@ import Monitoring from './Monitoring.vue'
 
 const apiMock = vi.hoisted(() => ({
   listTargets: vi.fn(), monitorGroups: vi.fn(), agentGroups: vi.fn(), setTargets: vi.fn(),
+  hostDetection: vi.fn(),
 }))
 
 vi.mock('../api', () => ({ api: apiMock }))
@@ -27,21 +28,33 @@ beforeEach(() => {
   targetStatus.error = ''
 })
 
-it('renders host/* as Wi-Fi inside the existing host monitoring type', async () => {
+// A host anchor's row shows which resource families it watches, because every
+// one of them would otherwise read "host" in the target column and say nothing.
+it('renders a host anchor as the families it watches', async () => {
   apiMock.listTargets.mockResolvedValue([{
-    id: 'wifi-anchor', group_id: 'group-default', kind: 'host', name: 'Office Wi-Fi', target: '*', params: {},
+    id: 'host-anchor', group_id: 'group-default', kind: 'host', name: 'Office server', target: 'host', params: {},
     enabled: true,
   }])
   apiMock.agentGroups.mockResolvedValue([])
+  apiMock.hostDetection.mockResolvedValue({
+    target_id: 'host-anchor',
+    cpu: { enabled: true, pct: 90, duration_s: 300 },
+    mem: { enabled: true, pct: 90, duration_s: 300 },
+    load: { enabled: false, per_core: 2, duration_s: 300 },
+    net: { enabled: false, rx_mbps: null, tx_mbps: null, duration_s: 300 },
+    disk: { enabled: true, pct: 90 },
+    revision: 1,
+  })
   const i18n = createI18n({ legacy: false, locale: 'en', messages: { en } })
   const page = mount(Monitoring, {
     global: { plugins: [i18n], stubs: { RouterLink: true } },
   })
   await flushPromises()
 
-  expect(page.text()).toContain('Office Wi-Fi')
+  expect(page.text()).toContain('Office server')
   expect(page.text()).toContain('Host metrics')
-  expect(page.text()).toContain('Wi-Fi (all wireless adapters)')
+  const chips = page.findAll('.fam-chip').map((c) => c.text())
+  expect(chips).toEqual(['CPU', 'Memory', 'Disk'])
 })
 
 describe('authoritative monitor status composition', () => {

@@ -851,12 +851,27 @@ export interface Incident {
 // Which detector reached a verdict. availability and agent_connectivity answer
 // "is it working"; the two degradation keys answer "is it working as well as it
 // usually does" — a different claim, recorded at a lower severity and never
-// merged into an availability incident.
+// merged into an availability incident. The host_* keys answer a third question
+// entirely: is this machine's own CPU / memory / load / network / disk within the
+// limits its operator set.
+//
+// The two host families that watch more than one thing per machine carry their
+// subject after a '|' — 'host_disk|C:', 'host_net|rx'. Split with
+// splitDetectorKey (lib/detection) rather than comparing the whole string.
+export type HostDetectorFamily =
+  | 'host_cpu'
+  | 'host_mem'
+  | 'host_load'
+  | 'host_net'
+  | 'host_disk'
 export type DetectorKey =
   | 'availability'
   | 'agent_connectivity'
   | 'latency_degradation'
   | 'loss_degradation'
+  | HostDetectorFamily
+  | `host_net|${string}`
+  | `host_disk|${string}`
 // A fault signal: one confirmed fault lifecycle for one (agent, target,
 // detector). Every display fact is frozen at confirmation time, so renaming or
 // deleting the target afterwards cannot rewrite what the fault said.
@@ -953,6 +968,10 @@ export interface Fluctuation {
   probe_kind: string
   group_id?: string
   layer: string
+  // Which detector recorded the dip, in the same vocabulary as a signal's. A
+  // host anchor's families all read one collect timestamp, so without this a
+  // CPU dip and a memory dip on the same anchor are indistinguishable.
+  detector_key: DetectorKey
   // fail_rounds of fail_threshold: how many rounds failed, and the threshold they
   // did not reach. Rendered together, they say why no alert fired.
   fail_rounds: number
@@ -1367,6 +1386,66 @@ export interface DetectionSettingsInput {
   icmp_loss_pct: number
   smart_enabled: boolean
   smart_sensitivity: SmartSensitivity
+}
+
+// ---- system-status thresholds (host anchors) ----
+// What a host anchor watches on the machines its monitor group covers. Unlike
+// the probe detectors above, these DO carry a threshold — "the disk is nearly
+// full" is a question only the operator can answer — but that threshold is the
+// only thing they carry: how many readings confirm it, what severity it gets and
+// what it is called are all fixed.
+//
+// A never-configured anchor answers with the defaults below (90% / 5 minutes,
+// network off), so the form renders identically whether or not anyone has
+// touched it. updated_at is absent while it has never been edited.
+export interface HostFamilyPct {
+  enabled: boolean
+  pct: number
+  // How long the reading has to stay at or above pct, in seconds. Stored as a
+  // duration, not a round count, so it keeps its meaning if the collection
+  // cadence ever changes.
+  duration_s: number
+}
+export interface HostFamilyLoad {
+  enabled: boolean
+  // Per logical core, so one setting reads correctly on a 4-core box and a
+  // 64-core one.
+  per_core: number
+  duration_s: number
+}
+export interface HostFamilyNet {
+  enabled: boolean
+  // null = that direction is not alerted at all, which is how upload-only
+  // alerting is expressed on an asymmetric link.
+  rx_mbps: number | null
+  tx_mbps: number | null
+  duration_s: number
+}
+export interface HostFamilyDisk {
+  enabled: boolean
+  // Applies to EVERY mount the Agent reports; each is judged on its own. There is
+  // no duration: a filling disk is not a spike.
+  pct: number
+}
+export interface HostDetection {
+  target_id: string
+  cpu: HostFamilyPct
+  mem: HostFamilyPct
+  load: HostFamilyLoad
+  net: HostFamilyNet
+  disk: HostFamilyDisk
+  revision: number
+  updated_at?: string
+}
+// A PATCH body: every family and every field is optional, and an omitted one
+// keeps its stored value. Sending rx_mbps: null CLEARS that direction — the one
+// way to stop alerting on uploads while keeping downloads watched.
+export type HostDetectionInput = {
+  cpu?: Partial<HostFamilyPct>
+  mem?: Partial<HostFamilyPct>
+  load?: Partial<HostFamilyLoad>
+  net?: Partial<HostFamilyNet>
+  disk?: Partial<HostFamilyDisk>
 }
 
 // ---- historical baselines (ALERT-003) ----
@@ -2379,6 +2458,11 @@ export const api = {
     req<DetectionSettings>('GET', `/api/v1/targets/${encodeURIComponent(targetID)}/detection-settings`),
   updateDetectionSettings: (targetID: string, body: DetectionSettingsInput) =>
     req<DetectionSettings>('PATCH', `/api/v1/targets/${encodeURIComponent(targetID)}/detection-settings`, body),
+  // System-status thresholds for one host anchor.
+  hostDetection: (targetID: string) =>
+    req<HostDetection>('GET', `/api/v1/targets/${encodeURIComponent(targetID)}/host-detection`),
+  updateHostDetection: (targetID: string, body: HostDetectionInput) =>
+    req<HostDetection>('PATCH', `/api/v1/targets/${encodeURIComponent(targetID)}/host-detection`, body),
   // One target's learned baseline as seen from one Agent. metric defaults to the
   // target kind's own judged latency metric.
   targetBaseline: (targetID: string, agentID: string, metric?: string) => {

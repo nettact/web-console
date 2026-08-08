@@ -4,6 +4,7 @@ import { useI18n } from 'vue-i18n'
 import {
   api,
   type AgentGroup,
+  type HostDetection,
   type MonitorGroup,
   type ProbeTarget,
   type TargetStatusRow,
@@ -48,9 +49,47 @@ async function load() {
     targets.value.forEach((t) => {
       if (!t.params) t.params = {}
     })
+    await loadHostFamilies()
   } catch (e) {
     error.value = String((e as Error).message || e)
   }
+}
+
+// A host anchor's row has nothing useful to say in the target column — every one
+// of them reads "host" — so it shows which families it actually watches instead.
+// Fetched per anchor because the thresholds live beside the anchor rather than on
+// it; there are only ever a handful, and a failure just leaves the chips off.
+// Value is the enabled family list, or null while the request is in flight or
+// after it failed. Those two are NOT the same as an anchor that watches nothing:
+// rendering "Watching nothing" for an unknown configuration would report active
+// CPU and disk alerts as switched off.
+const hostFamilies = ref(new Map<string, string[] | null>())
+const HOST_FAMILY_KEYS = ['cpu', 'mem', 'load', 'net', 'disk'] as const
+
+async function loadHostFamilies() {
+  const anchors = targets.value.filter((t) => t.kind === 'host' && t.id)
+  if (!anchors.length) {
+    hostFamilies.value = new Map()
+    return
+  }
+  // Seeded with null so a row says "loading" rather than "nothing" from the
+  // first paint; a failed request simply leaves it that way.
+  const next = new Map<string, string[] | null>(anchors.map((t) => [t.id!, null]))
+  hostFamilies.value = next
+  await Promise.all(
+    anchors.map(async (t) => {
+      try {
+        const d: HostDetection = await api.hostDetection(t.id!)
+        next.set(
+          t.id!,
+          HOST_FAMILY_KEYS.filter((k) => d[k].enabled),
+        )
+      } catch {
+        // Leave this anchor unknown rather than failing the whole page.
+      }
+    }),
+  )
+  hostFamilies.value = new Map(next)
 }
 
 // Targets owned by a group (static membership via group_id).
@@ -199,7 +238,18 @@ onMounted(load)
               <tr>
                 <td class="name-cell" :title="t.name || tr('monitoring.unnamed')">{{ t.name || tr('monitoring.unnamed') }}</td>
                 <td class="type-cell" :title="typeLabel(t, tr)">{{ typeLabel(t, tr) }}</td>
-                <td class="mono target-cell" :title="targetLabel(t, tr)">
+                <td v-if="t.kind === 'host'" class="target-cell">
+                  <span v-if="hostFamilies.get(t.id!) === null || hostFamilies.get(t.id!) === undefined" class="dim">
+                    {{ tr('monitoring.hostFamUnknown') }}
+                  </span>
+                  <span v-else-if="hostFamilies.get(t.id!)!.length" class="host-fams">
+                    <span v-for="k in hostFamilies.get(t.id!)!" :key="k" class="fam-chip">
+                      {{ tr(`monitoring.hostFam.${k}`) }}
+                    </span>
+                  </span>
+                  <span v-else class="dim">{{ tr('monitoring.hostFamNone') }}</span>
+                </td>
+                <td v-else class="mono target-cell" :title="targetLabel(t, tr)">
                   {{ targetLabel(t, tr) }}<span v-if="t.kind === 'tcp' && t.params?.port">:{{ t.params.port }}</span>
                 </td>
                 <td class="status">
@@ -448,6 +498,21 @@ onMounted(load)
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+/* Which resource families a host anchor watches, in place of a target string
+   that would read "host" on every row. */
+.host-fams {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.fam-chip {
+  padding: 1px 6px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  font-size: 11px;
+  line-height: 16px;
+  color: var(--color-ink-2);
 }
 .action-cell {
   white-space: nowrap;

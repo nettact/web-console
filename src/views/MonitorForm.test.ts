@@ -123,7 +123,7 @@ describe('MonitorForm connection quick-add prefill', () => {
     state.route.query = { kind: 'tcp', target: '1.1.1.1', port: '443' }
     const page = await render()
 
-    expect(page.get('h2').text()).toBe('Add host alert')
+    expect(page.get('h2').text()).toBe('Add system status alert')
     expect(page.text()).not.toContain('TCP Port')
     expect(page.find('input[placeholder="443"]').exists()).toBe(false)
   })

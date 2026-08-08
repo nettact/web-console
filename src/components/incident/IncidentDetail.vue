@@ -22,7 +22,7 @@ import {
   type NotificationDelivery,
 } from '../../api'
 import { toDateLocale } from '../../i18n'
-import { isDegradation } from '../../lib/detection'
+import { isDegradation, isHostDetector } from '../../lib/detection'
 import { useIncidentLabels, severityTone } from '../../composables/useIncidentLabels'
 import { useMetricMeta } from '../../composables/useMetricMeta'
 import { usePolling } from '../../composables/usePolling'
@@ -368,9 +368,12 @@ onBeforeUnmount(() => {
               <span class="badge" :class="severityTone(m.severity)">{{ sevLabel(m.severity) }}</span>
               <!-- Degradation members are labelled explicitly. Severity alone does
                    not carry it: "info" says how loud this is, not that the target
-                   is answering fine and merely doing so slowly. -->
+                   is answering fine and merely doing so slowly.
+                   System-status members are labelled for a different reason: one
+                   of four disks being full is only legible if the chip names which
+                   one, and "system status" among network members needs saying. -->
               <span
-                v-if="isDegradation(m.detector_key)"
+                v-if="isDegradation(m.detector_key) || isHostDetector(m.detector_key)"
                 class="badge neutral tiny"
               >{{ detectorLabel(m.detector_key) }}</span>
               <span
