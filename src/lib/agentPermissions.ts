@@ -140,6 +140,14 @@ export interface PermissionBuckets {
 export function bucketAgentPermissions(perms: AgentPermission[]): PermissionBuckets {
   const buckets: PermissionBuckets = { effective: [], notGranted: [], blocked: [], unsupported: [] }
   for (const p of perms) {
+    // Game monitoring is paused: an ungranted game permission must not surface
+    // as an interactive "grant it like this" chip — that is a back door into a
+    // feature whose every other entrance is hidden (the catalog filter in
+    // permissionCatalog.ts covers the enrollment pickers; this covers the
+    // per-agent inventory, which arrives from the API and bypasses that
+    // catalog). An EXISTING grant still shows in its truthful bucket:
+    // hiding what an agent is already allowed to do would misreport policy.
+    if (!p.granted && p.id.startsWith('game.')) continue
     if (p.effective) buckets.effective.push(p.id)
     else if (p.granted) buckets.blocked.push(p.id)
     else if (p.supported) buckets.notGranted.push(p.id)

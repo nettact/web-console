@@ -593,6 +593,10 @@ async function exportPdf() {
               <dt>{{ t('incidents.trace.finishedAt') }}</dt>
               <dd>{{ fmtDateTime(r.completed_at) }}</dd>
             </div>
+            <div v-if="r.received_at">
+              <dt>{{ t('incidents.trace.receivedAt') }}</dt>
+              <dd>{{ fmtDateTime(r.received_at) }}</dd>
+            </div>
             <div>
               <dt>{{ t('incidents.trace.duration') }}</dt>
               <dd>{{ traceElapsed(r) }}</dd>

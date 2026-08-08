@@ -707,7 +707,7 @@ export default {
       receivedAt: 'Received',
       triggerStreak: 'Agent-triggered · {n} consecutive failures',
       triggerNote:
-        'The Agent ran this itself the moment the target stopped answering, and uploaded the result afterwards — so it captures the fault while it was happening, even if the Agent could not reach this server at the time.',
+        'The Agent ran this itself once the target had failed the configured number of consecutive checks, and uploaded the result afterwards — so it captures the fault close to its onset, even if the Agent could not reach this server at the time.',
       ttl: 'TTL',
       attemptN: 'Attempt {n}',
       timeout: 'Timeout',

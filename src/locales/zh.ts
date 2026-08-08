@@ -707,7 +707,7 @@ export default {
       receivedAt: '上报时间',
       triggerStreak: 'Agent 本地触发 · 连续 {n} 次失败',
       triggerNote:
-        '目标停止响应时 Agent 立即自行执行了本次诊断，结果随后上传——因此即使当时 Agent 无法连上本服务器，故障现场也被完整记录了下来。',
+        '目标连续失败达到设定次数后，Agent 自行执行了本次诊断，结果随后上传——因此即使当时 Agent 无法连上本服务器，故障发生之初的现场也被记录了下来。',
       ttl: '跳',
       attemptN: '第 {n} 次',
       timeout: '超时',
