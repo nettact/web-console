@@ -337,6 +337,10 @@ onBeforeUnmount(() => {
           {{ t('incidents.attribution.advisory.no_reference') }}
         </p>
         <dl class="facts">
+          <div>
+            <dt>{{ t('incidents.detail.firstObservedAt') }}</dt>
+            <dd>{{ fmtDateTime(incident.first_observed_at) }}</dd>
+          </div>
           <div><dt>{{ t('incidents.detail.openedAt') }}</dt><dd>{{ fmtDateTime(incident.opened_at) }}</dd></div>
           <div v-if="incident.resolved_at">
             <dt>{{ t('incidents.detail.resolvedAt') }}</dt><dd>{{ fmtDateTime(incident.resolved_at) }}</dd>

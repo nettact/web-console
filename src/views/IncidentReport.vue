@@ -129,7 +129,7 @@ function since(from: string, to: string | null): string {
   return t('incidents.durDays', { n: Math.round(secs / 8640) / 10 })
 }
 const durationText = computed(() =>
-  incident.value ? since(incident.value.opened_at, incident.value.resolved_at) : '',
+  incident.value ? since(incident.value.first_observed_at, incident.value.resolved_at) : '',
 )
 
 function memberStateKey(m: FaultSignal) {
@@ -346,6 +346,10 @@ async function exportPdf() {
           <div>
             <dt>{{ t('incidents.thSuspectedLayer') }}</dt>
             <dd>{{ incident?.attribution ? attributionLabel(incident.attribution) : incident ? layerLabel(incident.suspected_layer) : '—' }}</dd>
+          </div>
+          <div>
+            <dt>{{ t('incidents.detail.firstObservedAt') }}</dt>
+            <dd>{{ fmtDateTime(incident?.first_observed_at ?? null) }}</dd>
           </div>
           <div>
             <dt>{{ t('incidents.detail.openedAt') }}</dt>

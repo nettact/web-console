@@ -34,9 +34,12 @@ let offSSE: (() => void) | undefined
 const fmtDateTime = (s: string | null) =>
   s ? new Date(s).toLocaleString(toDateLocale(locale.value)) : '—'
 
-// duration renders how long a fault lasted (or has lasted), from opened_at.
+// duration renders how long a fault lasted (or has lasted), measured from when
+// the failure actually started rather than from when the server recorded it. The
+// two differ by the whole outage when an agent replays a backlog it buffered
+// through a reboot, which is exactly the case where the number matters.
 function duration(i: Incident): string {
-  return since(i.opened_at, i.resolved_at)
+  return since(i.first_observed_at, i.resolved_at)
 }
 
 function since(from: string, to: string | null): string {
@@ -400,7 +403,7 @@ onBeforeUnmount(() => {
               <td>{{ i.group_name || '—' }}</td>
               <td>{{ i.attribution ? attributionLabel(i.attribution) : layerLabel(i.suspected_layer) }}</td>
               <td class="mono">{{ i.active_member_count }} / {{ i.member_count }}</td>
-              <td class="hint">{{ fmtDateTime(i.opened_at) }}</td>
+              <td class="hint">{{ fmtDateTime(i.first_observed_at) }}</td>
               <td class="hint mono">{{ duration(i) }}</td>
               <td>
                 <span class="badge tiny" :class="notifyState(i).tone">{{ t(notifyState(i).key) }}</span>

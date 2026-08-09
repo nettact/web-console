@@ -577,7 +577,8 @@ export default {
       group: 'Monitor group',
       relatedAlerts: 'Related alerts {active}/{total}',
       abnormalTargets: 'Currently abnormal targets: {n}',
-      openedAt: 'Opened',
+      firstObservedAt: 'First seen',
+      openedAt: 'Recorded',
       resolvedAt: 'Resolved',
       endReason: 'End reason',
       evidenceExpired:

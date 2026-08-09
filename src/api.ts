@@ -845,7 +845,17 @@ export interface Incident {
   // back to the layer wording.
   attribution?: string
   attribution_evidence?: AttributionClue[]
+  // Two different instants, and the difference is the point. opened_at is when
+  // the SERVER recorded the fault; first_observed_at is when it actually
+  // started, from the earliest member's own evidence. They are seconds apart for
+  // live telemetry and an outage apart for a backlog an agent buffered through a
+  // reboot and replayed on reconnect — so lists sort on opened_at (receipt order)
+  // and show start/duration from first_observed_at.
+  //
+  // The server always sends first_observed_at (it falls back to opened_at when a
+  // detector had no evidence time to give), so no consumer needs a fallback.
   opened_at: string
+  first_observed_at: string
   resolved_at: string | null
 }
 // Which detector reached a verdict. availability and agent_connectivity answer

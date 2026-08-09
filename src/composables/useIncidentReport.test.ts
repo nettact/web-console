@@ -90,6 +90,7 @@ const detail = (members: FaultSignal[]): IncidentDetail => ({
     notified_count: 0,
     pending_notify_count: 0,
     opened_at: '2026-08-01T10:00:00Z',
+    first_observed_at: '2026-08-01T10:00:00Z',
     resolved_at: null,
   },
   members,
