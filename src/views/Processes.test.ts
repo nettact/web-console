@@ -4,6 +4,7 @@ import { createI18n } from 'vue-i18n'
 
 import en from '../locales/en'
 import Processes from './Processes.vue'
+import PermissionRemediationDialog from '../components/status/PermissionRemediationDialog.vue'
 import type { Agent, HostSnapshot } from '../api'
 
 const apiMock = vi.hoisted(() => ({
@@ -354,6 +355,76 @@ describe('Processes network-connection filtering', () => {
     const dialog = document.querySelector('.prd-dialog')
     expect(dialog?.textContent).toContain(
       `NETTACT_AGENT_PERMISSIONS=${['probe.icmp', ...PROC_SCOPES, ...CONN_SCOPES].join(',')}`,
+    )
+  })
+
+  it('re-reads the policy on refresh so a just-granted scope takes effect', async () => {
+    // The operator followed the remediation, edited the policy and restarted the
+    // agent. Refresh must pick that up: the record this page loaded still says
+    // the agent serves nothing, so refreshing against it would request nothing.
+    const before: Agent = {
+      ...fullAgent,
+      supported: [...PROC_SCOPES, ...CONN_SCOPES],
+      granted: [],
+      effective: [],
+    }
+    const after: Agent = { ...before, granted: [...PROC_SCOPES], effective: [...PROC_SCOPES] }
+    const page = await render(initialSnapshot, before)
+    expect(apiMock.requestSnapshot).not.toHaveBeenCalled()
+
+    apiMock.agent.mockResolvedValue(after)
+    const refresh = button(page, 'Refresh snapshot')
+    // …and the button has to be reachable in the first place: an agent serving
+    // nothing is exactly the state an operator arrives in to fix it.
+    expect((refresh.element as HTMLButtonElement).disabled).toBe(false)
+    await refresh.trigger('click')
+    await flushPromises()
+    await vi.advanceTimersByTimeAsync(1000)
+    await flushPromises()
+
+    expect(apiMock.requestSnapshot).toHaveBeenCalledWith(after.id, PROC_SCOPES)
+  })
+
+  it('keeps an agent-load failure on screen instead of blanking the page', async () => {
+    apiMock.agents.mockResolvedValue([fullAgent])
+    apiMock.agent.mockRejectedValue(new Error('agent read failed'))
+    const i18n = createI18n({ legacy: false, locale: 'en', messages: { en } })
+    wrapper = mount(Processes, {
+      global: { plugins: [i18n], stubs: { RouterLink: RouterLinkStub } },
+    })
+    await flushPromises()
+    await vi.advanceTimersByTimeAsync(1000)
+    await flushPromises()
+
+    expect(wrapper.get('.err').text()).toContain('agent read failed')
+    expect(apiMock.requestSnapshot).not.toHaveBeenCalled()
+  })
+
+  it('drops the cached inventory before reloading it', async () => {
+    // A stale line can omit grants added since the last load; pasting it would
+    // revoke them. On a failed reload the dialog must fall back to the generic
+    // instruction rather than keep offering the old line.
+    const noneAgent: Agent = {
+      ...fullAgent,
+      supported: [...PROC_SCOPES, ...CONN_SCOPES],
+      granted: ['probe.icmp'],
+      effective: [],
+    }
+    const page = await render(initialSnapshot, noneAgent)
+    await button(page, 'How to fix this').trigger('click')
+    await flushPromises()
+    expect(document.querySelector('.prd-dialog')?.textContent).toContain(
+      'NETTACT_AGENT_PERMISSIONS=',
+    )
+
+    await page.findComponent(PermissionRemediationDialog).vm.$emit('close')
+    await flushPromises()
+    apiMock.agentPermissions.mockRejectedValue(new Error('permissions read failed'))
+    await button(page, 'How to fix this').trigger('click')
+    await flushPromises()
+
+    expect(document.querySelector('.prd-dialog')?.textContent).not.toContain(
+      'NETTACT_AGENT_PERMISSIONS=',
     )
   })
 })

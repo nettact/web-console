@@ -202,6 +202,11 @@ async function requestSnapshot() {
   denialScopes.value = []
   snapshot.value = null
   if (!selected.value) return
+  // A failed agent read already put its own message on screen, and without the
+  // record `requestScopes` is empty — so clearing the error here and returning
+  // below would leave a blank page with a disabled button and no explanation of
+  // why. Only a page that HAS the record gets to reset the error.
+  if (!agent.value) return
   error.value = ''
   const scopes = requestScopes.value
   // Nothing this agent can serve: asking would only have the server hand back the
@@ -433,6 +438,12 @@ const inventory = ref<AgentPermission[]>([])
 async function loadInventory() {
   const id = selected.value
   if (!id) return
+  // Cleared BEFORE the request, not on success: this dialog's whole promise is
+  // that it never shows a policy the operator has already replaced, and keeping
+  // the previous inventory alive across the reload — or across its failure —
+  // breaks exactly that. A stale line can omit grants added since, so pasting
+  // it would revoke them; the generic fallback is the safer answer.
+  inventory.value = []
   try {
     const inv = await api.agentPermissions(id)
     // Guard against a slow response landing after the agent picker moved on.
@@ -509,6 +520,18 @@ async function onAgentChange() {
   await requestSnapshot()
 }
 
+// The refresh button is also the "I applied the fix" button. Granting a scope
+// means editing the agent's policy and restarting it, and the record this page
+// loaded still describes the policy from before that — so refreshing against it
+// would keep requesting the old subset, or request nothing at all and look
+// broken. Re-read the record first; the button therefore stays enabled even
+// when the agent currently serves nothing, because re-checking is precisely
+// what an operator who just granted something needs it to do.
+async function refreshNow() {
+  await refreshAgent()
+  await requestSnapshot()
+}
+
 onMounted(async () => {
   await loadAgents()
   await refreshAgent()
@@ -532,7 +555,7 @@ onBeforeUnmount(stopPoll)
             {{ agentLabel(a) }} ({{ a.platform }}) — {{ a.status }}
           </option>
         </select>
-        <button class="btn" :disabled="loading || !requestScopes.length" @click="requestSnapshot">
+        <button class="btn" :disabled="loading || !agent" @click="refreshNow">
           {{ loading ? t('processes.fetching') : t('processes.refreshSnapshot') }}
         </button>
       </div>
