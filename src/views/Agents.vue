@@ -521,7 +521,7 @@ onBeforeUnmount(() => {
           </button>
         </div>
         <p v-if="tokenCopyFailed" class="hint warn">{{ t('agents.copyUnavailable') }}</p>
-        <EnrollExamples class="enroll-examples" :token="newToken" />
+        <EnrollExamples class="enroll-examples" :token="newToken" @generate="createToken" />
       </div>
       <div class="table-wrap">
         <table class="data-table">

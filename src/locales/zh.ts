@@ -3182,7 +3182,11 @@ export default {
     manualStep2: '在 LuCI 里打开「服务 → NetTact」，填入服务器地址和注册令牌，选择存储模式并启用。',
     manualStep3: '也可以直接在命令行里配置——和 LuCI 页面写入的是同一组设置。',
     calloutTokenHistory: '一次性令牌会出现在当前命令和 shell 历史中；注册成功后令牌立即失效。',
-    noTokenNotice: '尚未生成接入令牌：下面命令里的 <enrollment-token> 只是占位符，先点上面的「生成接入令牌」。',
+    noTokenTitle: '这条命令现在还不能用',
+    noTokenNotice:
+      '命令里的 <enrollment-token> 只是占位符，不是真令牌。拿它去装 agent，会在注册那一步被服务器拒绝，机器也不会出现在列表里。先生成一次性接入令牌，下面的命令会自动带上它。',
+    noTokenAction: '生成接入令牌',
+    noTokenCopyBtn: '需先生成令牌',
     noTokenCopy: '还没有生成接入令牌，已阻止复制——直接拿这条命令去装 agent 会在注册时失败。请先生成令牌。',
     // 接入时的权限选择。权限在安装时写入配置，装完再改需要改配置文件并重启 Agent。
     permTitle: '权限',

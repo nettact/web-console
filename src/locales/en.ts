@@ -3256,7 +3256,11 @@ export default {
     permComponentNote: '{n} of these also need the Intel PresentMon service installed on the target machine; the command below installs only the Agent. After installing it, open the permission on the Agent detail page for the install steps.',
     permReplaceNote: 'A permission list REPLACES the default set; it does not add to it.',
     calloutTokenHistory: 'The one-time token appears in this command and your shell history; it becomes invalid immediately after enrollment.',
-    noTokenNotice: 'No enrollment token yet: the <enrollment-token> below is a placeholder. Generate a token first.',
+    noTokenTitle: 'This command does not work yet',
+    noTokenNotice:
+      'It carries the placeholder <enrollment-token>, not a real one. An agent installed with it is refused at enrollment and never shows up here. Generate a one-time token and the command below picks it up.',
+    noTokenAction: 'Generate token',
+    noTokenCopyBtn: 'Token required',
     noTokenCopy: 'Nothing was copied — there is no enrollment token yet, and this command would fail at enrollment. Generate a token first.',
   },
 

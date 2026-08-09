@@ -30,6 +30,14 @@ const props = withDefaults(defineProps<{ token: string; reinstall?: boolean }>()
   reinstall: false,
 })
 
+// Emitted by the gate below, so "generate a token" is reachable from the place
+// the operator is actually looking — the command — rather than only from a
+// button further up the page. Every screen that can show this component without
+// a token owns a mint action already (Agents → enroll tab, the setup wizard);
+// the reinstall dialog mints one before it renders anything, so the gate never
+// appears there and the unhandled case does not arise.
+const emit = defineEmits<{ (e: 'generate'): void }>()
+
 type Tab = EnrollPlatform
 const tabs: Tab[] = ['windows', 'macos', 'linux', 'docker', 'openwrt']
 const tab = ref<Tab>('windows')
@@ -54,8 +62,11 @@ const presetHint = (id: string) =>
 // A real token when one was just generated, else a clear placeholder. The
 // placeholder is not a working command: an installer given `<enrollment-token>`
 // gets a 401 at enrollment and leaves an agent that never connects, so every
-// copy path below refuses while it is showing (see copyText).
-const tok = computed(() => props.token || '<enrollment-token>')
+// copy path below refuses while it is showing (see copyText), the command is
+// visibly out of service (see .locked), and the installers themselves reject
+// this exact literal with the same advice rather than a bare 401.
+const PLACEHOLDER = '<enrollment-token>'
+const tok = computed(() => props.token || PLACEHOLDER)
 const hasToken = computed(() => !!props.token)
 // The configured console address (Settings → console URL), never this browser's
 // origin: the operator's own address often isn't reachable from the machine the
@@ -279,6 +290,23 @@ async function copyText(text: string, key: string) {
   }, 1500)
 }
 
+// The button says what it will do. "Copy" over a command that cannot be copied
+// invites the click that produces the refusal — which is a worse way to learn
+// this than reading it.
+function copyLabel(key: string) {
+  if (!hasToken.value) return t('onboarding.noTokenCopyBtn')
+  return copiedKey.value === key ? t('common.copied') : t('agents.copy')
+}
+
+// Splits a command around the placeholder so each occurrence can be rendered as
+// a highlight instead of as more command text. Grey `<enrollment-token>` in the
+// middle of a 200-character one-liner reads as just another argument; the whole
+// point of this screen's warning is that this ONE fragment is fake. With a real
+// token there is nothing to split, so the command renders as a single chunk.
+function commandParts(text: string): string[] {
+  return hasToken.value ? [text] : text.split(PLACEHOLDER)
+}
+
 onMounted(() => {
   ensureConsoleBase()
   ensurePermissionCatalog()
@@ -407,13 +435,33 @@ onMounted(() => {
       </p>
     </section>
 
-    <p v-if="!hasToken" class="no-token" role="status">{{ $t('onboarding.noTokenNotice') }}</p>
-
-    <div class="code-wrap">
-      <button type="button" class="copy" @click="copyText(snippet, 'cmd')">
-        {{ copiedKey === 'cmd' ? $t('common.copied') : $t('agents.copy') }}
+    <!-- Everything below is a rehearsal until a token exists: the command
+         carries a placeholder, and pasting it into a root shell fails at
+         enrollment minutes later, on a machine the operator has already walked
+         away from — with nothing to see back here, because no agent enrolled.
+         A one-line hint under a wall of permission checkboxes kept losing that
+         race, so the state gets a block of its own, the mint action sits NEXT
+         to the command it unlocks instead of somewhere above, and the command
+         itself is marked out of service until it is real. -->
+    <section v-if="!hasToken" class="token-gate" role="alert">
+      <svg class="gate-icon" viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M12 3 2.2 20.5h19.6L12 3Z" />
+        <path d="M12 10v4.5M12 17.6h.01" />
+      </svg>
+      <div class="gate-copy">
+        <strong>{{ $t('onboarding.noTokenTitle') }}</strong>
+        <p>{{ $t('onboarding.noTokenNotice') }}</p>
+      </div>
+      <button type="button" class="btn btn-primary gate-action" @click="emit('generate')">
+        {{ $t('onboarding.noTokenAction') }}
       </button>
-      <pre><code>{{ snippet }}</code></pre>
+    </section>
+
+    <div class="code-wrap" :class="{ locked: !hasToken }">
+      <button type="button" class="copy" :class="{ blocked: !hasToken }" @click="copyText(snippet, 'cmd')">
+        {{ copyLabel('cmd') }}
+      </button>
+      <pre><code><template v-for="(part, i) in commandParts(snippet)" :key="i"><mark v-if="i" class="ph">{{ PLACEHOLDER }}</mark>{{ part }}</template></code></pre>
     </div>
     <p v-if="noTokenKey === 'cmd'" class="no-token" role="alert">{{ $t('onboarding.noTokenCopy') }}</p>
     <p v-else-if="failedKey === 'cmd'" class="copy-failed">{{ $t('common.copyUnavailable') }}</p>
@@ -438,9 +486,9 @@ onMounted(() => {
       <ol v-if="showManual" class="manual-steps">
         <li>
           <p>{{ $t('onboarding.manualStep1') }}</p>
-          <div class="code-wrap">
-            <button type="button" class="copy" @click="copyText(manualInstall, 'manual1')">
-              {{ copiedKey === 'manual1' ? $t('common.copied') : $t('agents.copy') }}
+          <div class="code-wrap" :class="{ locked: !hasToken }">
+            <button type="button" class="copy" :class="{ blocked: !hasToken }" @click="copyText(manualInstall, 'manual1')">
+              {{ copyLabel('manual1') }}
             </button>
             <pre><code>{{ manualInstall }}</code></pre>
           </div>
@@ -452,11 +500,11 @@ onMounted(() => {
         </li>
         <li>
           <p>{{ $t('onboarding.manualStep3') }}</p>
-          <div class="code-wrap">
-            <button type="button" class="copy" @click="copyText(manualConfigure, 'manual2')">
-              {{ copiedKey === 'manual2' ? $t('common.copied') : $t('agents.copy') }}
+          <div class="code-wrap" :class="{ locked: !hasToken }">
+            <button type="button" class="copy" :class="{ blocked: !hasToken }" @click="copyText(manualConfigure, 'manual2')">
+              {{ copyLabel('manual2') }}
             </button>
-            <pre><code>{{ manualConfigure }}</code></pre>
+            <pre><code><template v-for="(part, i) in commandParts(manualConfigure)" :key="i"><mark v-if="i" class="ph">{{ PLACEHOLDER }}</mark>{{ part }}</template></code></pre>
           </div>
           <p v-if="noTokenKey === 'manual2'" class="no-token" role="alert">{{ $t('onboarding.noTokenCopy') }}</p>
           <p v-else-if="failedKey === 'manual2'" class="copy-failed">{{ $t('common.copyUnavailable') }}</p>
@@ -644,6 +692,56 @@ onMounted(() => {
 .code-wrap {
   position: relative;
 }
+/* Out of service. The dashed warning border and the dimmed text say the block
+ * is not ready at a glance; `user-select: none` closes the last way to leave
+ * this screen with a placeholder in hand, because the copy button already
+ * refuses and hand-selecting the command was what remained. */
+.code-wrap.locked pre {
+  border-style: dashed;
+  border-color: color-mix(in oklch, var(--color-warning) 55%, var(--border));
+  opacity: 0.72;
+  user-select: none;
+}
+.token-gate {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px 14px;
+  padding: 12px 14px;
+  border: 1px solid color-mix(in oklch, var(--color-warning) 55%, var(--border));
+  border-left-width: 3px;
+  border-radius: var(--radius-sm);
+  background: color-mix(in oklch, var(--color-warning) 12%, var(--surface-2));
+}
+.gate-icon {
+  flex: none;
+  width: 22px;
+  height: 22px;
+  fill: none;
+  stroke: var(--color-warning-text);
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.gate-copy {
+  flex: 1 1 260px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.gate-copy strong {
+  font-size: 13.5px;
+  color: var(--color-warning-text);
+}
+.gate-copy p {
+  margin: 0;
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: var(--text);
+}
+.gate-action {
+  flex: none;
+}
 .copy {
   position: absolute;
   top: 8px;
@@ -660,6 +758,20 @@ onMounted(() => {
 .copy:hover {
   color: var(--text);
   border-color: var(--border-strong);
+}
+/* Still a button — clicking it explains why nothing was copied, which is the
+ * one thing `disabled` could not do. */
+.copy.blocked {
+  color: var(--color-warning-text);
+  border-color: color-mix(in oklch, var(--color-warning) 55%, var(--border));
+}
+/* The one fragment of the command that is fake, marked as such. */
+mark.ph {
+  padding: 0 3px;
+  border-radius: 3px;
+  background: color-mix(in oklch, var(--color-warning) 32%, transparent);
+  color: var(--color-warning-text);
+  font-weight: 700;
 }
 .copy-failed {
   margin: 0;

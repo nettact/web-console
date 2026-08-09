@@ -158,12 +158,13 @@ describe('EnrollExamples copy button', () => {
     const wrapper = mountExamples('')
 
     expect(wrapper.text()).toContain(en.onboarding.noTokenNotice)
+    // The button says so before it is clicked, rather than only after.
+    expect(wrapper.find('.copy').text()).toBe(en.onboarding.noTokenCopyBtn)
 
     await wrapper.find('.copy').trigger('click')
     await flushPromises()
 
     expect(exec).not.toHaveBeenCalled()
-    expect(wrapper.find('.copy').text()).toBe(en.agents.copy)
     expect(wrapper.text()).toContain(en.onboarding.noTokenCopy)
   })
 
@@ -176,6 +177,43 @@ describe('EnrollExamples copy button', () => {
 
     expect(wrapper.find('.copy').text()).toBe(en.agents.copy)
     expect(wrapper.find('.copy-failed').text()).toBe(en.common.copyUnavailable)
+  })
+})
+
+// The failure this guards against is not a copy that goes wrong — it is an
+// operator who never generated a token, ran the command anyway, and is left
+// with a machine that enrolled nowhere and a console that shows nothing. The
+// hint for it therefore has to be impossible to walk past.
+describe('EnrollExamples token gate', () => {
+  beforeEach(() => {
+    seedCatalog()
+    seedConsoleBase()
+  })
+
+  it('blocks the command and offers to mint a token when there is none', async () => {
+    const wrapper = mountExamples('')
+
+    const gate = wrapper.find('.token-gate')
+    expect(gate.exists()).toBe(true)
+    expect(gate.text()).toContain(en.onboarding.noTokenTitle)
+    // The command is marked out of service, and the placeholder is called out
+    // inside it rather than blending into the rest of the arguments.
+    expect(wrapper.find('.code-wrap').classes()).toContain('locked')
+    expect(wrapper.find('pre mark.ph').text()).toBe('<enrollment-token>')
+    // Marking it up must not change the command a reader sees.
+    expect(code(wrapper)).toContain("-Token '<enrollment-token>'")
+
+    await gate.find('.gate-action').trigger('click')
+    expect(wrapper.emitted('generate')).toHaveLength(1)
+  })
+
+  it('gets out of the way once a token exists', () => {
+    const wrapper = mountExamples()
+
+    expect(wrapper.find('.token-gate').exists()).toBe(false)
+    expect(wrapper.find('.code-wrap').classes()).not.toContain('locked')
+    expect(wrapper.find('mark.ph').exists()).toBe(false)
+    expect(wrapper.find('.copy').text()).toBe(en.agents.copy)
   })
 })
 

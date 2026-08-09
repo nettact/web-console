@@ -679,7 +679,7 @@ async function genToken(): Promise<void> {
           <span v-if="enrollToken" class="muted">{{ t('setup.tokenOnce') }}</span>
           <span v-if="enrollError" class="err">{{ enrollError }}</span>
         </div>
-        <EnrollExamples class="enroll-examples" :token="enrollToken" />
+        <EnrollExamples class="enroll-examples" :token="enrollToken" @generate="genToken" />
       </section>
 
       <!-- done -->
