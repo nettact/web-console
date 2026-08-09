@@ -1851,7 +1851,7 @@ export default {
     addAgentHint: '要添加 agent，在下方生成注册令牌，agent 用它自助注册即可。',
     enrollTokens: '注册令牌',
     enrollTitle: '上线新 Agent',
-    notePlaceholder: '备注（可选）',
+    notePlaceholder: '备注（可选，接入后作为设备名称）',
     genToken: '生成令牌',
     tokenOnce: '令牌（仅显示一次）',
     copy: '复制',

@@ -1855,7 +1855,7 @@ export default {
     addAgentHint: 'To add an agent, generate an enrollment token below — the agent self-enrolls with it.',
     enrollTokens: 'Enrollment tokens',
     enrollTitle: 'Bring an agent online',
-    notePlaceholder: 'Note (optional)',
+    notePlaceholder: 'Note (optional — becomes the device name)',
     genToken: 'Generate token',
     tokenOnce: 'Token (shown once)',
     copy: 'Copy',
