@@ -196,7 +196,17 @@ function snapshotErrMsg(e: unknown): string {
 // until it answers. A POST may still return an INLINE DENIAL (request_id null) if
 // the agent's policy changed since the console last read it — handle that without
 // polling.
-async function requestSnapshot() {
+// Every refresh — the button, an agent switch, the first load — is one chain:
+// read the agent record, ask for a snapshot, then poll for the answer. A chain
+// that starts while another is mid-flight must SUPERSEDE it rather than race
+// it, and must not be dropped either (an agent switch that got dropped would
+// leave the previous agent's data on screen under the new agent's name). `poll`
+// holds a single interval id, so two chains both reaching setInterval strand
+// one with nothing able to clear it. Each chain therefore takes a ticket and
+// abandons itself at the next await the moment a newer ticket exists.
+let refreshSeq = 0
+
+async function requestSnapshot(seq: number) {
   stopPoll()
   loading.value = false
   denialScopes.value = []
@@ -204,8 +214,7 @@ async function requestSnapshot() {
   if (!selected.value) return
   // A failed agent read already put its own message on screen, and without the
   // record `requestScopes` is empty — so clearing the error here and returning
-  // below would leave a blank page with a disabled button and no explanation of
-  // why. Only a page that HAS the record gets to reset the error.
+  // below would leave a blank page with no explanation and no retry path.
   if (!agent.value) return
   error.value = ''
   const scopes = requestScopes.value
@@ -216,6 +225,10 @@ async function requestSnapshot() {
   loading.value = true
   try {
     const res = await api.requestSnapshot(selected.value, scopes)
+    if (seq !== refreshSeq) {
+      loading.value = false
+      return // a newer refresh owns the page now
+    }
     if (res.request_id === null) {
       denialScopes.value = (res.scopes || []).filter((s) => s.status !== 'collected')
       loading.value = false
@@ -224,6 +237,10 @@ async function requestSnapshot() {
     const request_id = res.request_id
     let tries = 0
     poll = window.setInterval(async () => {
+      if (seq !== refreshSeq) {
+        stopPoll()
+        return
+      }
       tries++
       try {
         const r = await api.getSnapshot(selected.value)
@@ -516,8 +533,7 @@ async function onAgentChange() {
   // The inventory is per agent; drop the previous one so a "how to fix" click
   // cannot show the old agent's policy line while the new one loads.
   inventory.value = []
-  await refreshAgent()
-  await requestSnapshot()
+  await refreshNow()
 }
 
 // The refresh button is also the "I applied the fix" button. Granting a scope
@@ -526,16 +542,18 @@ async function onAgentChange() {
 // would keep requesting the old subset, or request nothing at all and look
 // broken. Re-read the record first; the button therefore stays enabled even
 // when the agent currently serves nothing, because re-checking is precisely
-// what an operator who just granted something needs it to do.
+// what an operator who just granted something needs it to do — and stays
+// enabled after a failed read, which is when retrying matters most.
 async function refreshNow() {
+  const seq = ++refreshSeq
   await refreshAgent()
-  await requestSnapshot()
+  if (seq !== refreshSeq) return
+  await requestSnapshot(seq)
 }
 
 onMounted(async () => {
   await loadAgents()
-  await refreshAgent()
-  await requestSnapshot()
+  await refreshNow()
 })
 onBeforeUnmount(stopPoll)
 </script>
@@ -555,7 +573,7 @@ onBeforeUnmount(stopPoll)
             {{ agentLabel(a) }} ({{ a.platform }}) — {{ a.status }}
           </option>
         </select>
-        <button class="btn" :disabled="loading || !agent" @click="refreshNow">
+        <button class="btn" :disabled="loading || !selected" @click="refreshNow">
           {{ loading ? t('processes.fetching') : t('processes.refreshSnapshot') }}
         </button>
       </div>
