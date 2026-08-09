@@ -9,6 +9,7 @@ import type { Agent, HostSnapshot } from '../api'
 const apiMock = vi.hoisted(() => ({
   agents: vi.fn(),
   agent: vi.fn(),
+  agentPermissions: vi.fn(),
   requestSnapshot: vi.fn(),
   getSnapshot: vi.fn(),
 }))
@@ -120,6 +121,29 @@ async function render(
 ) {
   apiMock.agents.mockResolvedValue([agent])
   apiMock.agent.mockResolvedValue(agent)
+  // The real inventory lists the WHOLE permission catalog in canonical order and
+  // attaches, per ungranted permission, the dependency-closed line that grants it.
+  // The fixture keeps that shape: anything already granted first, then the eight
+  // snapshot scopes.
+  const inventoryIds = [
+    ...agent.granted.filter((id) => ![...PROC_SCOPES, ...CONN_SCOPES].includes(id)),
+    ...PROC_SCOPES,
+    ...CONN_SCOPES,
+  ]
+  apiMock.agentPermissions.mockResolvedValue({
+    agent_id: agent.id,
+    policy_source: agent.policy_source,
+    policy_hash: agent.policy_hash,
+    permissions: inventoryIds.map((id) => ({
+      id,
+      granted: agent.granted.includes(id),
+      supported: agent.supported.includes(id),
+      effective: agent.effective.includes(id),
+      permissions_env: agent.granted.includes(id)
+        ? undefined
+        : `NETTACT_AGENT_PERMISSIONS=${[...agent.granted, id].join(',')}`,
+    })),
+  })
   apiMock.requestSnapshot.mockResolvedValue({ request_id: snapshot.request_id })
   apiMock.getSnapshot.mockResolvedValue({ snapshot, remediation })
 
@@ -268,10 +292,10 @@ describe('Processes network-connection filtering', () => {
 
     expect(page.findAll('button').some((item) => item.text() === 'View connections')).toBe(false)
     expect(page.find('select#conn-filter').exists()).toBe(false)
-    expect(apiMock.requestSnapshot).toHaveBeenCalledWith('agent-1', [...PROC_SCOPES, ...CONN_SCOPES])
+    expect(apiMock.requestSnapshot).toHaveBeenCalledWith('agent-1', PROC_SCOPES)
   })
 
-  it('requests all desired scopes and renders remediation for a partial grant', async () => {
+  it('asks only for the scopes the agent can serve and lists the rest without the env line', async () => {
     const partialAgent: Agent = {
       ...fullAgent,
       supported: [...PROC_SCOPES, ...CONN_SCOPES],
@@ -281,26 +305,55 @@ describe('Processes network-connection filtering', () => {
     const partialSnapshot: HostSnapshot = {
       ts: initialSnapshot.ts,
       request_id: 'partial',
-      scopes: [
-        { scope: 'host.process.basic.read', status: 'collected' },
-        ...[...PROC_SCOPES.slice(1), ...CONN_SCOPES].map((scope) => ({
-          scope,
-          status: 'denied' as const,
-          reason: 'permission_not_granted',
-        })),
-      ],
+      scopes: [{ scope: 'host.process.basic.read', status: 'collected' }],
       process_total: 1,
       processes: [{ pid: 10, name: 'alpha' }],
     }
-    const env = 'NETTACT_AGENT_PERMISSIONS=host.process.basic.read,host.connection.summary.read'
-    const page = await render(partialSnapshot, partialAgent, {
-      reason: 'permission_blocked',
-      permissions_env: env,
-    })
+    const page = await render(partialSnapshot, partialAgent)
 
-    expect(apiMock.requestSnapshot).toHaveBeenCalledWith('agent-1', [...PROC_SCOPES, ...CONN_SCOPES])
-    expect(page.get('.denial').text()).toContain(env)
-    expect(page.get('.denial').text()).toContain('not granted')
+    expect(apiMock.requestSnapshot).toHaveBeenCalledWith('agent-1', ['host.process.basic.read'])
+    const denial = page.get('.denial')
+    // Every scope that was never asked for is still named…
+    expect(denial.text()).toContain('not granted')
+    expect(denial.findAll('li')).toHaveLength(7)
+    // …but the several-hundred-character policy line is not repeated per row; it
+    // lives in the remediation dialog behind "How to fix this".
+    expect(denial.text()).not.toContain('NETTACT_AGENT_PERMISSIONS')
     expect(page.text()).toContain('alpha')
+  })
+
+  it('never asks the agent when it can serve no snapshot scope at all', async () => {
+    const noneAgent: Agent = {
+      ...fullAgent,
+      supported: [...PROC_SCOPES, ...CONN_SCOPES],
+      granted: [],
+      effective: [],
+    }
+    const page = await render(initialSnapshot, noneAgent)
+
+    expect(apiMock.requestSnapshot).not.toHaveBeenCalled()
+    expect(apiMock.getSnapshot).not.toHaveBeenCalled()
+    // One calm empty state, not eight denial rows.
+    expect(page.find('.denial').exists()).toBe(false)
+    expect(page.get('.empty').text()).toContain('process / connection read permissions')
+  })
+
+  it('hands the dialog one policy line that grants every missing scope', async () => {
+    const noneAgent: Agent = {
+      ...fullAgent,
+      supported: [...PROC_SCOPES, ...CONN_SCOPES],
+      granted: ['probe.icmp'],
+      effective: [],
+    }
+    const page = await render(initialSnapshot, noneAgent)
+    await button(page, 'How to fix this').trigger('click')
+    await flushPromises()
+
+    // The union of the server's per-permission lines: the base grant plus every
+    // scope the page is missing, and no closure worked out in the browser.
+    const dialog = document.querySelector('.prd-dialog')
+    expect(dialog?.textContent).toContain(
+      `NETTACT_AGENT_PERMISSIONS=${['probe.icmp', ...PROC_SCOPES, ...CONN_SCOPES].join(',')}`,
+    )
   })
 })

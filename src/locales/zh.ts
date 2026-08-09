@@ -887,7 +887,6 @@ export default {
     denyDenied: '未授予「{scope}」权限',
     denyUnsupported: '「{scope}」在该平台不受支持',
     denyFailed: '「{scope}」采集失败',
-    remediationEnv: '在 agent 上设置 {env} 并重启以授予该权限。',
     howToFix: '如何解决',
     failReason: {
       // Agent 端的运行时失败原因码（telemetry.SnapshotScopeResult.Reason）。

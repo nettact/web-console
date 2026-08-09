@@ -5,11 +5,11 @@ import { useI18n } from 'vue-i18n'
 import {
   api,
   type Agent,
+  type AgentPermission,
   type ProcessInfo,
   type ConnectionInfo,
   type HostSnapshot,
   type SnapshotScopeResult,
-  type Remediation,
 } from '../api'
 import { fmtBytes } from '../lib/format'
 import { agentLabel } from '../lib/agentLabel'
@@ -28,8 +28,12 @@ const { permLabel } = usePermissionMeta()
 // This page shows a live, on-demand snapshot of an agent's processes and network
 // connections. Nothing is stored server-side: opening the page asks the agent to
 // return its current lists once, and the result is held only in memory. Which
-// columns appear depends on which permission SCOPES the agent actually collected;
-// scopes it could not collect surface in a denial panel.
+// columns appear depends on which permission SCOPES the agent actually collected.
+//
+// It only ever asks for scopes the agent can actually serve. Scopes it cannot are
+// named from the agent's own permission sets, without a request — an agent that
+// serves none of them (the default policy grants no process or connection scope)
+// is a page that talks to nobody.
 const route = useRoute()
 const agents = ref<Agent[]>([])
 const selected = ref<string>('')
@@ -37,10 +41,10 @@ const agent = ref<Agent | null>(null)
 const snapshot = ref<HostSnapshot | null>(null)
 const loading = ref(false)
 const error = ref('')
-// Scopes the agent could not collect this round (denied / unsupported / failed),
-// plus any remediation guidance returned with an inline denial.
+// Scopes the agent WAS asked for and did not return data for (a runtime denial,
+// an unsupported capability, a failed collection). Scopes it was never asked for
+// are `withheld` below — the page knows those are missing before it asks.
 const denialScopes = ref<SnapshotScopeResult[]>([])
-const remediation = ref<Remediation | null>(null)
 const sortKey = ref<'cpu' | 'ram' | 'name'>('cpu')
 const tab = ref<'processes' | 'connections'>('processes')
 type ConnBasis = 'name' | 'pid'
@@ -51,12 +55,9 @@ const connBasis = ref<ConnBasis>('name')
 const connFilter = ref<ConnFilter | null>(null)
 let poll: number | undefined
 
-// Every process/connection snapshot scope. The page always requests the full
-// desired set — not just the agent's effective scopes — so the response carries
-// explicit denied/unsupported results (and the NETTACT_AGENT_PERMISSIONS
-// remediation line) for every scope the agent cannot collect. This covers the
-// common least-privilege case where an agent grants some but not all scopes: the
-// missing scopes must surface in the denial panel, never be silently omitted.
+// Every process/connection snapshot scope, in the order the denial list shows
+// them. Which of these are actually REQUESTED is decided per agent below — this
+// is the desired set, not the asked-for set.
 const ALL_SNAPSHOT_SCOPES = [
   'host.process.basic.read',
   'host.process.owner.read',
@@ -69,9 +70,53 @@ const ALL_SNAPSHOT_SCOPES = [
 ]
 
 const effective = computed(() => agent.value?.effective ?? [])
+const effectiveSet = computed(() => new Set(effective.value))
+const supportedSet = computed(() => new Set(agent.value?.supported ?? []))
 const canProcs = computed(() => hasProcessScopes(effective.value))
 const canConns = computed(() => hasConnectionScopes(effective.value))
 const permitted = computed(() => canProcs.value || canConns.value)
+
+// What this agent is actually asked for. The page used to request the full
+// desired set on purpose, so the response would enumerate every scope the agent
+// cannot collect — but that answer only restates what `effective` already says,
+// and it costs a request to hear it. Worse, the default agent policy grants no
+// process or connection scope at all, so on an ordinary agent EVERY visit fired
+// a request whose only possible outcome was a page-long list of denials. Ask for
+// what can be collected; everything else is `withheld` and is explained locally.
+//
+// `effective` is dependency-closed by the server (a child whose base scope is
+// not effective is pruned from it), so filtering by it can never produce a
+// request that the agent would reject for an unsatisfied dependency.
+const requestScopes = computed(() => ALL_SNAPSHOT_SCOPES.filter((s) => effectiveSet.value.has(s)))
+
+// Scopes deliberately not requested, classified from the agent's own permission
+// sets: a supported one is one policy grant away, an unsupported one is a
+// platform gap no grant fixes.
+const withheld = computed<SnapshotScopeResult[]>(() =>
+  ALL_SNAPSHOT_SCOPES.filter((s) => !effectiveSet.value.has(s)).map((scope) => ({
+    scope,
+    status: supportedSet.value.has(scope) ? ('denied' as const) : ('unsupported' as const),
+  })),
+)
+
+// Every scope this page wanted and did not get, in canonical order: what was
+// withheld up front, overridden by whatever the agent actually reported for the
+// scopes it WAS asked for.
+const unmetScopes = computed<SnapshotScopeResult[]>(() => {
+  const byScope = new Map<string, SnapshotScopeResult>()
+  for (const sc of withheld.value) byScope.set(sc.scope, sc)
+  for (const sc of denialScopes.value) byScope.set(sc.scope, sc)
+  return ALL_SNAPSHOT_SCOPES.map((s) => byScope.get(s)).filter((s): s is SnapshotScopeResult => !!s)
+})
+
+// The denial panel's list. Empty when the agent serves nothing at all — the
+// empty state below is then the whole story, and listing all eight scopes under
+// it would just be that story eight more times. That wall on every visit, on
+// every agent running the default policy (which grants no process or connection
+// scope), is what this page was reporting as an error.
+const missingScopes = computed<SnapshotScopeResult[]>(() =>
+  permitted.value ? unmetScopes.value : [],
+)
 
 // Which permission scopes actually came back with data this round; drives the
 // dynamic columns (a granted-but-uncollected scope shows in the denial panel).
@@ -126,12 +171,17 @@ async function loadAgents() {
   }
 }
 
+// The agent record carries the permission sets that decide what is even worth
+// asking for, so a failure here is not a detail to swallow: without it the page
+// asks for nothing and would otherwise render blank with no explanation.
 async function refreshAgent() {
   if (!selected.value) return
   try {
     agent.value = await api.agent(selected.value)
-  } catch {
+    error.value = ''
+  } catch (e) {
     agent.value = null
+    error.value = String((e as Error).message || e)
   }
 }
 
@@ -143,34 +193,26 @@ function snapshotErrMsg(e: unknown): string {
 }
 
 // Ask the agent for a fresh snapshot of the scopes it can serve, then poll briefly
-// until it answers. A POST may return an INLINE DENIAL (request_id null) when none
-// of the requested scopes was effective — handle that without polling.
+// until it answers. A POST may still return an INLINE DENIAL (request_id null) if
+// the agent's policy changed since the console last read it — handle that without
+// polling.
 async function requestSnapshot() {
   stopPoll()
   loading.value = false
   denialScopes.value = []
-  remediation.value = null
-  if (!selected.value) {
-    snapshot.value = null
-    return
-  }
-  // Always request the full desired scope set (not just the effective scopes) so
-  // the response includes explicit denied/unsupported results and the remediation
-  // env line for every scope the agent cannot collect — both when it grants none
-  // and, crucially, when it grants only a partial subset.
-  const scopes = ALL_SNAPSHOT_SCOPES
-  if (!scopes.length) {
-    snapshot.value = null
-    return
-  }
-  loading.value = true
-  error.value = ''
   snapshot.value = null
+  if (!selected.value) return
+  error.value = ''
+  const scopes = requestScopes.value
+  // Nothing this agent can serve: asking would only have the server hand back the
+  // denials `withheld` already names, so the request is not made at all. The
+  // empty state explains the gap and offers the fix.
+  if (!scopes.length) return
+  loading.value = true
   try {
     const res = await api.requestSnapshot(selected.value, scopes)
     if (res.request_id === null) {
       denialScopes.value = (res.scopes || []).filter((s) => s.status !== 'collected')
-      remediation.value = res.remediation ?? null
       loading.value = false
       return
     }
@@ -183,9 +225,6 @@ async function requestSnapshot() {
         if (r.snapshot && r.snapshot.request_id === request_id) {
           snapshot.value = r.snapshot
           denialScopes.value = r.snapshot.scopes.filter((s) => s.status !== 'collected')
-          // The GET response carries remediation for any permission-denied scope, so
-          // partial runtime denials show the env line too (not only the POST path).
-          remediation.value = r.remediation ?? null
           revalidateConnFilter()
           loading.value = false
           stopPoll()
@@ -345,8 +384,12 @@ function fmtRun(sec: number): string {
 }
 
 // Denial panel copy: a headline per scope keyed by why it was withheld, plus a
-// remediation sub-line (env hint for permission denials, a platform explanation
-// for unsupported, the server reason for a runtime failure).
+// sub-line only where one adds something the headline doesn't say. The
+// NETTACT_AGENT_PERMISSIONS line deliberately does NOT appear here: it is the
+// same several-hundred-character line for every row, and printing it once per
+// withheld scope was most of what made this page a wall of text. It belongs in
+// the remediation dialog, which shows it once with a copy button and per
+// run-mode snippets.
 function denyLine(sc: SnapshotScopeResult): string {
   const scope = permLabel(sc.scope)
   if (sc.status === 'denied') return t('processes.denyDenied', { scope })
@@ -354,17 +397,15 @@ function denyLine(sc: SnapshotScopeResult): string {
   return t('processes.denyFailed', { scope })
 }
 function denySub(sc: SnapshotScopeResult): string {
-  if (sc.status === 'denied') {
-    const env = remediation.value?.permissions_env
-    return env ? t('processes.remediationEnv', { env }) : ''
-  }
   if (sc.status === 'unsupported') return t('processes.unsupportedExplain')
-  // A runtime failure carries a stable reason code. Translate the ones we know —
+  // Denials and failures carry a stable reason code. Translate the ones we know —
   // an untranslated "rate_limited" in front of an operator explains nothing and
-  // reads like a defect.
+  // reads like a defect. A denial whose reason is just "not granted" says nothing
+  // the headline didn't, so it gets no sub-line at all.
   if (!sc.reason) return ''
   const key = `processes.failReason.${sc.reason}`
-  return te(key) ? t(key) : sc.reason
+  if (te(key)) return t(key)
+  return sc.status === 'denied' ? '' : sc.reason
 }
 
 // --- how do I fix this? ------------------------------------------------------
@@ -377,16 +418,83 @@ function denySub(sc: SnapshotScopeResult): string {
 // no path to grant.
 const fixScope = ref<{ id: string; category: RemediationCategory } | null>(null)
 
+// The agent's whole permission inventory, loaded when someone asks how to fix
+// something. It is the server's answer to "what would grant this", and it is
+// read from the AGENT RECORD — nothing here reaches the agent itself, which is
+// the point: the page must be able to explain a missing permission without
+// making a request that can only come back denied.
+//
+// Re-read on every open rather than cached per agent: granting a permission
+// means editing the policy and restarting the agent, and someone who did that
+// and came back to this dialog must not be shown the policy they already
+// replaced.
+const inventory = ref<AgentPermission[]>([])
+
+async function loadInventory() {
+  const id = selected.value
+  if (!id) return
+  try {
+    const inv = await api.agentPermissions(id)
+    // Guard against a slow response landing after the agent picker moved on.
+    if (selected.value === id) inventory.value = inv.permissions
+  } catch {
+    // The dialog falls back to a generic instruction. A missing line is a worse
+    // answer than the line, not a broken page.
+  }
+}
+
+// One `NETTACT_AGENT_PERMISSIONS=…` line that grants every scope this page is
+// missing, so a single paste and restart makes the whole page work rather than
+// one column of it.
+//
+// Every value in it is server-computed: the inventory carries, per ungranted
+// permission, the dependency-closed line that grants THAT one, and this unions
+// those values. A union of dependency-closed sets is itself closed, so the
+// console still never works out a closure of its own — it only picks which of
+// the server's answers to combine, and orders the result by the inventory's own
+// canonical order.
+const fixEnv = computed<string | undefined>(() => {
+  const want = new Set(unmetScopes.value.filter((s) => s.status === 'denied').map((s) => s.scope))
+  if (!want.size) return undefined
+  let prefix = ''
+  const union = new Set<string>()
+  for (const p of inventory.value) {
+    if (!want.has(p.id) || !p.permissions_env) continue
+    const eq = p.permissions_env.indexOf('=')
+    if (eq < 0) continue
+    prefix = p.permissions_env.slice(0, eq + 1)
+    for (const v of p.permissions_env.slice(eq + 1).split(',')) {
+      const id = v.trim()
+      if (id) union.add(id)
+    }
+  }
+  if (!prefix) return undefined
+  return prefix + inventory.value.map((p) => p.id).filter((id) => union.has(id)).join(',')
+})
+
 // Which scopes this page can offer a fix for. A runtime failure is not one of
 // them: nothing in the permission policy changes it.
 function fixable(sc: SnapshotScopeResult): boolean {
   return sc.status === 'denied' || sc.status === 'unsupported'
 }
+
+// What the empty state's single "how to fix" opens: the first unmet scope in
+// canonical order, which is the base process scope unless the agent cannot do
+// processes at all. Picking it from the live list rather than hard-coding one
+// keeps the dialog from claiming a permission problem where the real answer is
+// "this platform can't".
+const primaryFix = computed<SnapshotScopeResult>(
+  () =>
+    unmetScopes.value.find(fixable) ??
+    unmetScopes.value[0] ?? { scope: ALL_SNAPSHOT_SCOPES[0], status: 'denied' },
+)
+
 function openFix(sc: SnapshotScopeResult): void {
   fixScope.value = {
     id: sc.scope,
     category: sc.status === 'unsupported' ? 'unsupported' : 'permission_blocked',
   }
+  void loadInventory()
 }
 // The agent whose policy the dialog is about to describe: an embedded desktop
 // agent has a fixed FullAccess policy, so the env/YAML instructions never apply.
@@ -394,6 +502,9 @@ const fixDesktop = computed(() => isDesktopFullAccess(agent.value?.policy_source
 
 async function onAgentChange() {
   connFilter.value = null
+  // The inventory is per agent; drop the previous one so a "how to fix" click
+  // cannot show the old agent's policy line while the new one loads.
+  inventory.value = []
   await refreshAgent()
   await requestSnapshot()
 }
@@ -421,7 +532,7 @@ onBeforeUnmount(stopPoll)
             {{ agentLabel(a) }} ({{ a.platform }}) — {{ a.status }}
           </option>
         </select>
-        <button class="btn" :disabled="loading" @click="requestSnapshot">
+        <button class="btn" :disabled="loading || !requestScopes.length" @click="requestSnapshot">
           {{ loading ? t('processes.fetching') : t('processes.refreshSnapshot') }}
         </button>
       </div>
@@ -429,13 +540,13 @@ onBeforeUnmount(stopPoll)
 
     <p v-if="error" class="err" role="alert">{{ error }}</p>
 
-    <!-- Scopes the agent could not collect this round (shown for both the
-         partial-permission and the no-permission case, always with remediation). -->
-    <div v-if="denialScopes.length" class="card denial">
+    <!-- Scopes the agent did not collect this round. Only rendered for a PARTIAL
+         grant; when it serves none of them the empty state below says so once. -->
+    <div v-if="missingScopes.length" class="card denial">
       <h4>{{ t('processes.denialTitle') }}</h4>
       <p class="hint">{{ t('processes.denialIntro') }}</p>
       <ul class="deny-list">
-        <li v-for="sc in denialScopes" :key="sc.scope">
+        <li v-for="sc in missingScopes" :key="sc.scope">
           <span class="deny-head">{{ denyLine(sc) }}</span>
           <span v-if="denySub(sc)" class="deny-sub">{{ denySub(sc) }}</span>
           <button v-if="fixable(sc)" type="button" class="link-btn deny-fix" @click="openFix(sc)">
@@ -445,14 +556,10 @@ onBeforeUnmount(stopPoll)
       </ul>
     </div>
 
-    <div v-if="!permitted && agent && !denialScopes.length" class="card empty">
+    <div v-if="!permitted && agent" class="card empty">
       <h3>{{ t('processes.noPermTitle') }}</h3>
       <p class="hint">{{ t('processes.noPermHint') }}</p>
-      <button
-        type="button"
-        class="btn btn-primary"
-        @click="openFix({ scope: 'host.process.basic.read', status: 'denied' })"
-      >
+      <button type="button" class="btn btn-primary" @click="openFix(primaryFix)">
         {{ t('processes.howToFix') }}
       </button>
     </div>
@@ -648,7 +755,7 @@ onBeforeUnmount(stopPoll)
       :open="!!fixScope"
       :perm-id="fixScope?.id || ''"
       :category="fixScope?.category || 'permission_blocked'"
-      :permissions-env="remediation?.permissions_env"
+      :permissions-env="fixEnv"
       :desktop="fixDesktop"
       @close="fixScope = null"
     />

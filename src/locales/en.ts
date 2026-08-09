@@ -891,7 +891,6 @@ export default {
     denyDenied: 'Permission "{scope}" not granted',
     denyUnsupported: '"{scope}" is not supported on this platform',
     denyFailed: 'Collection failed for "{scope}"',
-    remediationEnv: 'Set {env} on the agent and restart to grant this permission.',
     howToFix: 'How to fix this',
     failReason: {
       // Runtime failure codes from the agent (telemetry.SnapshotScopeResult.Reason).
