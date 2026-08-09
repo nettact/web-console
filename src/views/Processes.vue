@@ -174,12 +174,19 @@ async function loadAgents() {
 // The agent record carries the permission sets that decide what is even worth
 // asking for, so a failure here is not a detail to swallow: without it the page
 // asks for nothing and would otherwise render blank with no explanation.
-async function refreshAgent() {
+//
+// The ticket is validated AFTER the await, not before: the hazard is an older
+// read that resolves LAST, which would otherwise publish the previous agent's
+// record under the newly selected agent's name.
+async function refreshAgent(seq: number) {
   if (!selected.value) return
   try {
-    agent.value = await api.agent(selected.value)
+    const rec = await api.agent(selected.value)
+    if (seq !== refreshSeq) return
+    agent.value = rec
     error.value = ''
   } catch (e) {
+    if (seq !== refreshSeq) return
     agent.value = null
     error.value = String((e as Error).message || e)
   }
@@ -200,10 +207,14 @@ function snapshotErrMsg(e: unknown): string {
 // read the agent record, ask for a snapshot, then poll for the answer. A chain
 // that starts while another is mid-flight must SUPERSEDE it rather than race
 // it, and must not be dropped either (an agent switch that got dropped would
-// leave the previous agent's data on screen under the new agent's name). `poll`
-// holds a single interval id, so two chains both reaching setInterval strand
-// one with nothing able to clear it. Each chain therefore takes a ticket and
-// abandons itself at the next await the moment a newer ticket exists.
+// leave the previous agent's data on screen under the new agent's name).
+//
+// So every chain takes a ticket, and the rule is the same at every await in it:
+// re-check the ticket AFTER resuming, and if it is stale return having mutated
+// nothing at all — not `loading`, not `error`, not the shared `poll`. Checking
+// only before an await catches nothing, because the case that matters is an
+// older call settling last; and a stale chain that "just" resets `loading` or
+// clears `poll` reaches into the live chain's state.
 let refreshSeq = 0
 
 async function requestSnapshot(seq: number) {
@@ -225,10 +236,7 @@ async function requestSnapshot(seq: number) {
   loading.value = true
   try {
     const res = await api.requestSnapshot(selected.value, scopes)
-    if (seq !== refreshSeq) {
-      loading.value = false
-      return // a newer refresh owns the page now
-    }
+    if (seq !== refreshSeq) return // superseded: `loading` belongs to the live chain
     if (res.request_id === null) {
       denialScopes.value = (res.scopes || []).filter((s) => s.status !== 'collected')
       loading.value = false
@@ -236,14 +244,22 @@ async function requestSnapshot(seq: number) {
     }
     const request_id = res.request_id
     let tries = 0
-    poll = window.setInterval(async () => {
+    // The interval id is held locally as well as in `poll`: a superseded
+    // callback must cancel ITS OWN interval, and by then `poll` may already
+    // name the live chain's.
+    let handle = 0
+    handle = window.setInterval(async () => {
       if (seq !== refreshSeq) {
-        stopPoll()
+        window.clearInterval(handle)
         return
       }
       tries++
       try {
         const r = await api.getSnapshot(selected.value)
+        if (seq !== refreshSeq) {
+          window.clearInterval(handle)
+          return
+        }
         if (r.snapshot && r.snapshot.request_id === request_id) {
           snapshot.value = r.snapshot
           denialScopes.value = r.snapshot.scopes.filter((s) => s.status !== 'collected')
@@ -257,12 +273,21 @@ async function requestSnapshot(seq: number) {
           stopPoll()
         }
       } catch (e) {
+        if (seq !== refreshSeq) {
+          window.clearInterval(handle)
+          return
+        }
         error.value = snapshotErrMsg(e)
         loading.value = false
         stopPoll()
       }
     }, 1000)
+    poll = handle
   } catch (e) {
+    // The POST itself failed. A superseded chain says nothing: the live chain's
+    // request is still running and this error is about a page state that no
+    // longer exists.
+    if (seq !== refreshSeq) return
     error.value = snapshotErrMsg(e)
     loading.value = false
   }
@@ -546,7 +571,7 @@ async function onAgentChange() {
 // enabled after a failed read, which is when retrying matters most.
 async function refreshNow() {
   const seq = ++refreshSeq
-  await refreshAgent()
+  await refreshAgent(seq)
   if (seq !== refreshSeq) return
   await requestSnapshot(seq)
 }

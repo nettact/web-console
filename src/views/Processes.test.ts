@@ -339,6 +339,43 @@ describe('Processes network-connection filtering', () => {
     expect(page.get('.empty').text()).toContain('process / connection read permissions')
   })
 
+  it('lets a newer agent switch win when the older read settles last', async () => {
+    // The hazard is ordering, not overlap: whichever api.agent() resolves LAST
+    // used to win, so the picker could show agent B while the permissions,
+    // empty state and remediation were all derived from agent A.
+    const agentA: Agent = { ...fullAgent, id: 'agent-a' }
+    const agentB: Agent = {
+      ...fullAgent,
+      id: 'agent-b',
+      supported: [...PROC_SCOPES, ...CONN_SCOPES],
+      granted: [],
+      effective: [],
+    }
+    apiMock.agents.mockResolvedValue([agentA, agentB])
+    let releaseA: (v: Agent) => void = () => {}
+    apiMock.agent
+      .mockImplementationOnce(() => new Promise<Agent>((res) => (releaseA = res)))
+      .mockResolvedValue(agentB)
+
+    const i18n = createI18n({ legacy: false, locale: 'en', messages: { en } })
+    const page = mount(Processes, {
+      global: { plugins: [i18n], stubs: { RouterLink: RouterLinkStub } },
+    })
+    await flushPromises()
+
+    // Switch to B while A's read is still in flight, then let A land late.
+    await page.get('select').setValue('agent-b')
+    await flushPromises()
+    releaseA(agentA)
+    await flushPromises()
+    await vi.advanceTimersByTimeAsync(1000)
+    await flushPromises()
+
+    // B serves nothing, so the page must show B's empty state — not A's data.
+    expect(page.get('.empty').text()).toContain('process / connection read permissions')
+    expect(apiMock.requestSnapshot).not.toHaveBeenCalled()
+  })
+
   it('hands the dialog one policy line that grants every missing scope', async () => {
     const noneAgent: Agent = {
       ...fullAgent,
