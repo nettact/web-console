@@ -1540,12 +1540,22 @@ export interface StatusEvent {
   reason?: string
 }
 
+// TsdbTierStats is one time-series instance's footprint (the data plane keeps
+// raw + three downsampled tiers as separate embedded TSDB instances).
+export interface TsdbTierStats {
+  disk_bytes: number
+  head_series: number
+  blocks: number
+}
+
 export interface StorageStats {
   series: number
-  samples: number
-  rollup_1m: number
-  rollup_1h: number
-  rollup_1d: number
+  tsdb: {
+    raw: TsdbTierStats
+    m1: TsdbTierStats
+    h1: TsdbTierStats
+    d1: TsdbTierStats
+  }
 }
 
 export interface SeriesInfo {

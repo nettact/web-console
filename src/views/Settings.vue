@@ -18,6 +18,7 @@ import {
 } from '../api'
 import { auth } from '../auth'
 import { setConsoleBase } from '../consoleBaseUrl'
+import { fmtBytes } from '../lib/format'
 import { publishServerInfo, serverInfo as liveServerInfo } from '../serverInfo'
 import {
   applyUpdateNoticeSettings,
@@ -1575,15 +1576,15 @@ onMounted(() => {
             <div class="foot">{{ t('settings.seriesFoot') }}</div>
           </div>
           <div class="stat">
-            <div class="label">{{ t('settings.rawSamples') }}</div>
-            <div class="value">{{ stats.samples }}</div>
-            <div class="foot">{{ t('settings.rawSamplesFoot') }}</div>
+            <div class="label">{{ t('settings.rawDisk') }}</div>
+            <div class="value">{{ fmtBytes(stats.tsdb.raw.disk_bytes) }}</div>
+            <div class="foot">{{ t('settings.rawDiskFoot') }}</div>
           </div>
           <div class="stat">
-            <div class="label">{{ t('settings.rollup') }}</div>
-            <div class="value rollup">{{ stats.rollup_1m }}<span class="sep">·</span>{{ stats.rollup_1h }}<span
-                class="sep">·</span>{{ stats.rollup_1d }}</div>
-            <div class="foot">{{ t('settings.rollupFoot') }}</div>
+            <div class="label">{{ t('settings.rollupDisk') }}</div>
+            <div class="value rollup">{{ fmtBytes(stats.tsdb.m1.disk_bytes) }}<span class="sep">·</span>{{
+              fmtBytes(stats.tsdb.h1.disk_bytes) }}<span class="sep">·</span>{{ fmtBytes(stats.tsdb.d1.disk_bytes) }}</div>
+            <div class="foot">{{ t('settings.rollupDiskFoot') }}</div>
           </div>
         </template>
       </div>
