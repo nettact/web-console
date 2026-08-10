@@ -523,6 +523,9 @@ export default {
         started: 'Path diagnostic started',
         completed: 'Path diagnostic completed',
       },
+      scene: {
+        collected: 'Agent scene collected',
+      },
       storm: {
         joined: 'Merged into an alert storm',
       },
@@ -641,7 +644,7 @@ export default {
       title: 'State snapshot',
       none: 'No state snapshot.',
       truncated: 'The snapshot exceeded its size cap; non-critical detail was truncated by priority.',
-      expired: 'Scene evidence passed its retention window and was cleared; only the base summary remains.',
+      expired: 'Scene detail passed its retention window and was cleared. What each Agent collected is gone; when it collected, and the fault that made it, are kept.',
       baseTitle: 'Trigger-time base facts',
       frozenAt: 'Triggered',
       receivedAt: 'Received',
@@ -665,7 +668,8 @@ export default {
         probe_fault: 'Probe fault',
         server_disconnect: 'Server disconnected',
       },
-      triggerProbeFault: 'Collected after the monitored target failed {n} consecutive rounds.',
+      triggerProbeFault: 'Collected after {target} failed {n} consecutive rounds.',
+      unknownTarget: 'an unnamed monitor',
       triggerDisconnect: 'Collected when the Agent lost its session to this server ({reason}).',
       triggerDisconnectRepeated: 'Collected after the Agent lost its session to this server {n} times ({reason}).',
       disconnectReason: {
@@ -673,10 +677,10 @@ export default {
         refused: 'connection refused',
         timeout: 'connection timed out',
         tls: 'TLS failure',
-        tls_cert_expired: 'server certificate expired',
+        tls_cert_expired: "the server certificate was outside its validity window — an expired certificate, or this Agent's clock being wrong",
         tls_cert_untrusted: 'server certificate untrusted',
         tls_hostname: 'certificate does not match the hostname',
-        network: 'network unreachable',
+        network: 'the server could not be reached; see the Agent log for the underlying error',
         ack_timeout: 'server stopped acknowledging uploads',
       },
       groupStatus: {

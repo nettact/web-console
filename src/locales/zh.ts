@@ -525,6 +525,9 @@ export default {
         started: '路径诊断开始',
         completed: '路径诊断完成',
       },
+      scene: {
+        collected: 'Agent 采集到现场',
+      },
       storm: {
         joined: '并入报警风暴',
       },
@@ -641,7 +644,7 @@ export default {
       title: '状态快照',
       none: '暂无状态快照。',
       truncated: '快照超出大小上限，已按优先级截断部分非关键明细。',
-      expired: '现场证据已过保留期并清理，仅保留基础摘要。',
+      expired: '现场明细已过保留期并清理。各 Agent 采集到的内容已删除，采集时间与触发它的故障仍保留。',
       baseTitle: '触发时基础信息',
       frozenAt: '触发时间',
       receivedAt: '接收时间',
@@ -665,7 +668,8 @@ export default {
         probe_fault: '探测故障',
         server_disconnect: '与服务端断连',
       },
-      triggerProbeFault: '监控目标连续 {n} 轮失败后采集。',
+      triggerProbeFault: '{target} 连续 {n} 轮失败后采集。',
+      unknownTarget: '未命名监控项',
       triggerDisconnect: 'Agent 与本服务端的会话断开时采集（{reason}）。',
       triggerDisconnectRepeated: 'Agent 与本服务端的会话断开 {n} 次后采集（{reason}）。',
       disconnectReason: {
@@ -673,10 +677,10 @@ export default {
         refused: '连接被拒绝',
         timeout: '连接超时',
         tls: 'TLS 失败',
-        tls_cert_expired: '服务端证书已过期',
+        tls_cert_expired: '服务端证书不在有效期内——可能是证书过期，也可能是该 Agent 的时钟不对',
         tls_cert_untrusted: '服务端证书不受信任',
         tls_hostname: '证书与主机名不匹配',
-        network: '网络不可达',
+        network: '无法连接到服务端；具体错误见 Agent 日志',
         ack_timeout: '服务端不再确认上传',
       },
       groupStatus: {

@@ -40,15 +40,25 @@ const LAG_WORTH_SAYING_MS = 60_000
 const lagMinutes = (e: SceneEntry) => Math.round(e.delivery_lag_ms / 60_000)
 const cpuPct = (v?: number) => (v == null ? '—' : `${v.toFixed(0)}%`)
 
+// Which monitor a probe trigger is about. One scene can carry several — edges
+// crossed during a collection join it — so without naming the target every
+// trigger reads as the same sentence. The resolved target row is the readable
+// name; a trigger that joined an in-flight collection has no such row, so the
+// monitor id stands in rather than leaving the line anonymous.
+const triggerTarget = (e: SceneEntry, g: SceneTriggerView) => {
+  const row = e.payload?.targets?.find((tg) => tg.monitor_id === g.monitor_id)
+  return row?.target || g.monitor_id || t('incidents.snap.unknownTarget')
+}
+
 // One trigger in a sentence: what the Agent saw that made it look around.
-const triggerText = (g: SceneTriggerView) => {
+const triggerText = (e: SceneEntry, g: SceneTriggerView) => {
   if (g.kind === 'server_disconnect') {
     const why = g.reason ? sceneDisconnectReasonLabel(g.reason) : ''
     return (g.edge_count ?? 1) > 1
       ? t('incidents.snap.triggerDisconnectRepeated', { reason: why, n: g.edge_count })
       : t('incidents.snap.triggerDisconnect', { reason: why })
   }
-  return t('incidents.snap.triggerProbeFault', { n: g.trigger_streak ?? 0 })
+  return t('incidents.snap.triggerProbeFault', { target: triggerTarget(e, g), n: g.trigger_streak ?? 0 })
 }
 const triggerKey = (e: SceneEntry, g: SceneTriggerView, i: number) =>
   `${e.report_id}:${g.kind}:${g.monitor_id ?? ''}:${i}`
@@ -106,7 +116,7 @@ const triggerKey = (e: SceneEntry, g: SceneTriggerView, i: number) =>
           </span>
         </div>
         <ul class="plain trigger-list">
-          <li v-for="(g, i) in e.triggers" :key="triggerKey(e, g, i)" class="hint">{{ triggerText(g) }}</li>
+          <li v-for="(g, i) in e.triggers" :key="triggerKey(e, g, i)" class="hint">{{ triggerText(e, g) }}</li>
         </ul>
         <p v-if="e.clock_ahead" class="notice warn small" role="note">
           {{ t('incidents.snap.clockAhead', { s: aheadSeconds(e) }) }}
