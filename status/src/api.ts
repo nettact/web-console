@@ -62,10 +62,16 @@ export class NotFoundError extends Error {
   }
 }
 
-async function get<T>(path: string): Promise<T> {
+async function get<T>(path: string, signal?: AbortSignal): Promise<T> {
   // No credentials: this surface is anonymous, and sending cookies to it would
   // be the one thing that makes the server's wildcard CORS unusable.
-  const res = await fetch(apiBase + path, { headers: { Accept: 'application/json' } })
+  //
+  // The signal matters more than it looks. Without cancellation a request for a
+  // page the reader has already navigated away from keeps running to completion,
+  // and since fetch has no timeout of its own, one stalled connection can hold a
+  // slot open indefinitely — which is enough to stop the page the reader IS
+  // looking at from refreshing.
+  const res = await fetch(apiBase + path, { headers: { Accept: 'application/json' }, signal })
   if (res.status === 404) throw new NotFoundError()
   if (!res.ok) throw new Error(`request failed (${res.status})`)
   return (await res.json()) as T
@@ -74,7 +80,9 @@ async function get<T>(path: string): Promise<T> {
 const slugPath = (slug: string) => `/api/v1/public/pages/${encodeURIComponent(slug)}`
 
 export const api = {
-  page: (slug: string) => get<PublicPage>(slugPath(slug)),
-  agentStatuses: (slug: string) => get<PublicAgentStatuses>(`${slugPath(slug)}/agent-statuses`),
-  targetStatuses: (slug: string) => get<PublicTargetStatuses>(`${slugPath(slug)}/target-statuses`),
+  page: (slug: string, signal?: AbortSignal) => get<PublicPage>(slugPath(slug), signal),
+  agentStatuses: (slug: string, signal?: AbortSignal) =>
+    get<PublicAgentStatuses>(`${slugPath(slug)}/agent-statuses`, signal),
+  targetStatuses: (slug: string, signal?: AbortSignal) =>
+    get<PublicTargetStatuses>(`${slugPath(slug)}/target-statuses`, signal),
 }

@@ -355,6 +355,80 @@ describe('status page', () => {
     expect(w.text()).toContain('Other board')
   })
 
+  // A request left over from a page the reader moved on from must not gate the
+  // page they are actually looking at: fetch has no timeout, so one stalled
+  // connection would otherwise freeze the live board forever.
+  it('keeps polling the current page while a superseded request hangs', async () => {
+    const aborted: string[] = []
+    vi.spyOn(api, 'page').mockImplementation((slug: string, signal?: AbortSignal) => {
+      if (slug === 'home-lab') {
+        // Never resolves on its own — only aborting ends it.
+        return new Promise((_resolve, reject) => {
+          signal?.addEventListener('abort', () => {
+            aborted.push(slug)
+            reject(new DOMException('aborted', 'AbortError'))
+          })
+        })
+      }
+      return Promise.resolve({ ...page, slug: 'other', title: 'Other board', show_agent_view: false })
+    })
+    const targets = vi.spyOn(api, 'targetStatuses').mockResolvedValue({
+      generated_at: page.generated_at,
+      targets: [{ name: 'Website', ordinal: 1, kind: 'http', status: 'up' }],
+    })
+
+    const w = mountApp()
+    await flushPromises()
+
+    location.hash = '#/other'
+    window.dispatchEvent(new HashChangeEvent('hashchange'))
+    await flushPromises()
+    expect(w.text()).toContain('Other board')
+    // Navigating cancelled the stalled request rather than leaving it running.
+    expect(aborted).toEqual(['home-lab'])
+
+    const before = targets.mock.calls.length
+    await vi.advanceTimersByTimeAsync(30_000)
+    await flushPromises()
+    expect(targets.mock.calls.length).toBeGreaterThan(before)
+  })
+
+  // A load the reader has navigated away from must not go on to request rows for
+  // the page they left.
+  it('does not fetch rows for a page abandoned mid-load', async () => {
+    let releaseFirst: (v: typeof page) => void = () => {}
+    vi.spyOn(api, 'page').mockImplementation((slug: string) => {
+      if (slug === 'home-lab') {
+        return new Promise((resolve) => {
+          releaseFirst = resolve
+        })
+      }
+      return Promise.resolve({ ...page, slug: 'other', title: 'Other board', show_target_view: false })
+    })
+    const targets = vi.spyOn(api, 'targetStatuses').mockResolvedValue({
+      generated_at: page.generated_at,
+      targets: [],
+    })
+    vi.spyOn(api, 'agentStatuses').mockResolvedValue({
+      generated_at: page.generated_at,
+      agents: [{ name: 'Alpha', ordinal: 1, online: true }],
+    })
+
+    const w = mountApp()
+    await flushPromises()
+
+    location.hash = '#/other'
+    window.dispatchEvent(new HashChangeEvent('hashchange'))
+    await flushPromises()
+    expect(w.text()).toContain('Other board')
+
+    // The abandoned page's metadata finally arrives; its rows must never be asked for.
+    releaseFirst(page)
+    await flushPromises()
+    expect(targets).not.toHaveBeenCalled()
+    expect(w.text()).toContain('Other board')
+  })
+
   it('polls on an interval and stops when unmounted', async () => {
     vi.spyOn(api, 'page').mockResolvedValue({ ...page, show_agent_view: false })
     const targets = vi.spyOn(api, 'targetStatuses').mockResolvedValue({

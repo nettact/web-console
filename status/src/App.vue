@@ -50,9 +50,11 @@ let tickTimer: number | undefined
 // poll: a counter that every tick advanced would invalidate any load still in
 // flight when the next tick arrived, so on a slow link nothing would ever paint.
 let navGeneration = 0
-// Loads currently in flight. A poll skips while one is running rather than
-// stacking another on top of it.
-let running = 0
+// The refresh currently running FOR THE CURRENT PAGE, or null. It is both the
+// poll gate and the cancellation handle, and it is deliberately scoped to one
+// navigation: a request left over from a page the reader has moved on from must
+// not be able to hold the page they are actually looking at hostage.
+let inFlight: AbortController | null = null
 
 const onlineAgents = computed(() => (agents.value ?? []).filter((a) => a.online).length)
 const upTargets = computed(() => (targets.value ?? []).filter((tg) => tg.status === 'up').length)
@@ -75,33 +77,42 @@ function sinceLabel(iso: string | undefined): string {
  * appear, and a view they DISABLED would keep being requested, 404, and take the
  * whole board down as "page not found" while it is still perfectly published.
  *
- * A 'navigate' load is the user arriving at a page — it shows the loading state
- * and owns the board. A 'poll' load is a background refresh: it never blanks
- * what is on screen, and it yields to a load already in progress.
+ * A 'navigate' load is the reader arriving at a page: it shows the loading
+ * state, owns the board, and cancels whatever the previous page had outstanding.
+ * A 'poll' load is a background refresh: it never blanks what is on screen, and
+ * it yields to a refresh already running for this same page.
+ *
+ * Superseded work is aborted rather than merely ignored. Discarding the result
+ * of a request that keeps running is not enough — fetch has no timeout, so a
+ * stalled connection would otherwise sit in flight forever.
  */
 async function load(kind: 'navigate' | 'poll'): Promise<void> {
   if (!slug.value) {
     loading.value = false
     return
   }
-  if (kind === 'poll' && running > 0) return
+  if (kind === 'poll' && inFlight) return
   if (kind === 'navigate') {
     navGeneration++
     loading.value = true
+    inFlight?.abort()
   }
   const nav = navGeneration
   const wanted = slug.value
   // Every await below is a chance for the address to change under us. A load the
-  // user has already navigated away from must write nothing.
+  // reader has already navigated away from must write nothing — and must not
+  // start further requests either.
   const current = () => nav === navGeneration && wanted === slug.value
-  running++
+  const ctrl = new AbortController()
+  inFlight = ctrl
   try {
-    const meta = await api.page(wanted)
+    const meta = await api.page(wanted, ctrl.signal)
+    if (!current()) return
     // Only fetch the views this page publishes. The server enforces the same
     // toggles, so asking for a hidden one would 404 and mark the board stale.
     const [agentData, targetData] = await Promise.all([
-      meta.show_agent_view ? api.agentStatuses(wanted) : Promise.resolve(null),
-      meta.show_target_view ? api.targetStatuses(wanted) : Promise.resolve(null),
+      meta.show_agent_view ? api.agentStatuses(wanted, ctrl.signal) : Promise.resolve(null),
+      meta.show_target_view ? api.targetStatuses(wanted, ctrl.signal) : Promise.resolve(null),
     ])
     if (!current()) return
     // Commit metadata and rows together. Applied separately, a refresh whose
@@ -117,6 +128,8 @@ async function load(kind: 'navigate' | 'poll'): Promise<void> {
     now.value = Date.now()
     stale.value = false
   } catch (err) {
+    // A superseded load lands here on its own abort; it is not a failure of the
+    // page now on screen, so it reports nothing.
     if (!current()) return
     if (err instanceof NotFoundError) {
       // A page unpublished while someone was watching becomes the not-found view,
@@ -132,7 +145,9 @@ async function load(kind: 'navigate' | 'poll'): Promise<void> {
     if (kind === 'navigate') page.value = null
     stale.value = true
   } finally {
-    running--
+    // Only release the gate if it is still ours: a load superseded by navigation
+    // must not clear the handle belonging to the page that replaced it.
+    if (inFlight === ctrl) inFlight = null
     // `loading` means "nothing decided yet for this page", not "a request is in
     // flight" — re-raising it per poll would blink the not-found and error views
     // through the loading state every thirty seconds.
@@ -169,6 +184,7 @@ onUnmounted(() => {
   window.clearInterval(pollTimer)
   window.clearInterval(tickTimer)
   window.removeEventListener('hashchange', onHashChange)
+  inFlight?.abort()
 })
 </script>
 
