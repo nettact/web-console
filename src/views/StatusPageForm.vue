@@ -12,7 +12,7 @@
 import { computed, onMounted, reactive, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
-import { api, type Agent, type ProbeTarget, type StatusPageInput } from '../api'
+import { api, ApiError, type Agent, type ProbeTarget, type StatusPageInput } from '../api'
 import { consoleBase, ensureConsoleBase } from '../consoleBaseUrl'
 import { agentLabel } from '../lib/agentLabel'
 import { copyToClipboard } from '../lib/clipboard'
@@ -97,8 +97,16 @@ async function load() {
     form.agent_ids = [...page.agent_ids]
     form.target_ids = [...page.target_ids]
     loaded.value = true
-  } catch {
-    notFound.value = true
+  } catch (e) {
+    // Only a real 404 means the page is gone. A network blip or a 500 answered
+    // with "No such status page" would tell the operator their configuration had
+    // been deleted, which is both false and unrecoverable-looking — those stay
+    // ordinary load errors they can retry.
+    if (e instanceof ApiError && e.status === 404) {
+      notFound.value = true
+      return
+    }
+    error.value = String((e as Error).message || e)
   }
 }
 

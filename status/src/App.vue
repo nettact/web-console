@@ -46,6 +46,11 @@ const now = ref(Date.now())
 
 let pollTimer: number | undefined
 let tickTimer: number | undefined
+// Generation counter for in-flight loads. A hash change starts a new load while
+// the previous one is still awaiting I/O, and without this the slower response
+// wins: the board would end up showing one page's title and toggles over
+// another page's rows.
+let generation = 0
 
 const onlineAgents = computed(() => (agents.value ?? []).filter((a) => a.online).length)
 const upTargets = computed(() => (targets.value ?? []).filter((tg) => tg.status === 'up').length)
@@ -59,38 +64,49 @@ function sinceLabel(iso: string | undefined): string {
 }
 
 /**
- * Loads everything the page shows. `initial` distinguishes the first load (where
- * a failure is a visible error state) from a background refresh (where it only
- * marks the data stale) — and only the first load fetches the page metadata,
- * since a poll re-reading the title and toggles would be pure overhead.
+ * Loads everything the page shows, metadata included — every time, not only on
+ * first paint.
+ *
+ * Re-reading the metadata on every poll is what keeps a long-open tab honest.
+ * The toggles decide which endpoints to call, so a cached copy of them goes
+ * wrong in both directions: a view the operator has since enabled would never
+ * appear, and a view they DISABLED would keep being requested, 404, and take the
+ * whole board down as "page not found" while it is still perfectly published.
+ *
+ * `initial` therefore controls presentation only — whether to show the loading
+ * state, and whether a failure clears the board or merely marks it stale.
  */
 async function load(initial: boolean): Promise<void> {
   if (!slug.value) {
     loading.value = false
     return
   }
+  const mine = ++generation
+  const wanted = slug.value
+  // Every await below is a chance for the hash to change under us. A load that is
+  // no longer the current one must write nothing.
+  const current = () => mine === generation && wanted === slug.value
   try {
-    if (initial) {
-      loading.value = true
-      notFound.value = false
-      page.value = await api.page(slug.value)
-      document.title = `${page.value.title} · NetTact`
-    }
-    const meta = page.value
-    if (!meta) return
+    const meta = await api.page(wanted)
+    if (!current()) return
+    page.value = meta
+    notFound.value = false
+    document.title = `${meta.title} · NetTact`
 
     // Only fetch the views this page publishes. The server enforces the same
     // toggles, so asking for a hidden one would 404 and mark the board stale.
     const [agentData, targetData] = await Promise.all([
-      meta.show_agent_view ? api.agentStatuses(slug.value) : Promise.resolve(null),
-      meta.show_target_view ? api.targetStatuses(slug.value) : Promise.resolve(null),
+      meta.show_agent_view ? api.agentStatuses(wanted) : Promise.resolve(null),
+      meta.show_target_view ? api.targetStatuses(wanted) : Promise.resolve(null),
     ])
+    if (!current()) return
     agents.value = agentData?.agents ?? null
     targets.value = targetData?.targets ?? null
     generatedAt.value = targetData?.generated_at ?? agentData?.generated_at ?? meta.generated_at
     now.value = Date.now()
     stale.value = false
   } catch (err) {
+    if (!current()) return
     if (err instanceof NotFoundError) {
       // A page unpublished while someone was watching becomes the not-found view,
       // exactly like a link that was never valid.
@@ -100,12 +116,15 @@ async function load(initial: boolean): Promise<void> {
       targets.value = null
       return
     }
-    if (initial) {
-      page.value = null
-    }
+    // A failed refresh keeps the last good board on screen and says so; only a
+    // failed FIRST load has nothing to keep.
+    if (initial) page.value = null
     stale.value = true
   } finally {
-    if (initial) loading.value = false
+    // `loading` means "nothing has been decided yet", not "a request is in
+    // flight". Re-raising it per poll would make the not-found and error views
+    // blink through the loading state every 30 seconds.
+    if (current()) loading.value = false
   }
 }
 
@@ -126,14 +145,10 @@ watch(slug, () => {
 
 onMounted(() => {
   void load(true)
-  // A poll normally refreshes only the lists. The exception is a first load that
-  // failed on the network: without re-fetching the metadata the page would sit on
-  // its error state forever, since every later poll returns early for want of it.
-  // A confirmed not-found is left alone — that page really is gone.
-  pollTimer = window.setInterval(
-    () => void load(page.value === null && !notFound.value),
-    POLL_MS,
-  )
+  // Polls re-read the metadata too (see load), so a page that was unreachable on
+  // first paint recovers by itself, and a toggle flipped in the console reaches
+  // an already-open tab.
+  pollTimer = window.setInterval(() => void load(page.value === null), POLL_MS)
   tickTimer = window.setInterval(() => (now.value = Date.now()), TICK_MS)
   window.addEventListener('hashchange', onHashChange)
 })

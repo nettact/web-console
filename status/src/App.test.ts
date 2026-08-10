@@ -178,19 +178,95 @@ describe('status page', () => {
     expect(w.text()).toContain('Website')
   })
 
-  // The other direction: a page that genuinely does not exist must not re-request
-  // its metadata forever, flickering through "loading" every 30 seconds.
-  it('does not re-request a page that answered not-found', async () => {
-    const pageSpy = vi.spyOn(api, 'page').mockRejectedValue(new NotFoundError())
+  // A page that answers not-found keeps polling — an operator who re-publishes it
+  // should reach the tabs already open on it — but the not-found view must stay
+  // put between polls rather than blinking through the loading state.
+  it('recovers a re-published page without flickering through loading', async () => {
+    const pageSpy = vi
+      .spyOn(api, 'page')
+      .mockRejectedValueOnce(new NotFoundError())
+      .mockResolvedValue({ ...page, show_agent_view: false })
+    vi.spyOn(api, 'targetStatuses').mockResolvedValue({
+      generated_at: page.generated_at,
+      targets: [{ name: 'Website', ordinal: 1, kind: 'http', status: 'up' }],
+    })
 
     const w = mountApp()
     await flushPromises()
     expect(w.text()).toContain('Page not found')
+    expect(w.text()).not.toContain('Loading')
 
-    await vi.advanceTimersByTimeAsync(90_000)
+    await vi.advanceTimersByTimeAsync(30_000)
     await flushPromises()
 
-    expect(pageSpy).toHaveBeenCalledTimes(1)
+    expect(pageSpy).toHaveBeenCalledTimes(2)
+    expect(w.text()).toContain('Website')
+    expect(w.text()).not.toContain('Page not found')
+  })
+
+  // The metadata decides which endpoints get polled, so a stale copy of it is
+  // not a cosmetic problem: a view the operator turns OFF would keep being
+  // requested, 404, and take a still-published board down as "page not found".
+  it('re-reads the metadata on every poll and follows a toggle change', async () => {
+    const pageSpy = vi
+      .spyOn(api, 'page')
+      .mockResolvedValueOnce(page)
+      .mockResolvedValue({ ...page, show_agent_view: false })
+    const agents = vi.spyOn(api, 'agentStatuses').mockResolvedValue({
+      generated_at: page.generated_at,
+      agents: [{ name: 'Alpha', ordinal: 1, online: true }],
+    })
+    vi.spyOn(api, 'targetStatuses').mockResolvedValue({
+      generated_at: page.generated_at,
+      targets: [{ name: 'Website', ordinal: 1, kind: 'http', status: 'up' }],
+    })
+
+    const w = mountApp()
+    await flushPromises()
+    expect(w.text()).toContain('Alpha')
+
+    await vi.advanceTimersByTimeAsync(30_000)
+    await flushPromises()
+
+    expect(pageSpy).toHaveBeenCalledTimes(2)
+    // The agent view is gone, the page itself is not.
+    expect(agents).toHaveBeenCalledTimes(1)
+    expect(w.text()).not.toContain('Alpha')
+    expect(w.text()).toContain('Website')
+    expect(w.text()).not.toContain('Page not found')
+  })
+
+  // Navigating between pages while a load is in flight must not let the slower
+  // response paint: one page's title over another's rows is worse than a delay.
+  it('discards a load that a hash change has superseded', async () => {
+    let releaseFirst: (v: typeof page) => void = () => {}
+    vi.spyOn(api, 'page').mockImplementation((slug: string) => {
+      if (slug === 'home-lab') {
+        return new Promise((resolve) => {
+          releaseFirst = resolve
+        })
+      }
+      return Promise.resolve({ ...page, slug: 'other', title: 'Other board', show_agent_view: false })
+    })
+    vi.spyOn(api, 'targetStatuses').mockResolvedValue({
+      generated_at: page.generated_at,
+      targets: [{ name: 'Other target', ordinal: 1, kind: 'http', status: 'up' }],
+    })
+
+    const w = mountApp()
+    await flushPromises()
+
+    // Navigate away while the first page's metadata is still in flight.
+    location.hash = '#/other'
+    window.dispatchEvent(new HashChangeEvent('hashchange'))
+    await flushPromises()
+    expect(w.text()).toContain('Other board')
+
+    // The first request finally answers — and must be ignored.
+    releaseFirst(page)
+    await flushPromises()
+    expect(w.text()).toContain('Other board')
+    expect(w.text()).not.toContain('Home lab status')
   })
 
   it('polls on an interval and stops when unmounted', async () => {
