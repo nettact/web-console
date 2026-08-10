@@ -46,6 +46,17 @@ const cpuPct = (v?: number) => (v == null ? '—' : `${v.toFixed(0)}%`)
 // name; a trigger that joined an in-flight collection has no such row, so the
 // monitor id stands in rather than leaving the line anonymous.
 const triggerTarget = (e: SceneEntry, g: SceneTriggerView) => {
+  // A monitor materially edited while edges were joining can appear twice in one
+  // scene under different generations, and a resolved target row carries no
+  // generation to tell them apart. Naming an address then risks showing the OLD
+  // endpoint beside the NEW generation's fault — the exact stale-generation
+  // confusion the config serial exists to prevent — so the monitor id, which is
+  // unambiguous, stands in instead.
+  const generations = new Set(
+    e.triggers.filter((x) => x.kind === 'probe_fault' && x.monitor_id === g.monitor_id)
+      .map((x) => x.config_serial ?? 0),
+  )
+  if (generations.size > 1) return g.monitor_id || t('incidents.snap.unknownTarget')
   const row = e.payload?.targets?.find((tg) => tg.monitor_id === g.monitor_id)
   return row?.target || g.monitor_id || t('incidents.snap.unknownTarget')
 }
