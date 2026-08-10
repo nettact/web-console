@@ -228,7 +228,9 @@ onMounted(async () => {
             <div v-if="form.show_agent_view" class="pick">
               <p v-if="!agentGroups.length" class="hint tiny">
                 {{ tr('spform.noAgentGroups') }}
-                <router-link to="/agents">{{ tr('spform.manageAgentGroups') }}</router-link>
+                <!-- ?tab=groups, not bare /agents: that view opens on the status
+                     list and only shows group management when the query asks. -->
+                <router-link to="/agents?tab=groups">{{ tr('spform.manageAgentGroups') }}</router-link>
               </p>
               <label v-for="g in agentGroups" :key="g.id" class="pick-chip">
                 <input
