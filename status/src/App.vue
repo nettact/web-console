@@ -46,11 +46,13 @@ const now = ref(Date.now())
 
 let pollTimer: number | undefined
 let tickTimer: number | undefined
-// Generation counter for in-flight loads. A hash change starts a new load while
-// the previous one is still awaiting I/O, and without this the slower response
-// wins: the board would end up showing one page's title and toggles over
-// another page's rows.
-let generation = 0
+// Navigation generation. Bumped ONLY when the addressed page changes, never by a
+// poll: a counter that every tick advanced would invalidate any load still in
+// flight when the next tick arrived, so on a slow link nothing would ever paint.
+let navGeneration = 0
+// Loads currently in flight. A poll skips while one is running rather than
+// stacking another on top of it.
+let running = 0
 
 const onlineAgents = computed(() => (agents.value ?? []).filter((a) => a.online).length)
 const upTargets = computed(() => (targets.value ?? []).filter((tg) => tg.status === 'up').length)
@@ -73,26 +75,28 @@ function sinceLabel(iso: string | undefined): string {
  * appear, and a view they DISABLED would keep being requested, 404, and take the
  * whole board down as "page not found" while it is still perfectly published.
  *
- * `initial` therefore controls presentation only — whether to show the loading
- * state, and whether a failure clears the board or merely marks it stale.
+ * A 'navigate' load is the user arriving at a page — it shows the loading state
+ * and owns the board. A 'poll' load is a background refresh: it never blanks
+ * what is on screen, and it yields to a load already in progress.
  */
-async function load(initial: boolean): Promise<void> {
+async function load(kind: 'navigate' | 'poll'): Promise<void> {
   if (!slug.value) {
     loading.value = false
     return
   }
-  const mine = ++generation
+  if (kind === 'poll' && running > 0) return
+  if (kind === 'navigate') {
+    navGeneration++
+    loading.value = true
+  }
+  const nav = navGeneration
   const wanted = slug.value
-  // Every await below is a chance for the hash to change under us. A load that is
-  // no longer the current one must write nothing.
-  const current = () => mine === generation && wanted === slug.value
+  // Every await below is a chance for the address to change under us. A load the
+  // user has already navigated away from must write nothing.
+  const current = () => nav === navGeneration && wanted === slug.value
+  running++
   try {
     const meta = await api.page(wanted)
-    if (!current()) return
-    page.value = meta
-    notFound.value = false
-    document.title = `${meta.title} · NetTact`
-
     // Only fetch the views this page publishes. The server enforces the same
     // toggles, so asking for a hidden one would 404 and mark the board stale.
     const [agentData, targetData] = await Promise.all([
@@ -100,6 +104,13 @@ async function load(initial: boolean): Promise<void> {
       meta.show_target_view ? api.targetStatuses(wanted) : Promise.resolve(null),
     ])
     if (!current()) return
+    // Commit metadata and rows together. Applied separately, a refresh whose
+    // metadata lands but whose rows fail would pair the new toggles with the old
+    // (or absent) data — a freshly enabled view would render "publishes no
+    // nodes", which is an assertion, not a loading state.
+    page.value = meta
+    notFound.value = false
+    document.title = `${meta.title} · NetTact`
     agents.value = agentData?.agents ?? null
     targets.value = targetData?.targets ?? null
     generatedAt.value = targetData?.generated_at ?? agentData?.generated_at ?? meta.generated_at
@@ -117,13 +128,14 @@ async function load(initial: boolean): Promise<void> {
       return
     }
     // A failed refresh keeps the last good board on screen and says so; only a
-    // failed FIRST load has nothing to keep.
-    if (initial) page.value = null
+    // failed arrival has nothing to keep.
+    if (kind === 'navigate') page.value = null
     stale.value = true
   } finally {
-    // `loading` means "nothing has been decided yet", not "a request is in
-    // flight". Re-raising it per poll would make the not-found and error views
-    // blink through the loading state every 30 seconds.
+    running--
+    // `loading` means "nothing decided yet for this page", not "a request is in
+    // flight" — re-raising it per poll would blink the not-found and error views
+    // through the loading state every thirty seconds.
     if (current()) loading.value = false
   }
 }
@@ -140,15 +152,15 @@ watch(slug, () => {
   targets.value = null
   generatedAt.value = ''
   notFound.value = false
-  void load(true)
+  void load('navigate')
 })
 
 onMounted(() => {
-  void load(true)
+  void load('navigate')
   // Polls re-read the metadata too (see load), so a page that was unreachable on
   // first paint recovers by itself, and a toggle flipped in the console reaches
   // an already-open tab.
-  pollTimer = window.setInterval(() => void load(page.value === null), POLL_MS)
+  pollTimer = window.setInterval(() => void load('poll'), POLL_MS)
   tickTimer = window.setInterval(() => (now.value = Date.now()), TICK_MS)
   window.addEventListener('hashchange', onHashChange)
 })

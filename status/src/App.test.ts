@@ -269,6 +269,92 @@ describe('status page', () => {
     expect(w.text()).not.toContain('Home lab status')
   })
 
+  // A load slower than the poll interval must still be allowed to finish. With a
+  // generation that every tick advanced, each in-flight load was invalidated by
+  // the next tick, so on a slow link the page never painted at all.
+  it('lets a load slower than the poll interval finish', async () => {
+    let release: (v: typeof page) => void = () => {}
+    const pageSpy = vi.spyOn(api, 'page').mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          release = resolve
+        }),
+    )
+    vi.spyOn(api, 'targetStatuses').mockResolvedValue({
+      generated_at: page.generated_at,
+      targets: [{ name: 'Website', ordinal: 1, kind: 'http', status: 'up' }],
+    })
+
+    const w = mountApp()
+    await flushPromises()
+
+    // Two poll intervals pass while the first request is still outstanding.
+    await vi.advanceTimersByTimeAsync(90_000)
+    await flushPromises()
+    // The polls yielded rather than piling on.
+    expect(pageSpy).toHaveBeenCalledTimes(1)
+
+    release({ ...page, show_agent_view: false })
+    await flushPromises()
+    expect(w.text()).toContain('Website')
+  })
+
+  // Metadata and rows are one refresh. Applied separately, a poll whose metadata
+  // lands but whose rows fail would pair the new toggles with absent data — and a
+  // freshly enabled view would assert "publishes no nodes".
+  it('does not apply new toggles when the rows fail to load', async () => {
+    vi.spyOn(api, 'page')
+      .mockResolvedValueOnce({ ...page, show_agent_view: false })
+      .mockResolvedValue(page) // agent view now enabled
+    vi.spyOn(api, 'agentStatuses').mockRejectedValue(new Error('network down'))
+    vi.spyOn(api, 'targetStatuses').mockResolvedValue({
+      generated_at: page.generated_at,
+      targets: [{ name: 'Website', ordinal: 1, kind: 'http', status: 'up' }],
+    })
+
+    const w = mountApp()
+    await flushPromises()
+    expect(w.text()).toContain('Website')
+
+    await vi.advanceTimersByTimeAsync(30_000)
+    await flushPromises()
+
+    // The board keeps its last consistent state and says it may be stale, rather
+    // than showing an empty "Nodes" section that claims nothing is published.
+    expect(w.text()).not.toContain('publishes no nodes')
+    expect(w.text()).toContain('out of date')
+    expect(w.text()).toContain('Website')
+  })
+
+  // Navigating to another page shows the loading state, not the error notice.
+  it('shows loading while navigating to another page', async () => {
+    let release: (v: typeof page) => void = () => {}
+    vi.spyOn(api, 'page').mockImplementation((slug: string) => {
+      if (slug === 'home-lab') return Promise.resolve({ ...page, show_agent_view: false })
+      return new Promise((resolve) => {
+        release = resolve
+      })
+    })
+    vi.spyOn(api, 'targetStatuses').mockResolvedValue({
+      generated_at: page.generated_at,
+      targets: [{ name: 'Website', ordinal: 1, kind: 'http', status: 'up' }],
+    })
+
+    const w = mountApp()
+    await flushPromises()
+    expect(w.text()).toContain('Website')
+
+    location.hash = '#/other'
+    window.dispatchEvent(new HashChangeEvent('hashchange'))
+    await flushPromises()
+    expect(w.text()).toContain('Loading')
+    expect(w.text()).not.toContain('Temporarily unavailable')
+
+    release({ ...page, slug: 'other', title: 'Other board', show_agent_view: false })
+    await flushPromises()
+    expect(w.text()).toContain('Other board')
+  })
+
   it('polls on an interval and stops when unmounted', async () => {
     vi.spyOn(api, 'page').mockResolvedValue({ ...page, show_agent_view: false })
     const targets = vi.spyOn(api, 'targetStatuses').mockResolvedValue({
