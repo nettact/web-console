@@ -681,7 +681,7 @@ export interface ProbeTarget {
 }
 
 // A public status page: an anonymous, slug-addressed board over a hand-picked
-// subset of this site's agents and monitoring targets. Mirrors
+// subset of this site's agent groups and monitoring targets. Mirrors
 // server-core/statuspage.Page.
 //
 // The three visibility flags are enforced SERVER-side, not by this console:
@@ -700,15 +700,17 @@ export interface StatusPage {
   show_target_address: boolean
   show_agent_view: boolean
   show_target_view: boolean
-  agent_ids: string[]
+  // Nodes are published by GROUP: the page shows each selected group's CURRENT
+  // members, so an agent added to a published group becomes public with it.
+  agent_group_ids: string[]
   target_ids: string[]
   created_at: string
   updated_at: string
 }
 
 // Create/update payload. The selections are replaced wholesale, and an id the
-// site cannot publish (unknown, revoked, cross-site) is a 400 rather than being
-// silently dropped.
+// site cannot publish (unknown, cross-site) is a 400 rather than being silently
+// dropped.
 export interface StatusPageInput {
   slug: string
   title: string
@@ -717,7 +719,7 @@ export interface StatusPageInput {
   show_target_address: boolean
   show_agent_view: boolean
   show_target_view: boolean
-  agent_ids: string[]
+  agent_group_ids: string[]
   target_ids: string[]
 }
 

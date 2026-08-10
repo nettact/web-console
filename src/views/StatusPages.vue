@@ -128,7 +128,7 @@ onMounted(async () => {
               </td>
               <td>
                 <span v-if="p.show_agent_view" class="chip">
-                  {{ tr('statusPages.nAgents', { n: p.agent_ids.length }) }}
+                  {{ tr('statusPages.nAgentGroups', { n: p.agent_group_ids.length }) }}
                 </span>
                 <span v-if="p.show_target_view" class="chip">
                   {{ tr('statusPages.nTargets', { n: p.target_ids.length }) }}

@@ -12,9 +12,8 @@
 import { computed, onMounted, reactive, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
-import { api, ApiError, type Agent, type ProbeTarget, type StatusPageInput } from '../api'
+import { api, ApiError, type AgentGroup, type ProbeTarget, type StatusPageInput } from '../api'
 import { consoleBase, ensureConsoleBase } from '../consoleBaseUrl'
-import { agentLabel } from '../lib/agentLabel'
 import { copyToClipboard } from '../lib/clipboard'
 import { STATUS_SLUG_RE, publicStatusUrl, suggestStatusSlug } from '../lib/statusPage'
 import { targetLabel, typeLabel } from '../lib/targetLabels'
@@ -28,7 +27,7 @@ const SITE = 'site_default'
 const editingId = computed(() => (route.params.id as string) || '')
 
 const form = reactive<StatusPageInput>(blank())
-const agents = ref<Agent[]>([])
+const agentGroups = ref<AgentGroup[]>([])
 const targets = ref<ProbeTarget[]>([])
 const error = ref('')
 const busy = ref(false)
@@ -46,7 +45,7 @@ function blank(): StatusPageInput {
     show_target_address: false,
     show_agent_view: true,
     show_target_view: true,
-    agent_ids: [],
+    agent_group_ids: [],
     target_ids: [],
   }
 }
@@ -75,7 +74,10 @@ async function load() {
   // The pickers are the form's substance, so a failure to load them is a real
   // error rather than something to degrade past.
   try {
-    ;[agents.value, targets.value] = await Promise.all([api.agents(), api.listTargets(SITE)])
+    ;[agentGroups.value, targets.value] = await Promise.all([
+      api.agentGroups(SITE),
+      api.listTargets(SITE),
+    ])
   } catch (e) {
     error.value = String((e as Error).message || e)
     return
@@ -94,7 +96,7 @@ async function load() {
     form.show_target_address = page.show_target_address
     form.show_agent_view = page.show_agent_view
     form.show_target_view = page.show_target_view
-    form.agent_ids = [...page.agent_ids]
+    form.agent_group_ids = [...page.agent_group_ids]
     form.target_ids = [...page.target_ids]
     loaded.value = true
   } catch (e) {
@@ -125,7 +127,7 @@ function payload(): StatusPageInput {
     slug: form.slug.trim(),
     title: form.title.trim(),
     description: form.description.trim(),
-    agent_ids: [...form.agent_ids],
+    agent_group_ids: [...form.agent_group_ids],
     target_ids: [...form.target_ids],
   }
 }
@@ -224,18 +226,22 @@ onMounted(async () => {
               <span>{{ tr('spform.showAgentView') }}</span>
             </label>
             <div v-if="form.show_agent_view" class="pick">
-              <p v-if="!agents.length" class="hint tiny">{{ tr('spform.noAgents') }}</p>
-              <label v-for="a in agents" :key="a.id" class="pick-chip">
+              <p v-if="!agentGroups.length" class="hint tiny">
+                {{ tr('spform.noAgentGroups') }}
+                <router-link to="/agents">{{ tr('spform.manageAgentGroups') }}</router-link>
+              </p>
+              <label v-for="g in agentGroups" :key="g.id" class="pick-chip">
                 <input
                   type="checkbox"
-                  :checked="form.agent_ids.includes(a.id)"
-                  @change="toggle(form.agent_ids, a.id)"
+                  :checked="form.agent_group_ids.includes(g.id)"
+                  @change="toggle(form.agent_group_ids, g.id)"
                 />
-                <span>{{ agentLabel(a) }}</span>
+                <span>{{ g.name }}</span>
+                <em>{{ tr('spform.groupMembers', { n: g.agent_ids.length }) }}</em>
               </label>
               <!-- An empty selection is legal (the page simply shows no nodes), but
                    it is almost always an oversight. -->
-              <p v-if="agents.length && !form.agent_ids.length" class="hint tiny warn">
+              <p v-if="agentGroups.length && !form.agent_group_ids.length" class="hint tiny warn">
                 {{ tr('spform.noAgentsPicked') }}
               </p>
             </div>
