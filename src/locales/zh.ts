@@ -1564,7 +1564,7 @@ export default {
     rawDiskFoot: '近期全精度样本',
     rollupDisk: '历史数据占用',
     rollupDiskFoot: '1 分钟 · 1 小时 · 1 天分级',
-    storageNote: '全精度样本保留数天，按 1 分钟 / 1 小时 / 1 天汇总分级长期保留 → 多年历史占用可控。备份时请把数据库文件与 tsdb 文件夹一起备份。',
+    storageNote: '全精度样本保留数天，按 1 分钟 / 1 小时 / 1 天汇总分级长期保留 → 多年历史占用可控。备份方法：停止服务后整个数据目录一起打包——数据库、它的 -wal/-shm 文件和 tsdb 文件夹同属一个数据集。',
     channels: '通知渠道',
     channelsHint: '渠道是通知的出口；哪些故障发到哪个渠道，由下方的通知策略决定。',
     webhook: {

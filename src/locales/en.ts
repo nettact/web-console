@@ -1568,7 +1568,7 @@ export default {
     rawDiskFoot: 'Recent full-detail samples',
     rollupDisk: 'History on disk',
     rollupDiskFoot: '1 min · 1 hour · 1 day tiers',
-    storageNote: 'Full-detail samples are kept for a few days; 1-min / 1-hour / 1-day summaries are retained long-term → years of history stay compact. Back up the database file and the tsdb folder together.',
+    storageNote: 'Full-detail samples are kept for a few days; 1-min / 1-hour / 1-day summaries are retained long-term → years of history stay compact. To back up: stop the server and archive its whole data directory — the database, its -wal/-shm files and the tsdb folder are one dataset.',
     channels: 'Notification channels',
     channelsHint: 'Channels are where a notice can go; which faults reach which channel is decided by the policies below.',
     webhook: {
