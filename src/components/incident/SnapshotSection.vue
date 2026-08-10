@@ -1,12 +1,17 @@
 <script setup lang="ts">
-// Immutable incident snapshot (INCIDENT-002): the frozen server base facts and
-// each detecting Agent's allowlisted scene entry. Renders only typed, allowlisted
-// payload fields — it never assumes or displays process, user, path or credential
-// content. Overall/entry/field-group status is shown as text (not colour alone),
-// with clock-skew, truncation and evidence-expired states surfaced explicitly.
+// Incident scene evidence (INCIDENT-005): the frozen server base facts, plus
+// every scene an Agent collected on its own fault edges and the server has
+// claimed for this incident. Renders only typed, allowlisted payload fields — it
+// never assumes or displays process, user, path or credential content. Field-
+// group outcomes are shown as text (not colour alone), with clock-skew,
+// truncation and evidence-expired states surfaced explicitly.
+//
+// There is no collection status to show. The Agent decides and delivers through
+// its outbox, so a scene has either arrived or has not — and "has not" during an
+// outage is the ordinary case, not a failure, which is what the empty state says.
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
-import type { SnapshotView, SnapshotEntry } from '../../api'
+import type { SnapshotView, SceneEntry, SceneTriggerView } from '../../api'
 import { useIncidentLabels, statusTone } from '../../composables/useIncidentLabels'
 import { fmtBytes } from '../../lib/format'
 import { toDateLocale } from '../../i18n'
@@ -14,24 +19,45 @@ import { toDateLocale } from '../../i18n'
 const props = defineProps<{ snapshot: SnapshotView | null; evidenceExpired: boolean }>()
 
 const { t, locale } = useI18n()
-const { snapStatusLabel, groupStatusLabel, fieldGroupLabel, snapReasonLabel, errorClassLabel } =
-  useIncidentLabels()
+const {
+  groupStatusLabel,
+  fieldGroupLabel,
+  snapReasonLabel,
+  errorClassLabel,
+  sceneTriggerLabel,
+  sceneDisconnectReasonLabel,
+} = useIncidentLabels()
 
 const fmtDateTime = (s: string | null) =>
   s ? new Date(s).toLocaleString(toDateLocale(locale.value), { hour12: false }) : '—'
 const base = computed(() => props.snapshot?.base ?? null)
-const entries = computed(() => props.snapshot?.entries ?? [])
-const skewSeconds = (e: SnapshotEntry) => (e.clock_skew_ms / 1000).toFixed(1)
+const scenes = computed(() => props.snapshot?.scenes ?? [])
+const aheadSeconds = (e: SceneEntry) => Math.abs(e.delivery_lag_ms / 1000).toFixed(1)
+// A scene that waited in the Agent's outbox is the ordinary case during an
+// outage, so the wait is stated as a fact and not as a warning. Below a minute
+// it is not worth a line at all.
+const LAG_WORTH_SAYING_MS = 60_000
+const lagMinutes = (e: SceneEntry) => Math.round(e.delivery_lag_ms / 60_000)
 const cpuPct = (v?: number) => (v == null ? '—' : `${v.toFixed(0)}%`)
+
+// One trigger in a sentence: what the Agent saw that made it look around.
+const triggerText = (g: SceneTriggerView) => {
+  if (g.kind === 'server_disconnect') {
+    const why = g.reason ? sceneDisconnectReasonLabel(g.reason) : ''
+    return (g.edge_count ?? 1) > 1
+      ? t('incidents.snap.triggerDisconnectRepeated', { reason: why, n: g.edge_count })
+      : t('incidents.snap.triggerDisconnect', { reason: why })
+  }
+  return t('incidents.snap.triggerProbeFault', { n: g.trigger_streak ?? 0 })
+}
+const triggerKey = (e: SceneEntry, g: SceneTriggerView, i: number) =>
+  `${e.report_id}:${g.kind}:${g.monitor_id ?? ''}:${i}`
 </script>
 
 <template>
   <section class="snap" aria-labelledby="snap-h">
     <div class="sec-head">
       <h4 id="snap-h">{{ t('incidents.snap.title') }}</h4>
-      <span v-if="snapshot" class="badge" :class="statusTone(snapshot.status)">
-        {{ snapStatusLabel(snapshot.status) }}
-      </span>
     </div>
 
     <p v-if="!snapshot" class="hint">{{ t('incidents.snap.none') }}</p>
@@ -70,19 +96,29 @@ const cpuPct = (v?: number) => (v == null ? '—' : `${v.toFixed(0)}%`)
         </div>
       </div>
 
-      <!-- Per-Agent scene entries. -->
-      <p v-if="!entries.length" class="hint">{{ t('incidents.snap.noEntries') }}</p>
-      <div v-for="e in entries" :key="e.agent_id" class="card sub entry">
+      <!-- Agent-collected scenes. -->
+      <p v-if="!scenes.length" class="hint">{{ t('incidents.snap.noScenes') }}</p>
+      <div v-for="e in scenes" :key="e.report_id" class="card sub entry">
         <div class="entry-head">
           <b>{{ e.agent_name || e.agent_id }}</b>
-          <span class="badge" :class="statusTone(e.status)">{{ snapStatusLabel(e.status) }}</span>
-          <span v-if="e.reason" class="hint">{{ snapReasonLabel(e.reason) }}</span>
+          <span v-for="(g, i) in e.triggers" :key="triggerKey(e, g, i)" class="badge neutral">
+            {{ sceneTriggerLabel(g.kind) }}
+          </span>
         </div>
-        <p v-if="e.skewed" class="notice warn small" role="note">
-          {{ t('incidents.snap.clockSkew', { s: skewSeconds(e) }) }}
+        <ul class="plain trigger-list">
+          <li v-for="(g, i) in e.triggers" :key="triggerKey(e, g, i)" class="hint">{{ triggerText(g) }}</li>
+        </ul>
+        <p v-if="e.clock_ahead" class="notice warn small" role="note">
+          {{ t('incidents.snap.clockAhead', { s: aheadSeconds(e) }) }}
+        </p>
+        <p v-else-if="e.delivery_lag_ms >= LAG_WORTH_SAYING_MS" class="hint small-note">
+          {{ t('incidents.snap.queuedFor', { n: lagMinutes(e) }) }}
+        </p>
+        <p v-if="e.truncated" class="notice warn small" role="note">
+          {{ t('incidents.snap.truncated') }}
         </p>
         <dl class="facts">
-          <div><dt>{{ t('incidents.snap.requestedAt') }}</dt><dd>{{ fmtDateTime(e.requested_at) }}</dd></div>
+          <div><dt>{{ t('incidents.snap.collectedAt') }}</dt><dd>{{ fmtDateTime(e.collected_at) }}</dd></div>
           <div><dt>{{ t('incidents.snap.receivedAt') }}</dt><dd>{{ fmtDateTime(e.received_at) }}</dd></div>
         </dl>
 
@@ -173,16 +209,15 @@ const cpuPct = (v?: number) => (v == null ? '—' : `${v.toFixed(0)}%`)
             </div>
           </div>
         </template>
-        <p v-else-if="!e.reason" class="hint">{{ t('incidents.snap.collecting') }}</p>
       </div>
     </template>
   </section>
 </template>
 
 <style scoped>
-/* Hallmark · component: incident snapshot · genre: custom application
+/* Hallmark · component: incident scene evidence · genre: custom application
  * theme: NetTact Liquid Glass · design-system: design.md
- * states: empty · collecting · partial · complete · failed · truncated · expired · responsive
+ * states: empty · awaiting-agent · partial · truncated · queued · clock-ahead · expired · responsive
  * pre-emit critique: P5 H5 E4 S5 R5 V4
  */
 .snap {
@@ -271,6 +306,12 @@ ul.plain li {
   min-width: 0;
   overflow-wrap: anywhere;
 }
+.trigger-list {
+  margin-bottom: var(--space-2xs);
+}
+.trigger-list li {
+  font-size: var(--text-sm);
+}
 .network-line {
   display: grid;
   grid-template-columns: max-content minmax(0, 1fr);
@@ -355,6 +396,10 @@ ul.interface-list li {
 }
 .notice.small {
   padding: var(--space-2xs) var(--space-xs);
+  font-size: var(--text-xs);
+}
+.small-note {
+  margin: var(--space-2xs) 0;
   font-size: var(--text-xs);
 }
 @media (max-width: 800px) {

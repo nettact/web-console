@@ -144,7 +144,7 @@ const incident = {
   severity: 'error',
   summary: '网关探测失败',
   evidence_expired: false,
-  snapshot_status: 'complete',
+  scene_count: 1,
   trace_count: 1,
   member_count: 2,
   active_member_count: 1,
@@ -171,20 +171,21 @@ function seed(extraMembers: Partial<FaultSignal>[] = []) {
   ])
   apiMock.incidentSnapshot.mockResolvedValue({
     incident_id: 'inc1',
-    status: 'complete',
-    total_bytes: 1200,
     truncated: false,
-    deadline_at: T0,
     created_at: T0,
-    entries: [
+    scenes: [
       {
+        report_id: 'scene_1',
         agent_id: 'a1',
         agent_name: 'Home Agent',
-        status: 'complete',
         clock_skew_ms: 120,
         skewed: true,
-        requested_at: T0,
+        truncated: false,
+        collected_at: T0,
         received_at: '2026-08-01T10:00:02Z',
+        triggers: [
+          { kind: 'probe_fault', monitor_id: 't1', config_serial: 3, trigger_streak: 3, first_failed_at: T0 },
+        ],
         payload: {
           groups: [{ group: 'network', status: 'collected' }],
           network: {
@@ -453,20 +454,22 @@ describe('IncidentReport', () => {
     expect(text).toContain('故障证据')
   })
 
-  it('warns when the snapshot is not complete instead of reading as empty', async () => {
+  // An incident with no claimed scene is the ordinary state during an outage —
+  // the Agent collects locally and delivers on reconnect — so the report has to
+  // say that rather than imply nothing was found.
+  it('explains an absent scene instead of reading as empty', async () => {
     apiMock.incidentSnapshot.mockResolvedValue({
       incident_id: 'inc1',
-      status: 'collecting',
-      total_bytes: 0,
       truncated: false,
-      deadline_at: T0,
       created_at: T0,
-      entries: [],
+      scenes: [],
     })
     const wrapper = await mountReport()
 
-    expect(wrapper.text()).toContain('采集中')
-    expect(wrapper.text()).toContain('导出的报告可能缺少现场证据')
+    expect(wrapper.text()).toContain('本次故障暂无现场')
+    // The copy must also say a scene is not guaranteed, so an operator does not
+    // wait for evidence a host fault or a lite Agent will never produce.
+    expect(wrapper.text()).toContain('并非每种故障都有现场')
   })
 
   it('keeps recovery rows from borrowing the failure sentence', async () => {

@@ -83,7 +83,7 @@ const detail = (members: FaultSignal[]): IncidentDetail => ({
     severity: 'error',
     summary: '…',
     evidence_expired: false,
-    snapshot_status: 'complete',
+    scene_count: 1,
     trace_count: 1,
     member_count: members.length,
     active_member_count: members.length,
@@ -108,7 +108,13 @@ describe('loadIncidentReport', () => {
   it('assembles every section and keys availability by target', async () => {
     apiMock.incident.mockResolvedValue(detail([member({})]))
     apiMock.timeline.mockResolvedValue([{ ts: '2026-08-01T10:00:00Z', kind: 'fault.confirmed', message: 'x' }])
-    apiMock.incidentSnapshot.mockResolvedValue({ incident_id: 'inc1', status: 'complete' } as SnapshotView)
+    apiMock.incidentSnapshot.mockResolvedValue({
+      incident_id: 'inc1',
+      base: null,
+      truncated: false,
+      created_at: '2026-08-01T10:00:00Z',
+      scenes: [{ report_id: 'scene_1', agent_id: 'a1' }],
+    } as SnapshotView)
     apiMock.incidentTraces.mockResolvedValue([{ report_id: 'r1', agent_id: 'a1' }])
     apiMock.fluctuations.mockResolvedValue({ items: [{ id: 'f1' }], total: 1 })
     apiMock.traceReport.mockResolvedValue({ report_id: 'r1', hops: [] } as unknown as TraceReportView)
@@ -119,7 +125,7 @@ describe('loadIncidentReport', () => {
 
     expect(data.detail.incident.id).toBe('inc1')
     expect(data.timeline).toHaveLength(1)
-    expect(data.snapshot?.status).toBe('complete')
+    expect(data.snapshot?.scenes).toHaveLength(1)
     expect(data.traces).toHaveLength(1)
     expect(data.precursors).toHaveLength(1)
     expect(data.precursorTotal).toBe(1)

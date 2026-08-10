@@ -814,7 +814,8 @@ export interface AttributionClue {
 // One incident: a group-aware, stable fault lifecycle. `state` is 'open' |
 // 'resolved'; `resolve_reason` distinguishes a genuine recovery ('recovered')
 // from a configuration-driven termination ('configuration_changed'). Member
-// counts are live; `snapshot_status` and `trace_count` summarize its evidence.
+// counts are live; `scene_count` and `trace_count` summarize the evidence the
+// detecting Agents collected and the server has claimed for it.
 export interface Incident {
   id: string
   site_id: string
@@ -827,7 +828,7 @@ export interface Incident {
   summary: string
   resolve_reason?: string
   evidence_expired: boolean
-  snapshot_status: string
+  scene_count: number
   trace_count: number
   member_count: number
   active_member_count: number
@@ -1089,33 +1090,55 @@ export interface AlertStorm {
   resolved_at: string | null
 }
 
-// Snapshot lifecycle status (shared by the snapshot and each per-Agent entry).
-export type SnapshotStatus = 'collecting' | 'complete' | 'partial' | 'failed'
 // Per-field-group collection outcome (allowlisted groups only).
 export type FieldGroupStatus = 'collected' | 'denied' | 'unsupported' | 'failed'
+// What made an Agent collect a scene (SceneTriggerView.kind).
+export type SceneTriggerKind = 'probe_fault' | 'server_disconnect'
 
-// GET /incidents/{id}/snapshot: the one immutable snapshot — the frozen server
-// base plus every per-Agent scene entry with its collection status.
+// GET /incidents/{id}/snapshot: the incident's evidence — the server-authored
+// base frozen when the incident opened, plus every scene an Agent collected on
+// its own fault edges and the server has since claimed for this incident.
+//
+// There is no collection status: the Agent decides, collects and delivers
+// through its outbox, so a scene either has arrived and been claimed or has not
+// yet. An empty scenes list means nothing has been claimed — during an outage
+// that is the normal state until the Agent reconnects.
 export interface SnapshotView {
   incident_id: string
-  status: SnapshotStatus
   base: SnapshotBase | null
-  total_bytes: number
   truncated: boolean
-  deadline_at: string
   created_at: string
-  entries: SnapshotEntry[]
+  scenes: SceneEntry[]
 }
-export interface SnapshotEntry {
+export interface SceneEntry {
+  report_id: string
   agent_id: string
   agent_name: string
-  status: SnapshotStatus
-  reason?: string
-  clock_skew_ms: number
-  skewed: boolean
+  collected_at: string | null // Agent clock at collection
+  received_at: string // server clock on arrival
+  // How long the scene waited between collection and arrival, signed. A large
+  // positive lag is the feature working — a scene collected during an outage
+  // cannot arrive until the Agent reconnects — and is never a clock complaint.
+  // Only a negative lag is: the Agent stamped it in the server's future, which
+  // delivery cannot explain (clock_ahead).
+  delivery_lag_ms: number
+  clock_ahead: boolean
+  truncated: boolean
+  triggers: SceneTriggerView[]
   payload?: SnapshotEntryPayload | null
-  requested_at: string
-  received_at: string | null
+}
+// One fault edge the scene answers for. A scene can carry several: edges crossed
+// while it was being collected join it rather than queueing another copy of the
+// same machine.
+export interface SceneTriggerView {
+  kind: SceneTriggerKind
+  monitor_id?: string
+  config_serial?: number
+  trigger_streak?: number
+  first_failed_at?: string
+  disconnected_at?: string
+  reason?: string
+  edge_count?: number
 }
 // Server-authored base, frozen once at incident-open time.
 export interface SnapshotBase {
@@ -2383,8 +2406,9 @@ export const api = {
   // One incident with its member fault signals (each carrying frozen evidence).
   incident: (id: string) => req<IncidentDetail>('GET', `/api/v1/incidents/${encodeURIComponent(id)}`),
   timeline: (id: string) => req<TimelineEntry[]>('GET', `/api/v1/incidents/${encodeURIComponent(id)}/timeline`),
-  // Immutable incident snapshot (server base + per-Agent scene entries). null when
-  // the incident has no snapshot row yet.
+  // An incident's evidence scene: the immutable server base plus every scene an
+  // Agent collected locally and the server has claimed for this incident. null
+  // when the incident has no base row yet.
   incidentSnapshot: (id: string) =>
     reqOrNull<SnapshotView>('GET', `/api/v1/incidents/${encodeURIComponent(id)}/snapshot`),
   // Traceroute reports referenced by an incident, each with this incident's

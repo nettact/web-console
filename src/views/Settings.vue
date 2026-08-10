@@ -199,16 +199,17 @@ async function saveListen() {
   }
 }
 
-// Incident-evidence (INCIDENT-002) and path-diagnostic (DIAG-001) tuning, backed
+// Incident-evidence (INCIDENT-005) and path-diagnostic (DIAG-001) tuning, backed
 // by the flat settings API. Bounds mirror the server's validated ranges; time and
 // size fields are presented in friendly units and converted on save.
 //
 // These are the POLICY the server states, not a schedule it keeps: the Agent
-// decides when to traceroute and runs it locally, so there is no server-side
-// concurrency knob — how many traces one machine may run at once belongs with
-// that machine's other probe budgets.
+// decides when to traceroute and when to collect a scene, and runs both locally.
+// So there is no server-side concurrency knob and no collection deadline — how
+// long one machine may spend on its own evidence belongs with that machine's
+// other probe budgets. What stays here is what the SERVER does with what
+// arrives: how much of a scene it stores, and how long it keeps it.
 const diag = reactive({
-  snapshotDeadlineS: 10, // incident_snapshot_deadline_ms / 1000
   snapshotMaxKiB: 256, // incident_snapshot_max_bytes / 1024
   diagEnabled: true, // diag_enabled
   totalTimeoutS: 300, // diag_total_timeout_ms / 1000
@@ -221,7 +222,6 @@ const diag = reactive({
 })
 // [min, max] in the presented unit, mirroring server-core settings.IntKeys.
 const BOUNDS: Record<string, [number, number]> = {
-  snapshotDeadlineS: [1, 60],
   snapshotMaxKiB: [64, 1024],
   totalTimeoutS: [5, 600],
   maxHops: [1, 64],
@@ -239,7 +239,6 @@ function populateDiag(s: Record<string, string>) {
     const v = parseInt(s[k] ?? '', 10)
     return Number.isFinite(v) ? v : def
   }
-  diag.snapshotDeadlineS = Math.round(num('incident_snapshot_deadline_ms', 10000) / 1000)
   diag.snapshotMaxKiB = Math.round(num('incident_snapshot_max_bytes', 262144) / 1024)
   diag.diagEnabled = num('diag_enabled', 1) !== 0
   diag.totalTimeoutS = Math.round(num('diag_total_timeout_ms', 300000) / 1000)
@@ -264,7 +263,6 @@ async function saveDiag() {
   }
   try {
     await api.updateSettings({
-      incident_snapshot_deadline_ms: String(diag.snapshotDeadlineS * 1000),
       incident_snapshot_max_bytes: String(diag.snapshotMaxKiB * 1024),
       diag_enabled: diag.diagEnabled ? '1' : '0',
       diag_total_timeout_ms: String(diag.totalTimeoutS * 1000),
@@ -1048,14 +1046,6 @@ onMounted(() => {
       <div class="panel-body">
         <p class="hint">{{ t('settings.evidence.hint') }}</p>
         <div class="knob-grid">
-          <label class="knob">
-            <span class="knob-label">{{ t('settings.evidence.snapshotDeadline') }}</span>
-            <span class="knob-input">
-              <input type="number" v-model.number="diag.snapshotDeadlineS" min="1" max="60" step="1" />
-              <span class="unit">{{ t('settings.unit.seconds') }}</span>
-            </span>
-            <span class="knob-help hint">{{ t('settings.evidence.snapshotDeadlineHelp') }}</span>
-          </label>
           <label class="knob">
             <span class="knob-label">{{ t('settings.evidence.snapshotMax') }}</span>
             <span class="knob-input">

@@ -27,7 +27,7 @@ import { fmtBytes } from '../lib/format'
 import { formatAvailability } from '../lib/targetStatus'
 import { generateReportPdf, reportFilename } from '../lib/reportPdf'
 import { pushToast } from '../toasts'
-import type { FaultSignal, ProbeRound, SnapshotEntry, TimelineEntry, TraceReportView } from '../api'
+import type { FaultSignal, ProbeRound, SceneEntry, TimelineEntry, TraceReportView } from '../api'
 
 const route = useRoute()
 const router = useRouter()
@@ -42,8 +42,8 @@ const {
   attributionSentence,
   clueLabel,
   cluePolarity,
-  snapStatusLabel,
   snapReasonLabel,
+  sceneTriggerLabel,
   fieldGroupLabel,
   groupStatusLabel,
   traceStatusLabel,
@@ -161,7 +161,6 @@ function memberTitle(m: FaultSignal): string {
 // palette is the report's own fixed light set (theme-independent document).
 const sevChip = (sev: string) => severityTone(sev)
 const stateChip = (m: FaultSignal) => (memberStateKey(m) === 'firing' ? 'open' : memberStateKey(m) === 'terminated' ? 'warn' : 'ok')
-const snapChip = (status: string) => (statusTone(status) === 'ok' ? 'ok' : statusTone(status) === 'open' ? 'open' : 'warn')
 const groupChip = (status: string) => (status === 'collected' ? 'ok' : status === 'failed' ? 'open' : 'warn')
 const traceChip = (status: string) => (statusTone(status) === 'ok' ? 'ok' : statusTone(status) === 'open' ? 'open' : 'warn')
 
@@ -249,8 +248,8 @@ function traceNotes(r: TraceReportView): string[] {
   return notes
 }
 
-// ---- snapshot helpers ----
-const skewSeconds = (e: SnapshotEntry) => (e.clock_skew_ms / 1000).toFixed(1)
+// ---- scene helpers ----
+const aheadSeconds = (e: SceneEntry) => Math.abs(e.delivery_lag_ms / 1000).toFixed(1)
 
 // ---- load ----
 let unmounted = false
@@ -645,18 +644,21 @@ async function exportPdf() {
         <p v-if="snapshotFailed" class="note warn">{{ t('incidents.report.readFailed') }}</p>
         <p v-else-if="!snapshot" class="hint">{{ t('incidents.snap.none') }}</p>
         <template v-else>
-          <p v-if="snapshot.status !== 'complete'" class="note warn">
-            {{ t('incidents.report.snapshotIncomplete', { status: snapStatusLabel(snapshot.status) }) }}
-          </p>
           <p v-if="snapshot.truncated" class="note warn">{{ t('incidents.snap.truncated') }}</p>
-          <p v-if="!snapshot.entries.length" class="hint">{{ t('incidents.snap.noEntries') }}</p>
-          <div v-for="e in snapshot.entries" :key="e.agent_id" class="snap-agent">
+          <p v-if="!snapshot.scenes.length" class="hint">{{ t('incidents.snap.noScenes') }}</p>
+          <div v-for="e in snapshot.scenes" :key="e.report_id" class="snap-agent">
             <div class="subhead">
               <h3>{{ e.agent_name || e.agent_id }}</h3>
-              <span class="chip" :class="snapChip(e.status)">{{ snapStatusLabel(e.status) }}</span>
-              <span v-if="e.reason" class="chip neutral">{{ snapReasonLabel(e.reason) }}</span>
-              <span v-if="e.skewed" class="chip warn">{{ t('incidents.snap.clockSkew', { s: skewSeconds(e) }) }}</span>
+              <span v-for="(g, i) in e.triggers" :key="`${e.report_id}:${i}`" class="chip neutral">
+                {{ sceneTriggerLabel(g.kind) }}
+              </span>
             </div>
+            <!-- Full sentences, not chips: .chip is nowrap, and these overflow a
+                 phone-width report sheet. -->
+            <p v-if="e.truncated" class="note warn">{{ t('incidents.snap.truncated') }}</p>
+            <p v-if="e.clock_ahead" class="note warn">
+              {{ t('incidents.snap.clockAhead', { s: aheadSeconds(e) }) }}
+            </p>
             <template v-if="e.payload">
               <ul v-if="e.payload.groups.length" class="group-status">
                 <li v-for="g in e.payload.groups" :key="g.group">

@@ -47,12 +47,17 @@ export function useIncidentLabels() {
     // Incident resolution reason (recovered vs configuration_changed).
     resolveReasonLabel: (r: string) => tr(`incidents.resolveReason.${r}`, r),
 
-    // Snapshot overall / per-entry status and per-field-group outcome.
-    snapStatusLabel: (s: string) => tr(`incidents.snap.status.${s}`, s),
+    // Per-field-group collection outcome.
     groupStatusLabel: (s: string) => tr(`incidents.snap.groupStatus.${s}`, s),
     fieldGroupLabel: (g: string) => tr(`incidents.snap.group.${g}`, g),
-    // Stable snapshot reason codes (per group and per entry).
+    // Stable scene reason codes (per field group).
     snapReasonLabel: (r: string) => tr(`incidents.snap.reason.${r}`, r),
+    // What made the Agent collect a scene: a probe fault streak, or losing its
+    // session to this server.
+    sceneTriggerLabel: (k: string) => tr(`incidents.snap.trigger.${k}`, k),
+    // The Agent's own classification of what ended the session (dns, refused,
+    // timeout, tls*, network, ack_timeout).
+    sceneDisconnectReasonLabel: (r: string) => tr(`incidents.snap.disconnectReason.${r}`, r),
 
     // Traceroute status / stable reason / mode.
     traceStatusLabel: (s: string) => tr(`incidents.trace.status.${s}`, s),

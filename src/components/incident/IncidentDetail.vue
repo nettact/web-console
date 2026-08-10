@@ -1,9 +1,12 @@
 <script setup lang="ts">
-// Accessible incident detail drawer (ALERT-002 + INCIDENT-002 + DIAG-001). Owns
+// Accessible incident detail drawer (ALERT-002 + INCIDENT-005 + DIAG-001). Owns
 // its own data (incident + member fault signals, notification records, timeline,
-// immutable snapshot, shared trace reports) and self-paced polling: it only polls while the snapshot is still
-// collecting or a referenced trace report is queued/running, via the reusable
-// usePolling composable (single in-flight request, cleanup on unmount). Dialog
+// evidence scene, shared trace reports) and self-paced polling. Neither kind of
+// agent-collected evidence is live work — the Agent decides and delivers both on
+// its own, and the server's SSE incident update is what brings a newly claimed
+// one in — so the only thing left worth polling for is a notification coming due,
+// via the reusable usePolling composable (single in-flight request, cleanup on
+// unmount). Dialog
 // semantics: role=dialog / aria-modal, focus moved in on open, Tab trapped,
 // Escape closes and focus is restored to the triggering element on unmount. The
 // component is keyed by incident id in the parent, so switching incidents tears
@@ -185,14 +188,16 @@ async function load(): Promise<boolean | number> {
     traces.value = reports.filter((r): r is TraceReportView => !!r)
     loaded.value = true
     error.value = ''
-    // Keep polling only while there is live work to observe. Traceroute is not
-    // live work any more: the Agent runs it on its own and a report only exists
-    // once it is finished and uploaded, so there is no in-progress state to watch
-    // — a report that has not arrived yet arrives with the next telemetry packet.
-    if (snap?.status === 'collecting') return true
-    // A pending delivery is live work too — the drawer should show it flip to
-    // "sent" rather than looking stuck — but a notification delay is minutes,
-    // not seconds. Sleep until just after the earliest one comes due instead of
+    // Keep polling only while there is live work to observe. Neither kind of
+    // agent-collected evidence is live work any more: the Agent decides and runs
+    // both on its own, and a report exists only once it is finished and
+    // uploaded, so there is no in-progress state to watch. One that has not
+    // arrived yet arrives with the next telemetry packet, and the incident's SSE
+    // update reloads this drawer when the server claims it.
+    //
+    // A pending delivery IS live work — the drawer should show it flip to "sent"
+    // rather than looking stuck — but a notification delay is minutes, not
+    // seconds. Sleep until just after the earliest one comes due instead of
     // re-fetching the whole drawer every 4s for an answer that cannot change yet.
     return nextDeliveryDelay(notes ?? [])
   } catch (e) {
