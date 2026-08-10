@@ -85,6 +85,7 @@ const nav = [
   { to: '/agents', label: 'nav.agents' },
   { to: '/monitoring', label: 'nav.monitoring' },
   { to: '/proxies', label: 'nav.proxies' },
+  { to: '/status-pages', label: 'nav.statusPages' },
   { to: '/settings', label: 'nav.settings' },
 ]
 
@@ -230,6 +231,13 @@ async function dismissUpdate(): Promise<void> {
               <circle cx="20" cy="12" r="2" />
               <path d="M5.6 10.6 10.5 6.2M13.5 6.2l4.9 4.4" />
               <path d="M6 13.5c3 3.5 9 3.5 12 0" stroke-dasharray="2 2.5" />
+            </svg>
+            <!-- 公共状态页：对外公开的只读看板 -->
+            <svg v-else-if="n.to === '/status-pages'" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+              stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+              <rect x="2.5" y="4" width="19" height="13" rx="2" />
+              <path d="M8 21h8M12 17v4" />
+              <path d="M6.5 12.5h2.5M11 9.5h2.5M15.5 12.5H18" />
             </svg>
             <!-- 设置 -->
             <svg v-else viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"

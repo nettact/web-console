@@ -13,6 +13,8 @@ import MonitorForm from './views/MonitorForm.vue'
 import MonitorGroupForm from './views/MonitorGroupForm.vue'
 import Proxies from './views/Proxies.vue'
 import ProxyForm from './views/ProxyForm.vue'
+import StatusPages from './views/StatusPages.vue'
+import StatusPageForm from './views/StatusPageForm.vue'
 import Incidents from './views/Incidents.vue'
 import IncidentReport from './views/IncidentReport.vue'
 import Agents from './views/Agents.vue'
@@ -39,6 +41,12 @@ const router = createRouter({
     { path: '/proxies', component: Proxies },
     { path: '/proxies/new', component: ProxyForm },
     { path: '/proxies/:id/edit', component: ProxyForm },
+    // Public status pages. NOTE: the console must never claim the /status path —
+    // the standalone public status app is mounted there by the server, and a
+    // history-mode route would shadow it.
+    { path: '/status-pages', component: StatusPages },
+    { path: '/status-pages/new', component: StatusPageForm },
+    { path: '/status-pages/:id/edit', component: StatusPageForm },
     { path: '/incidents', component: Incidents },
     // Self-contained diagnostic report (INCIDENT-004). Rendered bare (no app
     // shell) because it is a print document, not a page in the nav.

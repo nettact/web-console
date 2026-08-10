@@ -680,6 +680,47 @@ export interface ProbeTarget {
   proxy_id?: string
 }
 
+// A public status page: an anonymous, slug-addressed board over a hand-picked
+// subset of this site's agents and monitoring targets. Mirrors
+// server-core/statuspage.Page.
+//
+// The three visibility flags are enforced SERVER-side, not by this console:
+// turning a view off makes its public endpoint answer 404 like an unknown page,
+// so the toggle is a publication decision rather than a rendering one.
+export interface StatusPage {
+  id: string
+  site_id: string
+  // The public address: <console>/status/#/<slug>. Unique across sites.
+  slug: string
+  title: string
+  description: string
+  enabled: boolean
+  // Opt-in reveal of raw probe addresses. Off by default — a target list is an
+  // internal topology map.
+  show_target_address: boolean
+  show_agent_view: boolean
+  show_target_view: boolean
+  agent_ids: string[]
+  target_ids: string[]
+  created_at: string
+  updated_at: string
+}
+
+// Create/update payload. The selections are replaced wholesale, and an id the
+// site cannot publish (unknown, revoked, cross-site) is a 400 rather than being
+// silently dropped.
+export interface StatusPageInput {
+  slug: string
+  title: string
+  description: string
+  enabled: boolean
+  show_target_address: boolean
+  show_agent_view: boolean
+  show_target_view: boolean
+  agent_ids: string[]
+  target_ids: string[]
+}
+
 // Proxy types. socks5/http are relays (CONNECT); wireguard is a userspace tunnel
 // the agent dials from inside, which is why it is the only type that can carry
 // ICMP and UDP probes. Mirrors protocol/config/proxy.go.
@@ -2477,6 +2518,15 @@ export const api = {
   updateProxy: (id: string, body: ProxyInput) =>
     req<unknown>('PUT', `/api/v1/proxies/${encodeURIComponent(id)}`, body),
   deleteProxy: (id: string) => req<unknown>('DELETE', `/api/v1/proxies/${encodeURIComponent(id)}`),
+  // Public status pages. These routes are the ADMIN side; what they curate is
+  // served anonymously from /api/v1/public/pages/<slug>, which this console never
+  // calls (the standalone status app does).
+  statusPages: () => req<StatusPage[]>('GET', '/api/v1/status-pages'),
+  statusPage: (id: string) => req<StatusPage>('GET', `/api/v1/status-pages/${encodeURIComponent(id)}`),
+  createStatusPage: (body: StatusPageInput) => req<StatusPage>('POST', '/api/v1/status-pages', body),
+  updateStatusPage: (id: string, body: StatusPageInput) =>
+    req<StatusPage>('PUT', `/api/v1/status-pages/${encodeURIComponent(id)}`, body),
+  deleteStatusPage: (id: string) => req<unknown>('DELETE', `/api/v1/status-pages/${encodeURIComponent(id)}`),
   // Notification policies: whether/when/where a recorded fault is announced. The
   // site default is created on first read and cannot be deleted.
   notificationPolicies: (siteID: string) =>

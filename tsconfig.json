@@ -16,5 +16,12 @@
     "noUnusedParameters": true,
     "types": []
   },
-  "include": ["src/**/*.ts", "src/**/*.d.ts", "src/**/*.vue"]
+  "include": [
+    "src/**/*.ts",
+    "src/**/*.d.ts",
+    "src/**/*.vue",
+    "status/src/**/*.ts",
+    "status/src/**/*.d.ts",
+    "status/src/**/*.vue"
+  ]
 }
