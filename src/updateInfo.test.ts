@@ -34,13 +34,24 @@ const update = (extra: Partial<UpdateInfo> = {}): UpdateInfo => ({
 })
 
 describe('dismissalKey', () => {
-  it('stores the version verbatim', () => {
-    expect(dismissalKey('v1.3.0')).toBe('v1.3.0')
+  it('stores the version verbatim off the Store', () => {
+    expect(dismissalKey(update({ latest_version: 'v1.3.0' }))).toBe('v1.3.0')
   })
 
   it('collapses an unnamed version to a sentinel no release can collide with', () => {
-    expect(dismissalKey('')).toBe(UNKNOWN_VERSION)
-    expect(dismissalKey('   ')).toBe(UNKNOWN_VERSION)
+    expect(dismissalKey(update({ latest_version: '' }))).toBe(UNKNOWN_VERSION)
+    expect(dismissalKey(update({ latest_version: '   ' }))).toBe(UNKNOWN_VERSION)
+  })
+
+  // A Store version is not authoritative — the desktop names it from a
+  // device-agnostic catalog — so the key is the build being updated from, the
+  // same rule update.StorePendingKey applies to the tray notification.
+  it('keys a Store update by the build it updates from', () => {
+    const store = update({ install_type: 'store', current_version: 'v1.2.0' })
+    expect(dismissalKey(store)).toBe('store-pending-from-v1.2.0')
+    // Whatever the catalog does or does not name it, the key does not move.
+    expect(dismissalKey({ ...store, latest_version: '' })).toBe('store-pending-from-v1.2.0')
+    expect(dismissalKey({ ...store, latest_version: 'v9.9.9' })).toBe('store-pending-from-v1.2.0')
   })
 })
 
@@ -80,7 +91,15 @@ describe('shouldShowBanner', () => {
   it('is dismissible when the Store cannot name the version', () => {
     const store = update({ install_type: 'store', latest_version: '' })
     expect(shouldShowBanner(store, true, false, '')).toBe(true)
-    expect(shouldShowBanner(store, true, false, UNKNOWN_VERSION)).toBe(false)
+    expect(shouldShowBanner(store, true, false, 'store-pending-from-v1.2.0')).toBe(false)
+  })
+
+  // The dismissed banner must come back once the Store update actually lands,
+  // because what is pending then is a different update — even if the catalog
+  // still names the same version it named before.
+  it('reappears for a Store install once the pending update has been installed', () => {
+    const store = update({ install_type: 'store', current_version: 'v1.3.0' })
+    expect(shouldShowBanner(store, true, false, 'store-pending-from-v1.2.0')).toBe(true)
   })
 
   it('does not let an unnamed dismissal hide a later named version', () => {

@@ -37,8 +37,21 @@ export const SETTING_DISMISSED_VERSION = 'update_dismissed_version'
 export const UNKNOWN_VERSION = 'unknown'
 
 // dismissalKey is the value stored (and compared) for one update.
-export function dismissalKey(latestVersion: string): string {
-  return latestVersion.trim() || UNKNOWN_VERSION
+//
+// Off the Store the version names exactly what the user is about to install —
+// it comes from the same release catalog that serves the download — so it is
+// the key. On the Store it does not: StoreContext will not say which version it
+// is holding for this device, and the catalog the desktop names it from is
+// device-agnostic, so during a gradual rollout it can name a release this
+// machine is not yet offered, and some days it names nothing at all. Keyed on
+// that, a dismissal would attach to the wrong update and hide the banner for
+// the one this machine actually receives. The build being updated *from* has
+// neither problem: fixed while the update is pending, and necessarily different
+// once it installs. This mirrors update.StorePendingKey in the desktop app,
+// which keys its tray notification the same way for the same reasons.
+export function dismissalKey(update: UpdateInfo): string {
+  if (update.install_type === 'store') return `store-pending-from-${update.current_version}`
+  return update.latest_version.trim() || UNKNOWN_VERSION
 }
 
 // shouldShowBanner is the whole visibility decision, kept pure so it can be
@@ -60,7 +73,7 @@ export function shouldShowBanner(
   if (!loaded) return false
   if (!update?.update_available) return false
   if (noticeDisabled) return false
-  return dismissalKey(update.latest_version) !== dismissedVersion
+  return dismissalKey(update) !== dismissedVersion
 }
 
 export const showUpdateBanner = computed(() =>
@@ -143,11 +156,15 @@ export function syncUpdateNotice(): Promise<void> {
   return inflight
 }
 
-// dismissUpdateBanner hides the banner for the current version only. Local state
+// dismissUpdateBanner hides the banner for the current update only. Local state
 // is updated first so the banner disappears on click; a failed write just means
 // it comes back on the next load.
+//
+// With no update block there is nothing to dismiss: the banner is not up, and
+// writing a key would only risk suppressing whatever arrives next.
 export async function dismissUpdateBanner(): Promise<void> {
-  const key = dismissalKey(serverInfo.update?.latest_version ?? '')
+  if (!serverInfo.update) return
+  const key = dismissalKey(serverInfo.update)
   writeSeq++
   updateNotice.dismissedVersion = key
   await api.updateSettings({ [SETTING_DISMISSED_VERSION]: key })
