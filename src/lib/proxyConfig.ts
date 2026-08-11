@@ -151,9 +151,18 @@ export function endpointPattern(slug: string): string {
   return `^/api/v1/public/pages/${slug}(/(agent-statuses|target-statuses|incidents))?$`
 }
 
-/** The line config.js must contain for '/' to render this page. */
+/**
+ * The line config.js must contain for '/' to render this page.
+ *
+ * `console: false` is not optional decoration on this topology. The generated
+ * proxy config blocks the console, the admin API and /login by design, so the
+ * board must not offer a sign-in link back to them — it would point at a door
+ * this very config bricks up. It matters most precisely when the published page
+ * is also the server's home page, since that is the only case where the link
+ * would otherwise render.
+ */
 export function runtimeConfigLine(slug: string): string {
-  return `window.NETTACT_STATUS_CONFIG = { apiBase: "", page: "${slug}" };`
+  return `window.NETTACT_STATUS_CONFIG = { apiBase: "", page: "${slug}", console: false };`
 }
 
 /** The /config.js location — identical in both modes, so neither can forget it. */

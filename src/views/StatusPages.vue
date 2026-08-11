@@ -137,6 +137,7 @@ onMounted(async () => {
               <td>
                 <span v-if="p.enabled" class="pill on">{{ tr('statusPages.published') }}</span>
                 <span v-else class="pill off">{{ tr('statusPages.unpublished') }}</span>
+                <span v-if="p.is_home" class="pill home">{{ tr('statusPages.home') }}</span>
               </td>
               <td>
                 <span v-if="p.show_agent_view" class="chip">
@@ -251,6 +252,13 @@ onMounted(async () => {
 }
 .pill.off {
   color: var(--text-dim);
+}
+/* At most one row ever carries this, so it reads as a marker rather than a
+   status: it sits beside published/unpublished instead of replacing either. */
+.pill.home {
+  margin-left: 6px;
+  color: var(--color-accent-text, var(--color-ink-2));
+  border-color: var(--color-focus);
 }
 .chip {
   display: inline-block;

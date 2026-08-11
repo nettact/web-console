@@ -133,7 +133,14 @@ button {
 
 .controls {
   display: flex;
-  flex: none;
+  /* Shrinkable and wrapping, because the header carries a variable number of
+     controls: the home page adds a sign-in link beside theme and language, and
+     the English labels are the long ones. Held at `flex: none` with no wrap, that
+     third control pushed the row past the viewport around 360-400px instead of
+     moving to a second line. */
+  flex: 0 1 auto;
+  flex-wrap: wrap;
+  justify-content: flex-end;
   gap: var(--space-2xs);
 }
 
@@ -156,7 +163,14 @@ button {
 }
 
 .control {
+  /* inline-flex, not the default inline: the sign-in control is an <a>, and an
+     inline box ignores min-height and will not centre its own text, so without
+     this it renders visibly shorter than the buttons beside it. */
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   padding: var(--space-2xs) var(--space-xs);
+  text-decoration: none;
   white-space: nowrap;
 }
 
@@ -904,7 +918,11 @@ button {
   }
 }
 
-@media (max-width: 21.99rem) {
+/* Three controls plus the brand lockup stop fitting on one line well before the
+   old 21.99rem cutoff, so the head wraps earlier now. Below this the controls
+   take a row of their own; .controls also wraps internally, which covers the
+   narrower widths and the longer English labels. */
+@media (max-width: 26rem) {
   .site-head-inner {
     flex-wrap: wrap;
   }

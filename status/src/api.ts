@@ -16,6 +16,10 @@ export interface PublicPage {
   show_target_view: boolean
   show_incidents: boolean
   show_target_address: boolean
+  /** True only on the page an operator nominated as the server's home page — the
+   *  one an anonymous request for '/' is redirected to. The board uses it to
+   *  decide whether to offer a way back to the console; nothing else. */
+  is_home: boolean
   generated_at: string
 }
 

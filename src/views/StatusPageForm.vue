@@ -19,6 +19,7 @@ import {
   type ProbeTarget,
   type StatusPageAgentMetrics,
   type StatusPageInput,
+  type StatusPage,
 } from '../api'
 import { consoleBase, ensureConsoleBase } from '../consoleBaseUrl'
 import { copyToClipboard } from '../lib/clipboard'
@@ -39,6 +40,9 @@ const AGENT_METRICS_OPTIONS: StatusPageAgentMetrics[] = ['off', 'basic', 'full']
 const form = reactive<StatusPageInput>(blank())
 const agentGroups = ref<AgentGroup[]>([])
 const targets = ref<ProbeTarget[]>([])
+// Every page in the site, read only so the form can name whichever one currently
+// holds the home flag.
+const allPages = ref<StatusPage[]>([])
 const error = ref('')
 const busy = ref(false)
 const saved = ref(false)
@@ -57,6 +61,7 @@ function blank(): StatusPageInput {
     show_target_view: true,
     show_incidents: false,
     agent_metrics: 'basic',
+    is_home: false,
     agent_group_ids: [],
     target_ids: [],
   }
@@ -64,6 +69,13 @@ function blank(): StatusPageInput {
 
 const publicUrl = computed(() =>
   form.slug ? publicStatusUrl(consoleBase.url, form.slug) : '',
+)
+
+// The page that holds the home flag today, excluding the one being edited.
+// Saving with "set as home page" on takes the flag from it, so the form says so
+// before the save rather than leaving it to be discovered afterwards.
+const currentHome = computed(() =>
+  allPages.value.find((p) => p.is_home && p.id !== editingId.value) ?? null,
 )
 
 function toggle(list: string[], id: string) {
@@ -86,9 +98,13 @@ async function load() {
   // The pickers are the form's substance, so a failure to load them is a real
   // error rather than something to degrade past.
   try {
-    ;[agentGroups.value, targets.value] = await Promise.all([
+    ;[agentGroups.value, targets.value, allPages.value] = await Promise.all([
       api.agentGroups(SITE),
       api.listTargets(SITE),
+      // Needed only to name the page that is about to lose the home flag. A
+      // failure here is not worth blocking the form over — the toggle still
+      // works, it just says less.
+      api.statusPages().catch(() => [] as StatusPage[]),
     ])
   } catch (e) {
     error.value = String((e as Error).message || e)
@@ -110,6 +126,7 @@ async function load() {
     form.show_target_view = page.show_target_view
     form.show_incidents = page.show_incidents
     form.agent_metrics = page.agent_metrics
+    form.is_home = page.is_home
     form.agent_group_ids = [...page.agent_group_ids]
     form.target_ids = [...page.target_ids]
     loaded.value = true
@@ -278,6 +295,30 @@ onMounted(async () => {
               </span>
               <input type="checkbox" v-model="form.show_incidents" />
             </label>
+            <label class="toggle-row">
+              <span class="toggle-copy">
+                <strong>{{ tr('spform.setHome') }}</strong>
+                <small>
+                  {{ form.is_home ? tr('spform.setHomeOnHint') : tr('spform.setHomeOffHint') }}
+                </small>
+              </span>
+              <input type="checkbox" v-model="form.is_home" />
+            </label>
+            <!-- Both consequences of the toggle are stated before the save, not
+                 after: which page loses the flag, and that an unpublished page
+                 cannot serve as one. -->
+            <p v-if="form.is_home && currentHome" class="hint tiny home-note warn">
+              {{ tr('spform.homeTakeover', { name: currentHome.title }) }}
+            </p>
+            <p v-if="form.is_home && !form.enabled" class="hint tiny home-note warn">
+              {{ tr('spform.homeNeedsPublished') }}
+            </p>
+            <p v-if="form.is_home" class="hint tiny home-note">
+              {{ tr('spform.homeVsDomain') }}
+              <a :href="tr('docs.statusPageDomainUrl')" target="_blank" rel="noopener noreferrer">
+                {{ tr('statusPages.domainLink') }}
+              </a>
+            </p>
           </div>
         </aside>
       </div>
@@ -494,6 +535,14 @@ onMounted(async () => {
   margin-top: var(--space-xs);
   padding-top: var(--space-xs);
   border-top: var(--rule-hair) solid var(--color-rule);
+}
+/* Consequences of the home toggle, shown under it rather than as a separate row:
+   they belong to that control, not to the panel. */
+.home-note {
+  margin: var(--space-2xs) 0 0;
+}
+.home-note.warn {
+  color: var(--color-warning-text);
 }
 .toggle-row {
   display: flex;

@@ -23,6 +23,7 @@ const page: StatusPage = {
   show_target_view: true,
   show_incidents: true,
   agent_metrics: 'basic',
+  is_home: false,
   agent_group_ids: [],
   target_ids: [],
   created_at: '2026-01-01T00:00:00Z',
@@ -47,7 +48,7 @@ describe('ProxyConfigDialog', () => {
 
     expect(out).toContain('server_name status.example.com;')
     expect(out).toContain('^/api/v1/public/pages/home-lab(/(agent-statuses|target-statuses|incidents))?$')
-    expect(out).toContain('window.NETTACT_STATUS_CONFIG = { apiBase: "", page: "home-lab" };')
+    expect(out).toContain('window.NETTACT_STATUS_CONFIG = { apiBase: "", page: "home-lab", console: false };')
     // The root serves the status app, not the console.
     expect(out).toContain('proxy_pass http://nettact_home_lab/status/;')
     // Deny by default, and no blanket API forward.

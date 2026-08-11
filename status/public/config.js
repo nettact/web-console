@@ -23,4 +23,10 @@
 // Only a default, never a lock: '#/other-page' still opens another page, so a
 // deployment that must expose exactly one board restricts the API at the reverse
 // proxy (see the "status page on its own domain" guide) rather than here.
-window.NETTACT_STATUS_CONFIG = { apiBase: '', page: '' }
+//
+// console controls one thing: whether the board offers a sign-in link back to
+// the NetTact console. It only ever appears on the page marked as the server's
+// home page, and only when this is true (the default). Set it to false on a
+// deployment where the console is not reachable from this address — which is
+// exactly what the own-domain topology does, since it blocks /login on purpose.
+window.NETTACT_STATUS_CONFIG = { apiBase: '', page: '', console: true }

@@ -4,6 +4,7 @@ export default {
   skipToContent: 'Skip to status content',
   loading: 'Loading…',
   retry: 'Retry',
+  login: 'Log in',
 
   notFound: {
     title: 'Page not found',

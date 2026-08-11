@@ -72,7 +72,7 @@ describe('endpointPattern', () => {
 describe('runtimeConfigLine', () => {
   it('names the page and keeps the API same-origin', () => {
     expect(runtimeConfigLine('home-lab')).toBe(
-      'window.NETTACT_STATUS_CONFIG = { apiBase: "", page: "home-lab" };',
+      'window.NETTACT_STATUS_CONFIG = { apiBase: "", page: "home-lab", console: false };',
     )
   })
 })

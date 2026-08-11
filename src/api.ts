@@ -705,6 +705,11 @@ export interface StatusPage {
   // How much a published node discloses: 'off' is up/down only, 'basic' adds
   // percentages and rates, 'full' adds byte totals and the busiest mount's name.
   agent_metrics: StatusPageAgentMetrics
+  // The server's front door: an anonymous GET / redirects here instead of serving
+  // the console. At most one page carries it server-wide, and saving a second one
+  // with it set moves it rather than failing. Distinct from the status app's
+  // deploy-time `page` config, which serves the own-domain topology.
+  is_home: boolean
   // Nodes are published by GROUP: the page shows each selected group's CURRENT
   // members, so an agent added to a published group becomes public with it.
   agent_group_ids: string[]
@@ -728,6 +733,7 @@ export interface StatusPageInput {
   show_target_view: boolean
   show_incidents: boolean
   agent_metrics: StatusPageAgentMetrics
+  is_home: boolean
   agent_group_ids: string[]
   target_ids: string[]
 }

@@ -41,6 +41,7 @@ const page = {
   show_target_view: true,
   show_incidents: false,
   show_target_address: false,
+  is_home: false,
   generated_at: new Date().toISOString(),
 }
 
@@ -892,5 +893,34 @@ describe('status page', () => {
     expect(location.hash).toBe('#/home-lab')
     expect(document.activeElement).toBe(w.find('#public-status-main').element)
     expect(pageSpy).not.toHaveBeenCalledWith('public-status-main', expect.anything())
+  })
+})
+
+// The sign-in link is the board's only route back to the console, and it is
+// deliberately conditional: it belongs to the page that IS the server's front
+// door, not to every published board. The consoleReachable half of that condition
+// needs a mocked config and so lives in consoleLink.test.ts.
+describe('sign-in link', () => {
+  async function mountWith(isHome: boolean) {
+    vi.spyOn(api, 'page').mockResolvedValue({ ...page, is_home: isHome })
+    vi.spyOn(api, 'agentStatuses').mockResolvedValue({ generated_at: page.generated_at, agents: [] })
+    vi.spyOn(api, 'targetStatuses').mockResolvedValue({
+      generated_at: page.generated_at,
+      days_from: '2026-05-14',
+      targets: [],
+    })
+    const w = mountApp()
+    await flushPromises()
+    return w
+  }
+
+  it('is offered by the home page', async () => {
+    const link = (await mountWith(true)).find('a.control-login')
+    expect(link.exists()).toBe(true)
+    expect(link.attributes('href')).toBe('/login')
+  })
+
+  it('is absent from an ordinary published page', async () => {
+    expect((await mountWith(false)).find('a.control-login').exists()).toBe(false)
   })
 })

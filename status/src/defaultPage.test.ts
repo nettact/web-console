@@ -15,7 +15,7 @@ import en from './locales/en'
 // would run after config.ts had already read it, and mocking the module inside
 // App.test.ts would silently retune every case there, including the one that
 // asserts the empty state.
-vi.mock('./config', () => ({ apiBase: '', defaultSlug: 'home-lab' }))
+vi.mock('./config', () => ({ apiBase: '', defaultSlug: 'home-lab', consoleReachable: true }))
 
 const page = {
   slug: 'home-lab',
@@ -25,6 +25,7 @@ const page = {
   show_target_view: true,
   show_incidents: false,
   show_target_address: false,
+  is_home: false,
   generated_at: new Date().toISOString(),
 }
 

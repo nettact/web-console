@@ -8,6 +8,7 @@ export default {
   skipToContent: '跳到状态内容',
   loading: '加载中…',
   retry: '重试',
+  login: '登录',
 
   notFound: {
     title: '页面不存在',

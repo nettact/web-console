@@ -13,7 +13,7 @@ import {
   type PublicTargetRow,
 } from './api'
 import { resolveSlug } from './route'
-import { defaultSlug } from './config'
+import { apiBase, consoleReachable, defaultSlug } from './config'
 import { theme, toggleTheme } from './theme'
 import { setLocale, toDateLocale } from './i18n'
 import UptimeBar from './UptimeBar.vue'
@@ -46,6 +46,11 @@ const TICK_MS = 5_000
 const { t, locale } = useI18n()
 
 const slug = ref(resolveSlug(location.hash, defaultSlug))
+// Where the sign-in link points. Same-origin deployments leave apiBase empty and
+// get '/login'; a board served from another host points back at the server that
+// answers its API, which is where the console lives. Whether the link is offered
+// at all is a separate decision — see consoleReachable in config.ts.
+const loginUrl = apiBase + '/login'
 /** The main region, so "skip to content" can move focus without a hash navigation. */
 const mainEl = ref<HTMLElement | null>(null)
 const page = ref<PublicPage | null>(null)
@@ -401,6 +406,17 @@ onUnmounted(() => {
           </span>
         </div>
         <div class="controls">
+          <!-- Offered only by the page that IS this server's front door, and only
+               where the console can actually be reached from. An own-domain
+               deployment blocks /login at the proxy on purpose; a link to it
+               there would be a dead end. -->
+          <a
+            v-if="page?.is_home && consoleReachable"
+            class="control control-login"
+            :href="loginUrl"
+          >
+            {{ t('login') }}
+          </a>
           <button
             type="button"
             class="control"

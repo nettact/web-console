@@ -22,3 +22,21 @@ export const apiBase: string = (window.NETTACT_STATUS_CONFIG?.apiBase ?? '').rep
  * dist that any deployment can drop in place unmodified.
  */
 export const defaultSlug: string = (window.NETTACT_STATUS_CONFIG?.page ?? '').trim()
+
+/**
+ * Whether the NetTact console is reachable from wherever this page is being
+ * served — i.e. whether offering a link to it would lead anywhere.
+ *
+ * Only the home page ever offers that link, but "is the home page" and "can a
+ * reader get to the console" are different questions, and on one supported
+ * topology they disagree. A status page published on its own domain deliberately
+ * has the console, the admin API and the agent channel blocked at the reverse
+ * proxy (see the "status page on its own domain" guide, which blocks /login by
+ * name and verifies it stays blocked). Rendering a sign-in link there would hand
+ * every visitor a dead end pointing at a door the operator bricked up on purpose.
+ *
+ * Defaults to true, so the ordinary same-origin deployment — where the console
+ * is one path away — needs no configuration. The reverse-proxy config the console
+ * generates sets it to false.
+ */
+export const consoleReachable: boolean = window.NETTACT_STATUS_CONFIG?.console !== false
