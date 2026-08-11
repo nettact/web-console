@@ -107,6 +107,11 @@ CSS consumes `var(--space-*)`; raw spacing is limited to browser fixes.
   containment level.
 - Onboarding may number real sequential steps.
 - Login may use a split composition.
+- The standalone public status page may use the shared **Liquid Glass** variant:
+  translucent surfaces, restrained specular highlights, spatial depth and
+  fluid 150–300 ms state transitions. It supports both themes and reduced
+  transparency, keeps text on contrast-safe surfaces, and reserves continuous
+  animation for loading feedback only.
 
 ## What pages MUST share
 

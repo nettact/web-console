@@ -4,12 +4,14 @@
 // download for no benefit.
 export default {
   brand: 'NetTact',
+  pageLabel: '服务状态',
+  skipToContent: '跳到状态内容',
   loading: '加载中…',
   retry: '重试',
 
   notFound: {
     title: '页面不存在',
-    body: '这个状态页可能已被删除或停止发布。请向提供链接的人确认地址。',
+    body: '这个状态页可能已被删除或暂时不可用。请向提供链接的人确认地址。',
   },
   noSlug: {
     title: '未指定状态页',
@@ -29,28 +31,28 @@ export default {
   stale: '数据可能已过时，正在重试',
 
   tabs: {
-    label: '公开状态分类',
+    label: '状态分类',
   },
 
   current: {
     title: '当前状态',
     healthy: {
       label: '运行正常',
-      summary: '已公开资源目前未发现故障。',
+      summary: '当前未发现故障。',
     },
     fault: {
       label: '存在故障',
-      summary: '已公开资源中至少有一项当前存在故障，请查看下方状态。',
+      summary: '至少一项服务当前存在故障，请查看下方详情。',
     },
     unknown: {
       label: '状态待确认',
-      summary: '部分已公开监控目标暂无结论，目前无法确认是否存在故障。',
+      summary: '部分监控目标暂无结论，目前无法确认完整状态。',
     },
   },
 
   agents: {
     title: '节点',
-    empty: '这个页面没有公开任何节点。',
+    empty: '暂无节点状态。',
     unnamed: '节点 {n}',
     online: '在线',
     offline: '离线',
@@ -60,7 +62,7 @@ export default {
 
   targets: {
     title: '监控目标',
-    empty: '这个页面没有公开任何监控目标。',
+    empty: '暂无监控目标状态。',
     unnamed: '{kind} 目标 {n}',
     availabilityUnknown: '暂无数据',
     summary: '{up} / {total} 正常',
@@ -100,8 +102,8 @@ export default {
   incidents: {
     title: '事故记录',
     summary: '{n} 条记录',
-    empty: '这段时间内，已公开的目标和节点没有事故记录。',
-    unknownSubject: '已公开服务',
+    empty: '这段时间内没有事故记录。',
+    unknownSubject: '未知服务',
     multipleSubjects: '{name} 等 {n} 项',
     window: '显示最近 {n} 天以及仍在进行的更早事故。',
     truncated: '仅显示最近 {n} 条事故。',
@@ -126,12 +128,13 @@ export default {
   res: {
     cpu: 'CPU',
     load: '负载',
+    loadPrimary: '1m {value}',
+    loadSecondary: '5m {five} / 15m {fifteen}',
     memory: '内存',
     disk: '磁盘',
     network: '网络',
     uptime: '运行时长',
     ofTotal: '{used} / {total}',
-    mounts: '{n} 个挂载点',
     stale: '该节点的数据已停止更新。',
     uptimeDH: '{d} 天 {h} 小时',
     uptimeHM: '{h} 小时 {m} 分',
@@ -156,5 +159,5 @@ export default {
   lang: {
     toggle: 'English',
   },
-  poweredBy: '由 NetTact 提供',
+  poweredBy: '由 {brand} 驱动',
 }

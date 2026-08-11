@@ -106,6 +106,13 @@ describe('status page', () => {
 
     expect(text).toContain('Home lab status')
     expect(text).toContain('Public board')
+    expect(w.get('.brand-lockup').text()).toContain('NetTact')
+    expect(w.get('.status-main').attributes('tabindex')).toBe('-1')
+    expect(w.get('.site-foot a').attributes()).toMatchObject({
+      href: 'https://nettact.org/',
+      target: '_blank',
+      rel: 'noopener noreferrer',
+    })
     expect(w.get('#status-tab-targets').attributes('aria-selected')).toBe('true')
     expect(w.get('#status-tab-agents').attributes('aria-selected')).toBe('false')
     expect(text).not.toContain('Alpha')
@@ -298,6 +305,29 @@ describe('status page', () => {
     const w = mountApp()
     await flushPromises()
     expect(w.text()).toContain('Page not found')
+    expect(w.get('.retry-button').text()).toBe('Retry')
+  })
+
+  it('lets a reader retry a failed first load immediately', async () => {
+    const pageSpy = vi
+      .spyOn(api, 'page')
+      .mockRejectedValueOnce(new Error('network down'))
+      .mockResolvedValue({ ...page, show_agent_view: false })
+    vi.spyOn(api, 'targetStatuses').mockResolvedValue({
+      generated_at: page.generated_at,
+      days_from: '2026-05-14',
+      targets: [tgt({ name: 'Website', ordinal: 1, kind: 'http', status: 'up' })],
+    })
+
+    const w = mountApp()
+    await flushPromises()
+    expect(w.text()).toContain('Temporarily unavailable')
+
+    await w.get('.retry-button').trigger('click')
+    await flushPromises()
+
+    expect(pageSpy).toHaveBeenCalledTimes(2)
+    expect(w.text()).toContain('Website')
   })
 
   it('asks for nothing when no page is addressed', async () => {
@@ -750,7 +780,6 @@ describe('status page', () => {
             load: [0.42, 0.31, 0.28],
             mem_pct: 48,
             disk_pct: 61,
-            disk_mounts: 3,
             rx_bps: 1_200_000,
             tx_bps: 340_000,
             uptime_s: 1_051_200,
@@ -764,7 +793,8 @@ describe('status page', () => {
     const text = w.text()
 
     expect(text).toContain('13%') // 12.5 rounded — whole percent is the resolution here
-    expect(text).toContain('0.42 / 0.31 / 0.28')
+    expect(text).toContain('1m 0.42')
+    expect(text).toContain('5m 0.31 / 15m 0.28')
     expect(text).toContain('48%')
     expect(text).toContain('61%')
     expect(text).toContain('1.1 MB/s')
@@ -772,6 +802,42 @@ describe('status page', () => {
     // agent_metrics=basic: no byte totals and no mount path anywhere on the page.
     expect(text).not.toContain('GB')
     expect(text).not.toContain('/mnt')
+  })
+
+  it('puts resource totals on a secondary line and protects uptime and network readouts', async () => {
+    vi.spyOn(api, 'page').mockResolvedValue({ ...page, show_target_view: false })
+    vi.spyOn(api, 'agentStatuses').mockResolvedValue({
+      generated_at: page.generated_at,
+      agents: [
+        {
+          name: 'Alpha',
+          ordinal: 1,
+          online: true,
+          resources: {
+            mem_pct: 75,
+            mem_used: 45_800_000_000,
+            mem_total: 60_800_000_000,
+            disk_pct: 82,
+            disk_used: 6_700_000_000_000,
+            disk_total: 18_500_000_000_000,
+            rx_bps: 65_800,
+            tx_bps: 174_000,
+            uptime_s: 486_000,
+          },
+        },
+      ],
+    })
+
+    const w = mountApp()
+    await flushPromises()
+
+    expect(w.findAll('.res-total')).toHaveLength(2)
+    expect(w.findAll('.res-primary')).toHaveLength(2)
+    expect(w.findAll('.res-total').every((detail) => detail.element.tagName === 'SMALL')).toBe(true)
+    expect(w.findAll('.res-io span')).toHaveLength(2)
+    expect(w.get('.res-io').text()).toContain('↓')
+    expect(w.get('.res-io').text()).toContain('↑')
+    expect(w.get('.res-runtime').text()).toContain('5d 15h')
   })
 
   it('omits the resource block when the page publishes none', async () => {

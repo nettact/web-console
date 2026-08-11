@@ -6,6 +6,7 @@ import {
   formatBps,
   formatBytes,
   formatLoad,
+  formatLoadValue,
   formatPct,
   formatUptime,
   hasResources,
@@ -176,6 +177,8 @@ describe('resource formatting', () => {
 
   it('keeps load averages in 1/5/15 order', () => {
     expect(formatLoad([0.42, 0.31, 0.28])).toBe('0.42 / 0.31 / 0.28')
+    expect(formatLoadValue(0.42)).toBe('0.42')
+    expect(formatLoadValue(Number.NaN)).toBe('—')
   })
 
   it('formats uptime as the two largest units that matter', () => {

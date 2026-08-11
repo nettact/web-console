@@ -1,6 +1,18 @@
 [
   {
     "date": "2026-08-11",
+    "macrostructure": "Live Status + Liquid Glass Layers",
+    "theme": "custom",
+    "theme_axes": "dark + light / geometric-sans + mono-readout / cool",
+    "vibe": "calm translucent, spatial, public, trustworthy",
+    "enrichment": "none",
+    "brief": "Public status page rebuilt as an accessible Liquid Glass live board",
+    "scope": "public-status-page",
+    "genre": "custom application system",
+    "design_system": "design.md"
+  },
+  {
+    "date": "2026-08-11",
     "macrostructure": "Narrative Workflow + Workbench Tabs",
     "theme": "custom",
     "theme_axes": "dark + light / geometric-sans / cool",

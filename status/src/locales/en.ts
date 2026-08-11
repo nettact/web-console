@@ -1,11 +1,13 @@
 export default {
   brand: 'NetTact',
+  pageLabel: 'Service status',
+  skipToContent: 'Skip to status content',
   loading: 'Loading…',
   retry: 'Retry',
 
   notFound: {
     title: 'Page not found',
-    body: 'This status page may have been removed or unpublished. Check the address with whoever shared it.',
+    body: 'This status page may have been removed or is temporarily unavailable. Check the address with whoever shared it.',
   },
   noSlug: {
     title: 'No status page selected',
@@ -25,28 +27,28 @@ export default {
   stale: 'This data may be out of date; retrying',
 
   tabs: {
-    label: 'Published status categories',
+    label: 'Status categories',
   },
 
   current: {
     title: 'Current status',
     healthy: {
       label: 'Operational',
-      summary: 'No current faults were found in the published resources.',
+      summary: 'No current faults were found.',
     },
     fault: {
       label: 'Fault detected',
-      summary: 'At least one published resource currently has a fault; review the status below.',
+      summary: 'At least one service currently has a fault; review the details below.',
     },
     unknown: {
       label: 'Status incomplete',
-      summary: 'Some published monitors have no current verdict, so fault status is not fully known.',
+      summary: 'Some monitors have no current verdict, so the overall status is not fully known.',
     },
   },
 
   agents: {
     title: 'Nodes',
-    empty: 'This page publishes no nodes.',
+    empty: 'No node status is available.',
     unnamed: 'Node {n}',
     online: 'Online',
     offline: 'Offline',
@@ -56,7 +58,7 @@ export default {
 
   targets: {
     title: 'Monitors',
-    empty: 'This page publishes no monitoring targets.',
+    empty: 'No monitor status is available.',
     unnamed: '{kind} target {n}',
     availabilityUnknown: 'no data yet',
     summary: '{up} of {total} up',
@@ -96,8 +98,8 @@ export default {
   incidents: {
     title: 'Incidents',
     summary: '{n} records',
-    empty: 'No incidents were recorded for the published resources in this period.',
-    unknownSubject: 'Published service',
+    empty: 'No incidents were recorded in this period.',
+    unknownSubject: 'Unknown service',
     multipleSubjects: '{name} and {n} more',
     window: 'Shows the last {n} days and any older incidents still in progress.',
     truncated: 'Showing the most recent {n} incidents.',
@@ -122,12 +124,13 @@ export default {
   res: {
     cpu: 'CPU',
     load: 'Load',
+    loadPrimary: '1m {value}',
+    loadSecondary: '5m {five} / 15m {fifteen}',
     memory: 'Memory',
     disk: 'Disk',
     network: 'Network',
     uptime: 'Uptime',
     ofTotal: '{used} / {total}',
-    mounts: '{n} mounts',
     stale: 'This node has stopped reporting.',
     uptimeDH: '{d}d {h}h',
     uptimeHM: '{h}h {m}m',
@@ -152,5 +155,5 @@ export default {
   lang: {
     toggle: '中文',
   },
-  poweredBy: 'Powered by NetTact',
+  poweredBy: 'Powered by {brand}',
 }

@@ -37,8 +37,8 @@ export interface PublicAgentRow {
  * EVERY field is optional and that is load-bearing, not defensive typing: the
  * host metric families are permission-gated per agent, so a denied family has no
  * samples at all. Render an absent field as a gap — never as 0, which would claim
- * something the server did not say. The byte totals and the mount name arrive
- * only when the page opted into full detail.
+ * something the server did not say. Byte totals arrive only when the page opted
+ * into full detail; filesystem mount identity is never public.
  */
 export interface PublicResources {
   cpu_pct?: number
@@ -51,8 +51,6 @@ export interface PublicResources {
   disk_pct?: number
   disk_used?: number
   disk_total?: number
-  disk_mount?: string
-  disk_mounts?: number
   rx_bps?: number
   tx_bps?: number
   uptime_s?: number

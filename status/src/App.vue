@@ -22,7 +22,7 @@ import {
   formatAvailability,
   formatBps,
   formatBytes,
-  formatLoad,
+  formatLoadValue,
   formatPct,
   formatUptime,
   hasResources,
@@ -366,12 +366,20 @@ onUnmounted(() => {
 </script>
 
 <template>
+  <a class="skip-link" href="#public-status-main">{{ t('skipToContent') }}</a>
   <div class="page">
-    <template v-if="page">
-      <header class="head">
-        <div>
-          <h1>{{ page.title }}</h1>
-          <p v-if="page.description">{{ page.description }}</p>
+    <header class="site-head">
+      <div class="site-head-inner">
+        <div class="brand-lockup" aria-label="NetTact">
+          <span class="brand-mark" aria-hidden="true">
+            <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M3 12h3l2.5 7 5-15L18 12h3" />
+            </svg>
+          </span>
+          <span class="brand-copy">
+            <strong>{{ t('brand') }}</strong>
+            <small>{{ t('pageLabel') }}</small>
+          </span>
         </div>
         <div class="controls">
           <button
@@ -390,18 +398,56 @@ onUnmounted(() => {
             {{ t('lang.toggle') }}
           </button>
         </div>
-      </header>
+      </div>
+    </header>
 
-      <section class="board" :aria-label="t('tabs.label')">
-        <section class="current-status" :aria-label="t('current.title')" aria-live="polite">
-          <span class="badge" :class="`badge-${currentStatus.tone}`">
-            {{ t(`current.${currentStatus.key}.label`) }}
-          </span>
-          <p>{{ t(`current.${currentStatus.key}.summary`) }}</p>
+    <main id="public-status-main" class="status-main" tabindex="-1">
+      <template v-if="page">
+        <section class="identity">
+          <div class="identity-copy">
+            <h1>{{ page.title }}</h1>
+            <p v-if="page.description">{{ page.description }}</p>
+          </div>
+
+          <section
+            class="current-status"
+            :class="`current-status-${currentStatus.tone}`"
+            :aria-label="t('current.title')"
+            aria-live="polite"
+          >
+            <div class="status-readout">
+              <span class="status-beacon" aria-hidden="true"></span>
+              <div>
+                <strong>{{ t(`current.${currentStatus.key}.label`) }}</strong>
+                <p>{{ t(`current.${currentStatus.key}.summary`) }}</p>
+              </div>
+            </div>
+
+            <dl class="status-metrics">
+              <div v-if="page.show_target_view">
+                <dt>{{ t('targets.title') }}</dt>
+                <dd>{{ t('targets.summary', { up: upTargets, total: targets?.length ?? 0 }) }}</dd>
+              </div>
+              <div v-if="page.show_agent_view">
+                <dt>{{ t('agents.title') }}</dt>
+                <dd>{{ t('agents.summary', { online: onlineAgents, total: agents?.length ?? 0 }) }}</dd>
+              </div>
+              <div v-if="page.show_incidents">
+                <dt>{{ t('incidents.title') }}</dt>
+                <dd>{{ t('incidents.summary', { n: incidents?.length ?? 0 }) }}</dd>
+              </div>
+            </dl>
+
+            <div class="status-meta">
+              <span v-if="updatedLabel">{{ updatedLabel }}</span>
+              <span v-if="stale" class="meta-warn">{{ t('stale') }}</span>
+            </div>
+          </section>
         </section>
 
-        <div v-if="showTabs" class="board-toolbar">
-          <div class="tabs" :class="`tabs-${visibleViews.length}`" role="tablist" :aria-label="t('tabs.label')">
+        <section class="board" :aria-label="t('tabs.label')">
+          <div v-if="showTabs" class="board-toolbar">
+            <div class="tabs" :class="`tabs-${visibleViews.length}`" role="tablist" :aria-label="t('tabs.label')">
             <button
               v-if="page.show_target_view"
               id="status-tab-targets"
@@ -456,10 +502,10 @@ onUnmounted(() => {
                 {{ t('incidents.summary', { n: incidents.length }) }}
               </small>
             </button>
+            </div>
           </div>
-        </div>
 
-        <Transition name="tab-fade" mode="out-in">
+          <Transition name="tab-fade" mode="out-in">
           <section
             v-if="visibleView === 'incidents'"
             id="status-panel-incidents"
@@ -540,13 +586,23 @@ onUnmounted(() => {
                     </div>
                     <div v-if="agent.resources?.load" class="res-cell res-wide">
                       <dt>{{ t('res.load') }}</dt>
-                      <dd>{{ formatLoad(agent.resources.load) }}</dd>
+                      <dd>
+                        <span class="res-primary">
+                          {{ t('res.loadPrimary', { value: formatLoadValue(agent.resources.load[0]) }) }}
+                        </span>
+                        <small class="res-secondary">
+                          {{ t('res.loadSecondary', {
+                            five: formatLoadValue(agent.resources.load[1]),
+                            fifteen: formatLoadValue(agent.resources.load[2]),
+                          }) }}
+                        </small>
+                      </dd>
                     </div>
-                    <div v-if="agent.resources?.mem_pct != null" class="res-cell">
+                    <div v-if="agent.resources?.mem_pct != null" class="res-cell res-wide">
                       <dt>{{ t('res.memory') }}</dt>
                       <dd :class="`tone-${usageTone(agent.resources.mem_pct)}`">
-                        {{ formatPct(agent.resources.mem_pct) }}
-                        <small v-if="agent.resources.mem_total != null">
+                        <span class="res-primary">{{ formatPct(agent.resources.mem_pct) }}</span>
+                        <small v-if="agent.resources.mem_total != null" class="res-total">
                           {{ t('res.ofTotal', {
                             used: formatBytes(agent.resources.mem_used),
                             total: formatBytes(agent.resources.mem_total),
@@ -554,32 +610,26 @@ onUnmounted(() => {
                         </small>
                       </dd>
                     </div>
-                    <div v-if="agent.resources?.disk_pct != null" class="res-cell">
+                    <div v-if="agent.resources?.disk_pct != null" class="res-cell res-wide">
                       <dt>{{ t('res.disk') }}</dt>
                       <dd :class="`tone-${usageTone(agent.resources.disk_pct)}`">
-                        {{ formatPct(agent.resources.disk_pct) }}
-                        <small v-if="agent.resources.disk_total != null">
+                        <span class="res-primary">{{ formatPct(agent.resources.disk_pct) }}</span>
+                        <small v-if="agent.resources.disk_total != null" class="res-total">
                           {{ t('res.ofTotal', {
                             used: formatBytes(agent.resources.disk_used),
                             total: formatBytes(agent.resources.disk_total),
                           }) }}
                         </small>
-                        <!-- One percentage is the BUSIEST mount, so say when there
-                             were others rather than letting it read as the whole
-                             disk picture. -->
-                        <small v-if="agent.resources.disk_mount">{{ agent.resources.disk_mount }}</small>
-                        <small v-else-if="(agent.resources.disk_mounts ?? 0) > 1">
-                          {{ t('res.mounts', { n: agent.resources.disk_mounts }) }}
-                        </small>
                       </dd>
                     </div>
                     <div v-if="agent.resources?.rx_bps != null || agent.resources?.tx_bps != null" class="res-cell res-wide">
                       <dt>{{ t('res.network') }}</dt>
-                      <dd>
-                        ↓ {{ formatBps(agent.resources?.rx_bps) }} · ↑ {{ formatBps(agent.resources?.tx_bps) }}
+                      <dd class="res-io">
+                        <span v-if="agent.resources?.rx_bps != null">↓ {{ formatBps(agent.resources.rx_bps) }}</span>
+                        <span v-if="agent.resources?.tx_bps != null">↑ {{ formatBps(agent.resources.tx_bps) }}</span>
                       </dd>
                     </div>
-                    <div v-if="agent.resources?.uptime_s != null" class="res-cell">
+                    <div v-if="agent.resources?.uptime_s != null" class="res-cell res-runtime">
                       <dt>{{ t('res.uptime') }}</dt>
                       <dd>{{ formatUptime(agent.resources.uptime_s, t) }}</dd>
                     </div>
@@ -650,34 +700,41 @@ onUnmounted(() => {
             </ul>
             <p v-else class="empty">{{ t('targets.empty') }}</p>
           </section>
-        </Transition>
+          </Transition>
+        </section>
+      </template>
 
-        <footer class="meta">
-          <span v-if="updatedLabel">{{ updatedLabel }}</span>
-          <span v-if="stale" class="meta-warn">{{ t('stale') }}</span>
-        </footer>
+      <section v-else-if="loading" class="notice notice-loading" role="status" aria-live="polite">
+        <span class="loading-track" aria-hidden="true"></span>
+        <p>{{ t('loading') }}</p>
       </section>
-    </template>
 
-    <div v-else-if="loading" class="notice">
-      <p>{{ t('loading') }}</p>
-    </div>
+      <section v-else-if="notFound" class="notice" role="alert">
+        <h1>{{ t('notFound.title') }}</h1>
+        <p>{{ t('notFound.body') }}</p>
+        <button type="button" class="retry-button" @click="load('navigate')">{{ t('retry') }}</button>
+      </section>
 
-    <div v-else-if="notFound" class="notice">
-      <h1>{{ t('notFound.title') }}</h1>
-      <p>{{ t('notFound.body') }}</p>
-    </div>
+      <section v-else-if="!slug" class="notice">
+        <h1>{{ t('noSlug.title') }}</h1>
+        <p>{{ t('noSlug.body') }}</p>
+      </section>
 
-    <div v-else-if="!slug" class="notice">
-      <h1>{{ t('noSlug.title') }}</h1>
-      <p>{{ t('noSlug.body') }}</p>
-    </div>
+      <section v-else class="notice" role="alert">
+        <h1>{{ t('error.title') }}</h1>
+        <p>{{ t('error.body') }}</p>
+        <button type="button" class="retry-button" @click="load('navigate')">{{ t('retry') }}</button>
+      </section>
+    </main>
 
-    <div v-else class="notice">
-      <h1>{{ t('error.title') }}</h1>
-      <p>{{ t('error.body') }}</p>
-    </div>
-
-    <p class="foot">{{ t('poweredBy') }}</p>
+    <footer class="site-foot">
+      <i18n-t keypath="poweredBy" tag="span">
+        <template #brand>
+          <a href="https://nettact.org/" target="_blank" rel="noopener noreferrer">NetTact</a>
+        </template>
+      </i18n-t>
+      <span aria-hidden="true">//</span>
+      <span>{{ t('pageLabel') }}</span>
+    </footer>
   </div>
 </template>

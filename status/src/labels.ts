@@ -112,10 +112,15 @@ export function formatPct(v: number | null | undefined): string {
   return `${Math.round(v)}%`
 }
 
+/** One load-average point, kept separate so the UI can establish 1/5/15 hierarchy. */
+export function formatLoadValue(v: number | null | undefined): string {
+  return v == null || Number.isNaN(v) ? '—' : v.toFixed(2)
+}
+
 /** Load averages, two decimals, in the 1/5/15 order every tool prints them. */
 export function formatLoad(v: PublicResources['load']): string {
   if (!v) return '—'
-  return v.map((n) => (Number.isNaN(n) ? '—' : n.toFixed(2))).join(' / ')
+  return v.map(formatLoadValue).join(' / ')
 }
 
 /**

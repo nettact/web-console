@@ -57,3 +57,15 @@ describe('status page locale message syntax', () => {
     })
   }
 })
+
+describe('status page visitor copy', () => {
+  it.each([
+    ['zh', zh, /公开|发布/i],
+    ['en', en, /\bpublish(?:ed|es|ing)?\b/i],
+  ] as const)('%s avoids publisher-facing language', (_name, tree, pattern) => {
+    const offenders = leaves(tree)
+      .filter(([, value]) => pattern.test(value))
+      .map(([path, value]) => `${path}: ${value}`)
+    expect(offenders, `publisher-facing copy: ${offenders.join(' | ')}`).toEqual([])
+  })
+})
