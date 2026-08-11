@@ -43,6 +43,11 @@ export default {
     create: '新建状态页',
     listTitle: '状态页',
     listHint: '页面只公开你在这里选中的内容；未选中的节点与目标不会出现，也不会被接口返回。',
+    // 列表与编辑页的公开地址旁都会出现：反向代理是状态页里唯一无法在控制台内完成的
+    // 环节，所以指路必须放在地址出现的地方。
+    domainHint: '想把某个页面放到自己域名的根路径、地址里不带 /status？',
+    domainLink: '反向代理配置指南（nginx / Caddy）',
+    proxyConfig: '反代配置',
     empty: '还没有状态页。新建一个，即可把部分监控结果公开出去。',
     thTitle: '名称',
     thUrl: '公开地址',
@@ -64,6 +69,36 @@ export default {
     deleteTitle: '删除状态页',
     deleteBody: '删除后 “{name}” 的公开地址立即失效。此操作不可撤销。',
     deleted: '已删除 {name}',
+  },
+
+  // 反向代理配置生成器。c* 是写进生成配置里的注释行，每条都必须能独立成一行。
+  spproxy: {
+    title: '反向代理配置',
+    intro:
+      '生成一份 vhost：把「{title}」发布到独立域名的根路径（地址里不带 /status），其余一律 404 —— 控制台、管理接口、Agent 通道，以及你建的其他状态页。',
+    domain: '对外域名',
+    domainHint: '这个状态页将要使用的域名。',
+    domainInvalid: '请填写主机名，例如 status.example.com',
+    upstream: 'NetTact 服务器地址',
+    upstreamHint: '反代机器访问 Server 用的地址，不是对外地址。',
+    upstreamInvalid: '请填写协议加主机，例如 http://127.0.0.1:12450',
+    root: '静态文件目录',
+    rootInvalid: '请填写不含空格与花括号的路径',
+    flavor: '反代软件',
+    mode: '前端文件',
+    modeProxy: '从服务器反代',
+    modeStatic: '本地副本',
+    modeProxyHint: '页面文件也从 Server 取，不用复制任何东西，升级后也不用重做。',
+    modeStaticHint: '反代从你填的目录提供自己的一份 dist/status，只把接口转发给 Server。Server 每次升级后要重新复制一次。',
+    fixFirst: '填好上面的字段即可生成配置。',
+    docsHint: 'reload 之后按文档逐条验收：',
+    cHeader: '本域名只发布 {slug} 这一个状态页；换页面时，下面每一处 {slug} 都要改。',
+    cApi: '唯一放行的接口 —— 一个页面，四条只读路径。',
+    cConfig: '由反代下发的运行时配置：它指定了根路径显示哪个页面。',
+    cApp: '页面本体：根路径映射到上游的 /status/。',
+    cAppStatic: '页面本体：三类文件，直接从磁盘提供。',
+    cDeny: '其余全部关闭：控制台、管理接口、Agent 通道、别的状态页。',
+    cRoot: 'dist/status 的副本。Server 升级后记得重新复制。',
   },
 
   spform: {
@@ -3070,6 +3105,7 @@ export default {
   docs: {
     permissionsUrl: 'https://nettact.org/zh/permissions',
     openwrtUrl: 'https://nettact.org/zh/openwrt',
+    statusPageDomainUrl: 'https://nettact.org/zh/status-page-domain',
   },
 
   // 硬性「平台/构建不支持」类受阻权限的可用平台说明（按权限 id 查找）。缺失时

@@ -12,7 +12,8 @@ import {
   type PublicPage,
   type PublicTargetRow,
 } from './api'
-import { slugFromHash } from './route'
+import { resolveSlug } from './route'
+import { defaultSlug } from './config'
 import { theme, toggleTheme } from './theme'
 import { setLocale, toDateLocale } from './i18n'
 import UptimeBar from './UptimeBar.vue'
@@ -44,7 +45,9 @@ const TICK_MS = 5_000
 
 const { t, locale } = useI18n()
 
-const slug = ref(slugFromHash(location.hash))
+const slug = ref(resolveSlug(location.hash, defaultSlug))
+/** The main region, so "skip to content" can move focus without a hash navigation. */
+const mainEl = ref<HTMLElement | null>(null)
 const page = ref<PublicPage | null>(null)
 const agents = ref<PublicAgentRow[] | null>(null)
 const targets = ref<PublicTargetRow[] | null>(null)
@@ -328,9 +331,25 @@ async function load(kind: 'navigate' | 'poll'): Promise<void> {
 }
 
 function onHashChange(): void {
-  const next = slugFromHash(location.hash)
+  const next = resolveSlug(location.hash, defaultSlug)
   if (next === slug.value) return
   slug.value = next
+}
+
+/**
+ * "Skip to content" — moved by hand rather than by the browser.
+ *
+ * The fragment IS this app's route. Letting the link navigate would set the hash
+ * to '#public-status-main', which the router reads as a slug, and the board would
+ * be replaced by "page not found" — precisely the content the link exists to
+ * reach. So the anchor keeps its href (it stays a real link in the DOM, and
+ * degrades to one without JS) and focus is moved here instead; the target
+ * carries tabindex="-1" for exactly this, and focusing it scrolls it into view.
+ */
+function skipToContent(e: Event): void {
+  if (!mainEl.value) return
+  e.preventDefault()
+  mainEl.value.focus()
 }
 
 watch(slug, () => {
@@ -366,7 +385,7 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <a class="skip-link" href="#public-status-main">{{ t('skipToContent') }}</a>
+  <a class="skip-link" href="#public-status-main" @click="skipToContent">{{ t('skipToContent') }}</a>
   <div class="page">
     <header class="site-head">
       <div class="site-head-inner">
@@ -401,7 +420,7 @@ onUnmounted(() => {
       </div>
     </header>
 
-    <main id="public-status-main" class="status-main" tabindex="-1">
+    <main id="public-status-main" ref="mainEl" class="status-main" tabindex="-1">
       <template v-if="page">
         <section class="identity">
           <div class="identity-copy">

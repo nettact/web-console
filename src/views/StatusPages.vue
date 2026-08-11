@@ -8,6 +8,7 @@ import { onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { api, type StatusPage } from '../api'
 import ConfirmDialog from '../components/ConfirmDialog.vue'
+import ProxyConfigDialog from '../components/status/ProxyConfigDialog.vue'
 import { consoleBase, ensureConsoleBase } from '../consoleBaseUrl'
 import { copyToClipboard } from '../lib/clipboard'
 import { publicStatusUrl } from '../lib/statusPage'
@@ -45,6 +46,11 @@ async function copyUrl(p: StatusPage) {
     pushToast({ tone: 'warn', title: tr('statusPages.copyFailed') })
   }
 }
+
+// ---- reverse proxy config ----
+// Per row rather than one button on the panel: the generated file is bound to a
+// single page's slug, which is the whole point of it.
+const proxyFor = ref<StatusPage | null>(null)
 
 // ---- delete ----
 const pendingDelete = ref<StatusPage | null>(null)
@@ -92,6 +98,12 @@ onMounted(async () => {
         <span class="count">{{ pages.length }}</span>
       </div>
       <p class="hint panel-hint">{{ tr('statusPages.listHint') }}</p>
+      <p class="hint panel-hint">
+        {{ tr('statusPages.domainHint') }}
+        <a :href="tr('docs.statusPageDomainUrl')" target="_blank" rel="noopener noreferrer">
+          {{ tr('statusPages.domainLink') }}
+        </a>
+      </p>
 
       <div
         v-if="pages.length"
@@ -141,6 +153,9 @@ onMounted(async () => {
                 </span>
               </td>
               <td class="actions">
+                <button class="link-btn" @click="proxyFor = p">
+                  {{ tr('statusPages.proxyConfig') }}
+                </button>
                 <router-link :to="`/status-pages/${p.id}/edit`" class="link-btn">
                   {{ tr('statusPages.edit') }}
                 </router-link>
@@ -166,6 +181,8 @@ onMounted(async () => {
       @confirm="confirmDelete"
       @cancel="pendingDelete = null"
     />
+
+    <ProxyConfigDialog :open="!!proxyFor" :page="proxyFor" @close="proxyFor = null" />
   </main>
 </template>
 

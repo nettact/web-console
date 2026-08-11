@@ -233,6 +233,12 @@ onMounted(async () => {
                    the status app hosted elsewhere serves the same page from its own
                    origin, so this is "the link this server serves", not "the link". -->
               <p class="hint tiny">{{ tr('spform.urlHint') }}</p>
+              <p class="hint tiny">
+                {{ tr('statusPages.domainHint') }}
+                <a :href="tr('docs.statusPageDomainUrl')" target="_blank" rel="noopener noreferrer">
+                  {{ tr('statusPages.domainLink') }}
+                </a>
+              </p>
             </div>
 
             <label class="field field-description">

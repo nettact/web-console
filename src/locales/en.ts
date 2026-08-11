@@ -41,6 +41,13 @@ export default {
     listTitle: 'Status pages',
     listHint:
       'A page publishes only what you select here. Everything else is absent from the page and from its API responses.',
+    // Shown next to every public address, in the list and in the editor: the
+    // reverse-proxy setup is the one thing about a status page that cannot be
+    // done from this console at all, so the pointer has to live where the
+    // address does.
+    domainHint: 'Want a page at the root of your own domain, with no /status in the address?',
+    domainLink: 'Reverse proxy guide (nginx / Caddy)',
+    proxyConfig: 'Proxy config',
     empty: 'No status pages yet. Create one to publish part of your monitoring publicly.',
     thTitle: 'Name',
     thUrl: 'Public address',
@@ -62,6 +69,39 @@ export default {
     deleteTitle: 'Delete status page',
     deleteBody: 'Deleting “{name}” takes its public address offline immediately. This cannot be undone.',
     deleted: 'Deleted {name}',
+  },
+
+  // Reverse-proxy generator. The c* strings are comment lines inside the
+  // generated config file, so each one has to stand alone on a single line.
+  spproxy: {
+    title: 'Reverse proxy configuration',
+    intro:
+      'A vhost that publishes “{title}” at the root of its own domain — no /status in the address — and answers 404 to everything else: the console, the admin API, the agent channel, and every other status page.',
+    domain: 'Public domain',
+    domainHint: 'The domain this page will be served at.',
+    domainInvalid: 'Enter a host name, e.g. status.example.com',
+    upstream: 'NetTact server',
+    upstreamHint: 'How the proxy reaches the server. Not a public address.',
+    upstreamInvalid: 'Enter an origin, e.g. http://127.0.0.1:12450',
+    root: 'Static directory',
+    rootInvalid: 'Enter a path with no spaces or braces',
+    flavor: 'Proxy',
+    mode: 'Static files',
+    modeProxy: 'From the server',
+    modeStatic: 'Local copy',
+    modeProxyHint:
+      'The page is proxied from the server, so there is nothing to copy and nothing to redo after an upgrade.',
+    modeStaticHint:
+      'The proxy serves its own copy of dist/status, from the directory you name, and forwards only the API. Re-copy the files after every server upgrade.',
+    fixFirst: 'Fill in the fields above to generate the configuration.',
+    docsHint: 'Reload the proxy, then check the result:',
+    cHeader: 'This domain publishes exactly one status page: {slug}. To publish a different one, change every place {slug} appears below.',
+    cApi: 'The only endpoints allowed through — one page, four read-only paths.',
+    cConfig: 'Runtime config served by the proxy: it names the page shown at the root.',
+    cApp: 'The page itself: the root maps onto the upstream /status/.',
+    cAppStatic: 'The page itself: three kinds of file, served from disk.',
+    cDeny: 'Everything else is closed: console, admin API, agent channel, other status pages.',
+    cRoot: 'A copy of dist/status. Re-copy it after a server upgrade.',
   },
 
   spform: {
@@ -3110,6 +3150,7 @@ export default {
   docs: {
     permissionsUrl: 'https://nettact.org/en/permissions',
     openwrtUrl: 'https://nettact.org/en/openwrt',
+    statusPageDomainUrl: 'https://nettact.org/en/status-page-domain',
   },
 
   // Platform-availability note for a hard "unsupported" block, looked up by

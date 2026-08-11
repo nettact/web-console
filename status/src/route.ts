@@ -21,3 +21,16 @@ export function slugFromHash(hash: string): string {
     return ''
   }
 }
+
+/**
+ * The page to render for a hash, falling back to the deployment's configured
+ * default (config.defaultSlug) when the hash addresses none.
+ *
+ * Kept here rather than inlined at the two call sites because both of them — the
+ * initial render and every hashchange — must agree: a fallback applied only on
+ * load would strand a reader who navigated back to '#' on the empty state, on a
+ * deployment whose whole point is that '/' shows a board.
+ */
+export function resolveSlug(hash: string, fallback: string): string {
+  return slugFromHash(hash) || fallback
+}

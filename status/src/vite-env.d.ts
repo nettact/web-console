@@ -5,7 +5,7 @@
 // or partially filled in, and the app has a working default for all of it.
 declare global {
   interface Window {
-    NETTACT_STATUS_CONFIG?: { apiBase?: string }
+    NETTACT_STATUS_CONFIG?: { apiBase?: string; page?: string }
   }
 }
 

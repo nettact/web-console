@@ -870,4 +870,27 @@ describe('status page', () => {
     expect(w.find('dl > p').exists()).toBe(false)
     expect(w.text()).toContain('This node has stopped reporting.')
   })
+
+  // The fragment is the route here, so the one in-app anchor that points at a
+  // fragment must not navigate: '#public-status-main' would be read as a slug and
+  // swap the board for "page not found".
+  it('skip-to-content moves focus without hijacking the route', async () => {
+    const pageSpy = vi.spyOn(api, 'page').mockResolvedValue({ ...page, show_agent_view: false })
+    vi.spyOn(api, 'targetStatuses').mockResolvedValue({
+      generated_at: page.generated_at,
+      days_from: '2026-01-01',
+      targets: [],
+    })
+
+    const w = mount(App, { global: { plugins: [i18n()] }, attachTo: document.body })
+    mounted.push(w)
+    await flushPromises()
+
+    await w.find('.skip-link').trigger('click')
+    await flushPromises()
+
+    expect(location.hash).toBe('#/home-lab')
+    expect(document.activeElement).toBe(w.find('#public-status-main').element)
+    expect(pageSpy).not.toHaveBeenCalledWith('public-status-main', expect.anything())
+  })
 })

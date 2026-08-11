@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { slugFromHash } from './route'
+import { resolveSlug, slugFromHash } from './route'
 
 describe('slugFromHash', () => {
   it('reads the canonical form the console links to', () => {
@@ -26,5 +26,23 @@ describe('slugFromHash', () => {
   // empty state rather than crash on load.
   it('survives a malformed escape', () => {
     expect(slugFromHash('#/%E0%A4%A')).toBe('')
+  })
+})
+
+describe('resolveSlug', () => {
+  it('prefers the addressed page over the configured default', () => {
+    expect(resolveSlug('#/other', 'home-lab')).toBe('other')
+  })
+
+  // The case the whole option exists for: a deployment serving one board at a
+  // domain root, where the URL is just '/'.
+  it('falls back to the configured default when the hash names no page', () => {
+    expect(resolveSlug('', 'home-lab')).toBe('home-lab')
+    expect(resolveSlug('#', 'home-lab')).toBe('home-lab')
+    expect(resolveSlug('#/', 'home-lab')).toBe('home-lab')
+  })
+
+  it('keeps the empty state when no default is configured', () => {
+    expect(resolveSlug('', '')).toBe('')
   })
 })
