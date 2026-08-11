@@ -684,7 +684,7 @@ export interface ProbeTarget {
 // subset of this site's agent groups and monitoring targets. Mirrors
 // server-core/statuspage.Page.
 //
-// The three visibility flags are enforced SERVER-side, not by this console:
+// The visibility flags are enforced SERVER-side, not by this console:
 // turning a view off makes its public endpoint answer 404 like an unknown page,
 // so the toggle is a publication decision rather than a rendering one.
 export interface StatusPage {
@@ -700,6 +700,11 @@ export interface StatusPage {
   show_target_address: boolean
   show_agent_view: boolean
   show_target_view: boolean
+  // Opt-in recent incident history for the selected resources. Off by default.
+  show_incidents: boolean
+  // How much a published node discloses: 'off' is up/down only, 'basic' adds
+  // percentages and rates, 'full' adds byte totals and the busiest mount's name.
+  agent_metrics: StatusPageAgentMetrics
   // Nodes are published by GROUP: the page shows each selected group's CURRENT
   // members, so an agent added to a published group becomes public with it.
   agent_group_ids: string[]
@@ -711,6 +716,8 @@ export interface StatusPage {
 // Create/update payload. The selections are replaced wholesale, and an id the
 // site cannot publish (unknown, cross-site) is a 400 rather than being silently
 // dropped.
+export type StatusPageAgentMetrics = 'off' | 'basic' | 'full'
+
 export interface StatusPageInput {
   slug: string
   title: string
@@ -719,6 +726,8 @@ export interface StatusPageInput {
   show_target_address: boolean
   show_agent_view: boolean
   show_target_view: boolean
+  show_incidents: boolean
+  agent_metrics: StatusPageAgentMetrics
   agent_group_ids: string[]
   target_ids: string[]
 }

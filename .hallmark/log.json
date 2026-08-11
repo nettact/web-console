@@ -1,5 +1,17 @@
 [
   {
+    "date": "2026-08-11",
+    "macrostructure": "Narrative Workflow + Workbench Tabs",
+    "theme": "custom",
+    "theme_axes": "dark + light / geometric-sans / cool",
+    "vibe": "calm translucent, precise, spatial, native",
+    "enrichment": "none",
+    "brief": "Status page editor reflow and separate tabbed public views for monitoring targets and nodes",
+    "scope": "status-page-editor-and-public-board",
+    "genre": "custom application system",
+    "design_system": "design.md"
+  },
+  {
     "date": "2026-07-31",
     "macrostructure": "Workbench + Global Status Board + Single-Open Inline Accordion",
     "theme": "custom",

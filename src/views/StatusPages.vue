@@ -133,6 +133,9 @@ onMounted(async () => {
                 <span v-if="p.show_target_view" class="chip">
                   {{ tr('statusPages.nTargets', { n: p.target_ids.length }) }}
                 </span>
+                <span v-if="p.show_incidents" class="chip">
+                  {{ tr('statusPages.incidentsShown') }}
+                </span>
                 <span v-if="p.show_target_address" class="chip warn">
                   {{ tr('statusPages.addressesShown') }}
                 </span>

@@ -36,7 +36,7 @@ export default {
 
   statusPages: {
     title: 'Public status pages',
-    sub: 'Publish selected nodes and monitoring targets on a page anyone can view without signing in.',
+    sub: 'Publish selected nodes, monitoring targets and optional incident history on a page anyone can view without signing in.',
     create: 'New status page',
     listTitle: 'Status pages',
     listHint:
@@ -50,6 +50,7 @@ export default {
     unpublished: 'Unpublished',
     nAgentGroups: '{n} groups',
     nTargets: '{n} targets',
+    incidentsShown: 'incident history',
     addressesShown: 'addresses shown',
     copy: 'Copy',
     copied: 'Copied',
@@ -70,10 +71,12 @@ export default {
     notFound: 'No such status page.',
     back: 'Back to the list',
     secGeneral: 'Basics',
+    secPublication: 'Publication',
     title: 'Page name',
     titlePlaceholder: 'e.g. Home lab status',
     slug: 'Address slug',
     slugHint: 'Lowercase letters, digits and interior dashes only. It becomes part of the public address.',
+    publicUrl: 'Public address',
     urlHint:
       'This is the address this server serves. If you host the public page separately, use that site’s address instead.',
     description: 'Description',
@@ -82,9 +85,23 @@ export default {
     enabled: 'Publish this page',
     enabledOnHint: 'Anyone with the address can view it.',
     enabledOffHint: 'Unpublished: the address answers “page not found”, indistinguishable from one that never existed.',
+    showIncidents: 'Show incident history',
+    incidentsOffHint: 'Off by default. Visitors cannot request incident records from this page.',
+    incidentsOnHint: 'Publishes up to 50 incidents from the last 90 days for the selected targets and current members of selected node groups. Ongoing older incidents remain visible.',
     secAgents: 'Nodes',
     agentsHint:
-      'Nodes are published by agent group: the page shows each selected group’s current members, so an agent added to one later becomes public with it, and one removed disappears. Published nodes show their display name and online state only — never the hostname, platform, version or resource usage; an unnamed one appears as “Node 1”, “Node 2”.',
+      'Nodes are published by agent group: the page shows each selected group’s current members, so an agent added to one later becomes public with it, and one removed disappears. Published nodes show their display name, online state and whatever resource detail you allow below — never the hostname, platform or version; an unnamed one appears as “Node 1”, “Node 2”.',
+    agentMetrics: 'Resource usage on published nodes',
+    agentMetricsOpt: {
+      off: 'Do not publish',
+      basic: 'Percentages only',
+      full: 'Percentages and sizes',
+    },
+    agentMetricsHint: {
+      off: 'Visitors see whether each node is online, and nothing about its load.',
+      basic: 'CPU, load average, memory, disk, network throughput and uptime, as percentages and rates.',
+      full: 'Careful: also publishes total and used memory and disk in bytes, plus the busiest mount’s name — which describes the machine itself.',
+    },
     showAgentView: 'Show the node list',
     noAgentGroups: 'This site has no agent groups yet.',
     manageAgentGroups: 'Create one',
@@ -92,7 +109,7 @@ export default {
     noAgentsPicked: 'No groups selected — the page’s node list will be empty.',
     secTargets: 'Monitoring targets',
     targetsHint:
-      'Published targets show their name, kind, status and 24h availability only — never probe parameters, proxies or incident detail.',
+      'Published targets show their name, kind, status, availability over 24h to 1 year and a 90-day uptime bar — never probe parameters or proxies. Incident history is controlled separately under Publication.',
     showTargetView: 'Show the monitoring target list',
     noTargets: 'This site has no monitoring targets yet.',
     noTargetsPicked: 'No targets selected — the page’s target list will be empty.',
@@ -101,7 +118,7 @@ export default {
     addressOnHint: 'Careful: this makes the selected targets’ IPs, hostnames and URLs visible to every visitor.',
     errTitle: 'A page name is required',
     errSlug: 'The slug may use lowercase letters, digits and interior dashes only',
-    errNoView: 'Show at least one of the node list and the target list',
+    errNoView: 'Show at least one of the node list, target list or incident history',
     cancel: 'Cancel',
     save: 'Save',
     create: 'Create',
