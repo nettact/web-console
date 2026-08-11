@@ -97,14 +97,23 @@ async function copyUrl() {
 async function load() {
   // The pickers are the form's substance, so a failure to load them is a real
   // error rather than something to degrade past.
+  // Fired but deliberately NOT awaited with the pickers below. It only feeds an
+  // informational hint (which page loses the home flag), so letting it into the
+  // gating Promise.all would let a slow or stalled response hold `loaded` false
+  // — editor closed, submit disabled — while the two requests that actually
+  // matter had already succeeded.
+  void api
+    .statusPages()
+    .then((pages) => {
+      allPages.value = pages
+    })
+    .catch(() => {
+      /* the toggle still works; it just says less */
+    })
   try {
-    ;[agentGroups.value, targets.value, allPages.value] = await Promise.all([
+    ;[agentGroups.value, targets.value] = await Promise.all([
       api.agentGroups(SITE),
       api.listTargets(SITE),
-      // Needed only to name the page that is about to lose the home flag. A
-      // failure here is not worth blocking the form over — the toggle still
-      // works, it just says less.
-      api.statusPages().catch(() => [] as StatusPage[]),
     ])
   } catch (e) {
     error.value = String((e as Error).message || e)

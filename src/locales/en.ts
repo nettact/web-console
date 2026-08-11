@@ -129,7 +129,7 @@ export default {
     showIncidents: 'Show incident history',
     incidentsOffHint: 'Off by default. Visitors cannot request incident records from this page.',
     setHome: 'Set as home page',
-    setHomeOnHint: 'Visitors who open this server\'s root address without signing in land on this status page, with a sign-in link in the top corner. Signed-in admins still get the console.',
+    setHomeOnHint: 'Visitors who open this server\'s root address without signing in are redirected to this status page (the address becomes /status/#/<slug>), with a sign-in link in the top corner. Signed-in admins still get the console.',
     setHomeOffHint: 'Visitors opening the root address get the console sign-in page instead. One server can have only one home page.',
     homeTakeover: 'Saving takes the home page from "{name}" — a server has only one.',
     homeNeedsPublished: 'This page is currently unpublished, so it will not act as the home page until you publish it again.',
