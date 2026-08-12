@@ -59,7 +59,7 @@ function blank(): StatusPageInput {
     show_target_address: false,
     show_agent_view: true,
     show_target_view: true,
-    show_incidents: false,
+    show_incidents: true,
     agent_metrics: 'basic',
     is_home: false,
     agent_group_ids: [],
