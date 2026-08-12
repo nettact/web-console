@@ -99,6 +99,11 @@ describe('paramsRangeError', () => {
     const frac = paramsRangeError('tcp', { flow_fanout: 2.5 })
     expect(frac?.labelKey).toBe('mform.tcpFlowFanout') // integer count
     expect(frac?.integer).toBe(true) // the renderer says "whole number", not "between 0 and 32"
+    // 32.5 is both fractional AND out of range: the range error must win (it is
+    // the more actionable one — fixing the range reveals the integer constraint).
+    const oobFrac = paramsRangeError('tcp', { flow_fanout: 32.5 })
+    expect(oobFrac?.labelKey).toBe('mform.tcpFlowFanout')
+    expect(oobFrac?.integer).toBeFalsy()
     expect(paramsRangeError('tcp', { flow_fanout: 8 })?.integer).toBeFalsy()
     expect(paramsRangeError('icmp', { interval_seconds: 90000 })?.labelKey).toBe('mform.interval')
   })

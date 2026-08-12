@@ -185,12 +185,22 @@ export function paramsRangeError(kind: string, params: Record<string, unknown> |
       if (raw === undefined || raw === null || raw === '') continue
       const v = Number(raw)
       if (!Number.isFinite(v)) continue // a non-numeric entry is dropped before save
-      if (v < r.min || v > r.max || (r.integer && !Number.isInteger(v))) {
+      if (v < r.min || v > r.max) {
         return {
           labelKey: PARAM_LABEL_OVERRIDES[kind]?.[r.key] ?? r.labelKey,
           min: r.min,
           max: r.max,
-          integer: r.integer && !Number.isInteger(v),
+        }
+      }
+      // Fractionality is only the sole reason when the value is otherwise in
+      // range: 32.5 is BOTH fractional and over 32, so it must report the range
+      // error first (fixing the range to 33 then reveals the integer constraint).
+      if (r.integer && !Number.isInteger(v)) {
+        return {
+          labelKey: PARAM_LABEL_OVERRIDES[kind]?.[r.key] ?? r.labelKey,
+          min: r.min,
+          max: r.max,
+          integer: true,
         }
       }
     }
