@@ -4,7 +4,7 @@
 // state. Probe targets (ICMP/DNS/HTTP/NAT/interfaces) live on the Target Status
 // page instead. Data flow: agents → listSeries → groups → metrics, with monotonic
 // request tokens so a slow response for an old selection can't clobber the current.
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { api, type Agent, type Sample, type SeriesInfo } from '../api'
@@ -22,6 +22,14 @@ const route = useRoute()
 const { metricLabel } = useMetricMeta()
 const { buildCards } = useMetricCards()
 
+const props = withDefaults(defineProps<{
+  embedded?: boolean
+  fixedAgentId?: string
+}>(), {
+  embedded: false,
+  fixedAgentId: '',
+})
+
 const agents = ref<Agent[]>([])
 const agentId = ref('')
 const series = ref<SeriesInfo[]>([])
@@ -32,6 +40,7 @@ const samplesByKind = ref<Record<string, Sample[]>>({})
 const error = ref('')
 const loading = ref(false)
 let dataSeq = 0
+let seriesSeq = 0
 
 interface HostGroup {
   key: string
@@ -294,7 +303,7 @@ function selectSection(key: string) {
 async function loadAgents() {
   try {
     agents.value = await api.agents()
-    const requestedAgent = String(route.query.agent || '')
+    const requestedAgent = props.fixedAgentId || String(route.query.agent || '')
     if (requestedAgent && agents.value.some((agent) => agent.id === requestedAgent)) agentId.value = requestedAgent
     else if (!agentId.value && agents.value.length) agentId.value = agents.value[0].id
   } catch (e) {
@@ -304,8 +313,11 @@ async function loadAgents() {
 
 async function loadSeries() {
   if (!agentId.value) return
+  const seq = ++seriesSeq
+  const id = agentId.value
   try {
-    const ser = await api.listSeries(agentId.value)
+    const ser = await api.listSeries(id)
+    if (seq !== seriesSeq || id !== agentId.value) return
     // Host Metrics owns the host's own hardware: host.* metrics, the network
     // interfaces (iface.*) and the agent uptime counter. Probe results (the
     // user-created monitors) belong to the Target Status page.
@@ -322,7 +334,7 @@ async function loadSeries() {
     applyDefaultKinds()
     await loadData()
   } catch (e) {
-    error.value = String((e as Error).message || e)
+    if (seq === seriesSeq) error.value = String((e as Error).message || e)
   }
 }
 
@@ -382,33 +394,46 @@ async function loadCollection(seq: number) {
 }
 
 function onAgentChange() {
+  dataSeq++
+  seriesSeq++
   series.value = []
+  samplesByKind.value = {}
+  collSamples.value = {}
   loadSeries()
 }
 
+let mounted = false
 onMounted(async () => {
-  await loadAgents()
+  mounted = true
+  if (props.fixedAgentId) agentId.value = props.fixedAgentId
+  else await loadAgents()
   await loadSeries()
+})
+
+watch(() => props.fixedAgentId, async (next, previous) => {
+  if (!mounted || !next || next === previous) return
+  agentId.value = next
+  onAgentChange()
 })
 </script>
 
 <template>
-  <main class="page">
-    <div class="page-head">
+  <main class="page host-metrics-view" :class="{ embedded }">
+    <div v-if="!embedded" class="page-head">
       <h2>{{ t('hostMetrics.title') }}</h2>
       <p class="sub">{{ t('hostMetrics.sub') }}</p>
     </div>
 
     <p v-if="error" class="err">{{ error }}</p>
 
-    <div v-if="!agents.length" class="card empty">
+    <div v-if="!embedded && !agents.length" class="card empty">
       <h3>{{ t('common.noAgents') }}</h3>
       <p class="hint">{{ t('hostMetrics.noAgentHint') }}</p>
     </div>
 
-    <template v-else>
+    <template v-else-if="agentId">
       <div class="card toolbar">
-        <label class="fg">
+        <label v-if="!embedded" class="fg">
           <span>Agent</span>
           <select v-model="agentId" @change="onAgentChange">
             <option v-for="a in agents" :key="a.id" :value="a.id">{{ agentLabel(a) }} ({{ a.platform }})</option>
@@ -418,7 +443,7 @@ onMounted(async () => {
         <div class="fg grow" v-if="groups.length">
           <span>{{ t('hostMetrics.sectionLabel') }}</span>
           <div class="segmented">
-            <button v-for="g in groups" :key="g.key" :class="{ active: targetKey === g.key }" @click="selectSection(g.key)">
+            <button v-for="g in groups" :key="g.key" :class="{ active: targetKey === g.key }" :title="g.label" @click="selectSection(g.key)">
               {{ g.label }}
             </button>
           </div>
@@ -504,6 +529,19 @@ onMounted(async () => {
   box-shadow: var(--shadow-card);
   backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
   -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
+}
+
+.host-metrics-view.embedded {
+  width: 100%;
+  max-width: none;
+  padding: 0;
+}
+
+.embedded .toolbar {
+  padding: var(--space-xs);
+  border-radius: var(--radius-input);
+  background: var(--color-glass-subtle);
+  box-shadow: none;
 }
 
 .fg {
@@ -728,6 +766,23 @@ onMounted(async () => {
   }
 }
 
+@container (max-width: 48rem) {
+  .toolbar {
+    align-items: stretch;
+  }
+
+  .fg,
+  .fg.grow {
+    flex: 1 1 100%;
+    min-width: 0;
+  }
+
+  .refresh {
+    width: 100%;
+    margin-left: 0;
+  }
+}
+
 @media (max-width: 414px) {
   .toolbar {
     padding: var(--space-xs);
@@ -742,6 +797,41 @@ onMounted(async () => {
     min-width: 0;
     overflow: hidden;
     text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .fg.grow .segmented button:last-child {
+    grid-column: 1 / -1;
+  }
+
+  .chips {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .chip {
+    justify-content: flex-start;
+  }
+}
+
+@container (max-width: 26rem) {
+  .toolbar {
+    padding: var(--space-xs);
+  }
+
+  .segmented {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .segmented button {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .fg.grow .segmented button:last-child {
+    grid-column: 1 / -1;
   }
 
   .chips {

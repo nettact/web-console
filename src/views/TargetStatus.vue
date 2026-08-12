@@ -200,7 +200,7 @@ function validateDeepLink(): void {
 }
 
 function applyDefaultAgentSelection(): void {
-  if (view.value !== 'agents' || !agentStatus.loaded) return
+  if (view.value !== 'agents') return
   if (visibleAgents.value.some((agent) => agent.id === selectedAgentId.value)) return
   selectedAgentId.value = visibleAgents.value[0]?.id || ''
 }
@@ -240,6 +240,7 @@ watch(() => route.query, () => {
   if (route.path !== '/target-status') return
   applyRouteQuery()
   validateDeepLink()
+  applyDefaultAgentSelection()
 }, { deep: true })
 
 watch([
@@ -274,7 +275,11 @@ watch([search, groupFilter, statusFilter], () => {
   }
 })
 
-watch([visibleAgents, view], applyDefaultAgentSelection, { deep: true })
+watch(
+  [visibleAgents, view, selectedAgentId, () => agentStatus.loaded],
+  applyDefaultAgentSelection,
+  { immediate: true },
+)
 
 async function loadMetadata(): Promise<void> {
   metaError.value = ''

@@ -329,19 +329,24 @@ describe('MonitorForm save navigation', () => {
   })
 
   // DEGRADE-001/002: the size-sweep checkbox rides with the ping kinds, the
-  // source-port fan-out input with TCP — each only in its own advanced block.
+  // source-port fan-out preset with TCP — each only in its own advanced block.
   it('shows the degradation controls only for the kinds that run them', async () => {
-    // Field names render as a direct span in label.field, and as the <strong>
-    // title inside a label.check-row (the size-sweep checkbox's explanatory row).
+    // Field names render as a direct span in label.field, or in the shared title
+    // row that keeps its help icon beside the label.
     const labels = (page: ReturnType<typeof mount>) =>
-      page.findAll('label.field span, label.check-row strong').map((s) => s.text())
+      page.findAll('label.field span, label.check-row strong, .field-title > label').map((s) => s.text())
 
     for (const kind of ['icmp', 'gateway']) {
       const page = await render()
       await page.get('select').setValue(kind)
       await flushPromises()
       expect(labels(page)).toContain(en.mform.sizeSweep)
-      expect(page.find('input[min="0"][max="32"]').exists()).toBe(false)
+      expect(page.find('#tcp-flow-fanout').exists()).toBe(false)
+      const info = page.get('.check-row .field-title .info-ic')
+      await info.trigger('mouseenter')
+      await flushPromises()
+      expect(document.body.textContent).toContain(en.mform.sizeSweepTip.split('\n')[0])
+      await info.trigger('mouseleave')
       page.unmount()
     }
 
@@ -349,11 +354,74 @@ describe('MonitorForm save navigation', () => {
     await page.get('select').setValue('tcp')
     await flushPromises()
     expect(labels(page)).toContain(en.mform.tcpFlowFanout)
-    // The fan-out input carries the probevalidate.go bounds as min/max + the off
-    // default as its placeholder.
-    const fanout = page.get('input[min="0"][max="32"]')
-    expect((fanout.element as HTMLInputElement).placeholder).toBe('0')
+    const fanout = page.get('#tcp-flow-fanout')
+    expect(fanout.element.tagName).toBe('SELECT')
+    expect(fanout.findAll('option').map((o) => Number(o.attributes('value')))).toEqual([0, 4, 8, 16, 32])
+    expect((fanout.element as HTMLSelectElement).value).toBe('0')
+    await fanout.setValue('32')
+    expect((fanout.element as HTMLSelectElement).value).toBe('32')
+    expect(page.find('.field .field-title .info-ic').exists()).toBe(true)
     expect(labels(page)).not.toContain(en.mform.sizeSweep)
+    page.unmount()
+
+    const httpPage = await render()
+    await httpPage.get('select').setValue('http')
+    await flushPromises()
+    expect(labels(httpPage)).toContain(en.mform.httpFlowFanout)
+    const httpFanout = httpPage.get('#http-flow-fanout')
+    const maxRedirects = httpPage.get('input[min="-1"][max="20"]')
+    expect(httpFanout.findAll('option').map((o) => Number(o.attributes('value')))).toEqual([0, 4, 8, 16, 32])
+    await maxRedirects.setValue('6')
+    await httpFanout.setValue('32')
+    expect((httpFanout.element as HTMLSelectElement).value).toBe('32')
+    expect((maxRedirects.element as HTMLInputElement).value).toBe('-1')
+
+    await httpFanout.setValue('0')
+    expect((maxRedirects.element as HTMLInputElement).value).toBe('6')
+    await httpFanout.setValue('32')
+
+    const method = httpPage.findAll('select').find((select) =>
+      select.findAll('option').some((option) => option.attributes('value') === 'POST'),
+    )!
+    await method.setValue('POST')
+    await flushPromises()
+    expect((httpFanout.element as HTMLSelectElement).value).toBe('0')
+    expect((httpFanout.element as HTMLSelectElement).disabled).toBe(true)
+    expect((maxRedirects.element as HTMLInputElement).value).toBe('6')
+    expect(httpPage.text()).toContain(en.mform.httpFlowFanoutMethodOff)
+  })
+
+  it('uses the redirect default when an already-enabled HTTP fan-out is disabled', async () => {
+    state.route.path = '/monitoring/http-1/edit'
+    state.route.params = { id: 'http-1' }
+    const page = await render([{
+      id: 'http-1', kind: 'http', name: 'Web', target: 'https://example.com',
+      params: { method: 'GET', flow_fanout: 8, max_redirects: -1 },
+      enabled: true, group_id: 'group-default',
+    }], detection({ target_id: 'http-1', kind: 'http' }))
+
+    const fanout = page.get('#http-flow-fanout')
+    const maxRedirects = page.get('input[min="-1"][max="20"]')
+    await fanout.setValue('0')
+
+    expect((maxRedirects.element as HTMLInputElement).value).toBe('10')
+    page.unmount()
+  })
+
+  it('keeps an explicit no-redirect policy when fan-out was already off', async () => {
+    const page = await render()
+    await page.get('select').setValue('http')
+    const maxRedirects = page.get('input[min="-1"][max="20"]')
+    await maxRedirects.setValue('-1')
+    const method = page.findAll('select').find((select) =>
+      select.findAll('option').some((option) => option.attributes('value') === 'POST'),
+    )!
+
+    await method.setValue('POST')
+    await flushPromises()
+
+    expect((maxRedirects.element as HTMLInputElement).value).toBe('-1')
+    page.unmount()
   })
 
   it('leaves an already-schemed url untouched', async () => {

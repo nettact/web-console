@@ -158,6 +158,7 @@ const PARAM_RANGES: Record<string, ReadonlyArray<{ key: string; labelKey: string
   http: [
     { key: 'max_redirects', labelKey: 'mform.maxRedirects', min: -1, max: 20 },
     { key: 'max_response_bytes', labelKey: 'mform.maxResponseBytes', min: 0, max: 10485760 },
+    { key: 'flow_fanout', labelKey: 'mform.httpFlowFanout', min: 0, max: 32, integer: true },
   ],
 }
 

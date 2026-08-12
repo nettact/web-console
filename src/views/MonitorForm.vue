@@ -16,6 +16,7 @@ import {
   type SmartSensitivity,
 } from '../api'
 import ComboInput from '../components/ComboInput.vue'
+import InfoTip from '../components/InfoTip.vue'
 import { pushToast } from '../toasts'
 import { LEADING_SCHEME, paramsRangeError, retargetForKind, targetError } from '../lib/targetValidation'
 import { profileRounds } from '../lib/detection'
@@ -120,10 +121,11 @@ const proxyWarningKey = computed(() => proxyDisabledWarning(selectedProxy.value)
 // binding matches no <option>, so the browser renders a blank row instead of the
 // first choice. Seed the per-kind selects with their first option ('' means the
 // leading "system default" entry, which cleanParams drops before saving).
-const KIND_SELECT_DEFAULTS: Record<string, Record<string, string>> = {
+const KIND_SELECT_DEFAULTS: Record<string, Record<string, string | number>> = {
   dns: { resolver_protocol: '', record_type: '' },
-  http: { method: '' },
+  http: { method: '', flow_fanout: 0 },
   nat: { nat_transport: 'udp' },
+  tcp: { flow_fanout: 0 },
 }
 
 function applyKindDefaults() {
@@ -537,6 +539,11 @@ async function loadAll() {
     }
     Object.assign(form, JSON.parse(JSON.stringify(found)))
     applyKindDefaults()
+    if (form.kind === 'http' && Number(form.params!.flow_fanout || 0) >= 2) {
+      // The stored fan-out policy has already replaced the earlier redirect
+      // choice, so there is no form-session value to restore when it is disabled.
+      httpRedirectsBeforeFanout.value = 10
+    }
     headersText.value = headersToText(form.params!.headers)
     if (showDetection.value) await loadDetection(editingId.value)
     if (isHostMode.value) await loadHostDetection(editingId.value)
@@ -730,16 +737,37 @@ watch(
   },
 )
 
-// A proxied TCP target cannot fan out: pinning the local source port only
-// changes the agent→proxy tuple, not the target-facing one the ECMP hash keys
-// on. Clearing fan-out whenever a TCP target ends up proxied — whether the proxy
-// was picked first or the kind changed into TCP while a proxy was already set —
-// keeps the save from being rejected for a value the form itself just made
-// impossible.
+const httpFanoutMethodOK = computed(() => ['', 'GET', 'HEAD'].includes(String(form.params?.method || '').toUpperCase()))
+const httpRedirectsBeforeFanout = ref<number>()
+
+function applyHTTPFanoutRedirectPolicy() {
+  if (form.kind !== 'http') return
+  if (Number(form.params?.flow_fanout || 0) >= 2) {
+    const current = form.params?.max_redirects
+    if (httpRedirectsBeforeFanout.value === undefined && typeof current === 'number' && Number.isInteger(current) && current >= -1) {
+      httpRedirectsBeforeFanout.value = current
+    }
+    form.params!.max_redirects = -1
+    return
+  }
+  form.params!.max_redirects = httpRedirectsBeforeFanout.value ?? 10
+  httpRedirectsBeforeFanout.value = undefined
+}
+
+function disableHTTPFanout() {
+  if (form.kind !== 'http' || Number(form.params?.flow_fanout || 0) < 2) return
+  form.params!.flow_fanout = 0
+  applyHTTPFanoutRedirectPolicy()
+}
+
+// Proxies own the target-facing source port, and mutating HTTP methods must not
+// be repeated. Clear fan-out when either constraint becomes active so the form
+// never retains a value the server must reject.
 watch(
-  [() => form.proxy_id, () => form.kind],
+  [() => form.proxy_id, () => form.kind, () => form.params?.method],
   ([proxyId, kind]) => {
     if (proxyId && kind === 'tcp') form.params!.flow_fanout = 0
+    if (kind === 'http' && (proxyId || !httpFanoutMethodOK.value)) disableHTTPFanout()
   },
 )
 
@@ -842,13 +870,13 @@ onMounted(loadAll)
             <!-- Sweep sizes default to protocol/config.DefaultSweepSizes = [64,512,1232]
                  when payload_sizes is empty; the server caps an explicit list at 2..8
                  distinct sizes (probevalidate.go), each in 1..config.MaxSweepPayloadSize. -->
-            <label class="check-row" :title="tr('mform.sizeSweepTip')">
-              <input type="checkbox" v-model="form.params!.size_sweep" />
-              <span class="check-text">
-                <strong>{{ tr('mform.sizeSweep') }}</strong>
-                <em class="hint tiny">{{ tr('mform.sizeSweepHint') }}</em>
-              </span>
-            </label>
+            <div class="check-row">
+              <input id="size-sweep" type="checkbox" v-model="form.params!.size_sweep" />
+              <div class="field-title">
+                <label for="size-sweep"><strong>{{ tr('mform.sizeSweep') }}</strong></label>
+                <InfoTip :text="tr('mform.sizeSweepTip')" />
+              </div>
+            </div>
           </template>
           <template v-else-if="form.kind === 'dns'">
             <label class="field">
@@ -875,19 +903,24 @@ onMounted(loadAll)
           <template v-else-if="form.kind === 'tcp'">
             <label class="field check"><input type="checkbox" v-model="form.params!.tls" /><span>{{ tr('mform.tcpTls') }}</span></label>
             <label class="field check" v-if="form.params!.tls"><input type="checkbox" v-model="form.params!.ignore_tls" /><span>{{ tr('mform.ignoreTls') }}</span></label>
-            <!-- flow_fanout bounds mirror the server (server-core/api/probevalidate.go,
-                 maxFlowFanout = 32); 0/1 = off (a single flow), 2..32 = fan-out. A
-                 proxied target cannot fan out (the pin would only change the
-                 agent→proxy tuple), so the field is disabled and the save is blocked
-                 server-side if it were somehow still set. The hint lives inside the
-                 field column so it stays aligned under the input instead of spanning
-                 the whole grid row. -->
-            <label class="field" :title="tr('mform.tcpFlowFanoutTip')">
-              <span>{{ tr('mform.tcpFlowFanout') }}</span>
-              <input type="number" min="0" max="32" v-model.number="form.params!.flow_fanout" placeholder="0" :disabled="!!form.proxy_id" />
+            <!-- The server accepts 0..32, but an exact count is an implementation
+                 detail rather than a meaningful operator setting. Offer a small set
+                 of bounded workload presets; 0 keeps the normal single connection.
+                 Proxied targets cannot pin their target-facing source port. -->
+            <div class="field">
+              <div class="field-title">
+                <label for="tcp-flow-fanout">{{ tr('mform.tcpFlowFanout') }}</label>
+                <InfoTip :text="tr('mform.tcpFlowFanoutTip')" />
+              </div>
+              <select id="tcp-flow-fanout" v-model.number="form.params!.flow_fanout" :disabled="!!form.proxy_id">
+                <option :value="0">{{ tr('mform.flowFanoutOff') }}</option>
+                <option :value="4">{{ tr('mform.flowFanoutLight') }}</option>
+                <option :value="8">{{ tr('mform.flowFanoutStandard') }}</option>
+                <option :value="16">{{ tr('mform.flowFanoutDeep') }}</option>
+                <option :value="32">{{ tr('mform.flowFanoutMaximum') }}</option>
+              </select>
               <span class="hint tiny" v-if="form.proxy_id">{{ tr('mform.tcpFlowFanoutProxyOff') }}</span>
-              <span class="hint tiny" v-else>{{ tr('mform.tcpFlowFanoutHint') }}</span>
-            </label>
+            </div>
           </template>
         </div>
       </section>
@@ -904,7 +937,38 @@ onMounted(loadAll)
             </select>
           </label>
           <label class="field"><span>{{ tr('mform.acceptedStatuses') }}</span><input v-model="form.params!.accepted_statuses" placeholder="200-299,301" /></label>
-          <label class="field"><span>{{ tr('mform.maxRedirects') }}</span><input type="number" min="-1" max="20" v-model.number="form.params!.max_redirects" placeholder="10" /></label>
+          <label class="field">
+            <span>{{ tr('mform.maxRedirects') }}</span>
+            <input
+              type="number"
+              min="-1"
+              max="20"
+              v-model.number="form.params!.max_redirects"
+              placeholder="10"
+              :disabled="Number(form.params!.flow_fanout || 0) >= 2"
+            />
+          </label>
+          <div class="field">
+            <div class="field-title">
+              <label for="http-flow-fanout">{{ tr('mform.httpFlowFanout') }}</label>
+              <InfoTip :text="tr('mform.httpFlowFanoutTip')" />
+            </div>
+            <select
+              id="http-flow-fanout"
+              v-model.number="form.params!.flow_fanout"
+              :disabled="!!form.proxy_id || !httpFanoutMethodOK"
+              @change="applyHTTPFanoutRedirectPolicy"
+            >
+              <option :value="0">{{ tr('mform.flowFanoutOff') }}</option>
+              <option :value="4">{{ tr('mform.flowFanoutLight') }}</option>
+              <option :value="8">{{ tr('mform.flowFanoutStandard') }}</option>
+              <option :value="16">{{ tr('mform.flowFanoutDeep') }}</option>
+              <option :value="32">{{ tr('mform.flowFanoutMaximum') }}</option>
+            </select>
+            <span class="hint tiny" v-if="form.proxy_id">{{ tr('mform.tcpFlowFanoutProxyOff') }}</span>
+            <span class="hint tiny" v-else-if="!httpFanoutMethodOK">{{ tr('mform.httpFlowFanoutMethodOff') }}</span>
+            <span class="hint tiny" v-else-if="Number(form.params!.flow_fanout || 0) >= 2">{{ tr('mform.httpFlowFanoutRedirectOff') }}</span>
+          </div>
           <label class="field" v-if="form.params!.keyword"><span>{{ tr('mform.maxResponseBytes') }}</span><input type="number" min="0" max="10485760" v-model.number="form.params!.max_response_bytes" placeholder="1024" /></label>
           <label class="field check"><input type="checkbox" v-model="form.params!.ignore_tls" /><span>{{ tr('mform.ignoreTls') }}</span></label>
           <p class="hint tiny wide">{{ tr('mform.acceptedStatusesHint') }}</p>
@@ -1493,6 +1557,14 @@ onMounted(loadAll)
 .check-row input {
   width: auto;
   margin-top: 3px;
+}
+.field-title {
+  display: inline-flex;
+  align-items: center;
+  align-self: flex-start;
+}
+.field-title label {
+  cursor: pointer;
 }
 .check-text {
   display: flex;

@@ -53,7 +53,7 @@ export const PROBE_ERROR_KINDS = new Set([
 ])
 // The size-sweep and flow-fanout classifiers are codes too: the value is a
 // classification (flat/correlated/…), never a trend to average.
-export const CLASSIFIER_KINDS = new Set(['probe.icmp.size_sweep', 'probe.tcp.flow_fanout'])
+export const CLASSIFIER_KINDS = new Set(['probe.icmp.size_sweep', 'probe.tcp.flow_fanout', 'probe.http.flow_fanout'])
 export const CODE_KINDS = new Set([...NAT_CODE_KINDS, ...PROBE_ERROR_KINDS, ...CLASSIFIER_KINDS])
 // host.uptime_s is a monotonic counter: plotting it as a trend line is
 // meaningless, but the latest value ("up for N days") is useful — so it's an info
@@ -160,6 +160,7 @@ const KIND_COLORS: Record<string, string> = {
   'probe.http.latency_ms': '#f472b6',
   'probe.http.ok': '#34d399',
   'probe.http.error_class': '#f87171',
+  'probe.http.flow_fanout': '#fb923c',
   'probe.tcp.ok': '#34d399',
   'probe.tcp.connect_ms': '#38bdf8',
   'probe.tcp.dns_ms': '#818cf8',

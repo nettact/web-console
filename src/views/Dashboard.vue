@@ -1245,7 +1245,7 @@ onBeforeUnmount(() => {
         <DashboardCardControls v-if="editingLayout" :title="t(cardDefinition('system-status').titleKey)" :size="cardLayout('system-status')!.size" :sizes="cardDefinition('system-status').sizes" :first="visibleCardIndex('system-status') === 0" :last="visibleCardIndex('system-status') === visibleCardCount - 1" @resize="updateCardSize('system-status', $event)" @move="moveVisibleCard('system-status', $event)" @remove="removeWidget('system-status')" @pointer-drag="startPointerCardDrag('system-status', $event)" />
         <div class="surface-head compact">
           <div><span class="section-kicker">HOST</span><h3>{{ t('dashboard.systemStatus') }}</h3></div>
-          <RouterLink class="icon-link" :to="{ path: '/host-metrics', query: { agent: selected } }">→</RouterLink>
+          <RouterLink class="icon-link" :to="{ path: '/target-status', query: { view: 'agents', agent: selected, tab: 'metrics' } }">→</RouterLink>
         </div>
         <div class="system-monitor-grid">
           <div class="monitor-primary-column">

@@ -54,7 +54,7 @@ export function useMetricMeta() {
   const probeReasonInfo = () => t('metrics.probeReason.info')
 
   // classifierCodeLabel maps a DEGRADE classifier code (probe.icmp.size_sweep /
-  // probe.tcp.flow_fanout) to its localized label; classifierTone maps it to a
+  // probe.{tcp,http}.flow_fanout) to its localized label; classifierTone maps it to a
   // card tone. The two classifiers share an "insufficient evidence" code. These
   // MUST NOT be routed through probeReasonLabel — size-sweep code 1 would render
   // as "Timeout" and mislabel the diagnosis. An unknown code renders the raw
@@ -71,8 +71,8 @@ export function useMetricMeta() {
       if (n === 1) return 'bad'
       return 'unknown'
     }
-    // probe.tcp.flow_fanout: 0/1 = no deterministic bad subset; 2 = member-level,
-    // 3 = all flows failed; 4 = insufficient.
+    // TCP/HTTP flow_fanout: 0/1 = no deterministic bad subset; 2 = stable branch
+    // inconsistency, 3 = all branches failed; 4 = insufficient.
     if (n === 0 || n === 1) return 'good'
     if (n === 2 || n === 3) return 'bad'
     return 'unknown'

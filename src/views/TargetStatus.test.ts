@@ -285,6 +285,34 @@ describe('group-centric target-status page', () => {
     expect(apiMock.agentStatusHistory).toHaveBeenCalledWith('agent-1')
   })
 
+  it('selects the first Agent as soon as the initial Agent rows arrive', async () => {
+    const firstAgent = agentStatus.agents[0]
+    agentStatus.agents = []
+    agentStatus.loaded = false
+    const router = createRouter({
+      history: createMemoryHistory(),
+      routes: [{ path: '/target-status', component: TargetStatus }],
+    })
+    await router.push('/target-status?view=agents')
+    await router.isReady()
+
+    const wrapper = mount(TargetStatus, { global: { plugins: [router, i18n] } })
+    await flushPromises()
+    expect(router.currentRoute.value.query.agent).toBeUndefined()
+
+    agentStatus.agents = [firstAgent]
+    await flushPromises()
+
+    expect(router.currentRoute.value.query).toEqual({ view: 'agents', agent: 'agent-1' })
+
+    agentStatus.loaded = true
+    await flushPromises()
+    expect(wrapper.get('.agent-select').attributes('aria-current')).toBe('true')
+    expect(wrapper.get('.agent-detail-head h3').text()).toBe('Taipei NUC')
+    expect(wrapper.find('.agent-detail-empty').exists()).toBe(false)
+    wrapper.unmount()
+  })
+
   it('restores a target-probe history workspace from URL state', async () => {
     const router = createRouter({
       history: createMemoryHistory(),
@@ -311,5 +339,57 @@ describe('group-centric target-status page', () => {
       history: 'target',
       target: 'target-1',
     })
+  })
+
+  it('restores the Agent host-metrics workspace from URL state', async () => {
+    const router = createRouter({
+      history: createMemoryHistory(),
+      routes: [
+        { path: '/target-status', component: TargetStatus },
+      ],
+    })
+    await router.push('/target-status?view=agents&agent=agent-1&tab=metrics')
+    await router.isReady()
+
+    const wrapper = mount(TargetStatus, { global: { plugins: [router, i18n] } })
+    await flushPromises()
+
+    expect(wrapper.get('.agent-tabs button.active').text()).toBe(i18n.global.t('targetStatus.agentTabMetrics'))
+    expect(router.currentRoute.value.query).toEqual({
+      view: 'agents',
+      agent: 'agent-1',
+      tab: 'metrics',
+    })
+    wrapper.unmount()
+  })
+
+  it('persists the collapsed desktop Agent list while keeping selection controls', async () => {
+    const router = createRouter({
+      history: createMemoryHistory(),
+      routes: [{ path: '/target-status', component: TargetStatus }],
+    })
+    await router.push('/target-status')
+    await router.isReady()
+
+    let wrapper = mount(TargetStatus, { global: { plugins: [router, i18n] } })
+    await flushPromises()
+    await wrapper.get('.agent-list-toggle').trigger('click')
+
+    expect(wrapper.get('.agent-workbench').classes()).toContain('agent-list-collapsed')
+    expect(wrapper.get('.agent-select').attributes('aria-label')).toBe('Taipei NUC')
+    expect(wrapper.get('.agent-collapsed-label').text()).toBe('Taip')
+    expect(localStorage.getItem('nettact.targetStatus.agentListCollapsed')).toBe('true')
+
+    wrapper.unmount()
+    const restoredRouter = createRouter({
+      history: createMemoryHistory(),
+      routes: [{ path: '/target-status', component: TargetStatus }],
+    })
+    await restoredRouter.push('/target-status')
+    await restoredRouter.isReady()
+    wrapper = mount(TargetStatus, { global: { plugins: [restoredRouter, i18n] } })
+    await flushPromises()
+    expect(wrapper.get('.agent-workbench').classes()).toContain('agent-list-collapsed')
+    wrapper.unmount()
   })
 })

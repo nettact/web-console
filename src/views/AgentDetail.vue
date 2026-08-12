@@ -333,7 +333,7 @@ onMounted(() => {
           <MetricChart :title="t('agentStatus.chartMem')" :metrics="memMetrics" />
           <MetricChart :title="t('agentStatus.chartNet')" :metrics="netMetrics" />
         </div>
-        <router-link class="link" :to="`/host-metrics?agent=${encodeURIComponent(id)}`">{{ t('agentStatus.fullHistory') }} →</router-link>
+        <router-link class="link" :to="{ path: '/target-status', query: { view: 'agents', agent: id, tab: 'metrics' } }">{{ t('agentStatus.fullHistory') }} →</router-link>
       </section>
 
       <!-- associated targets -->

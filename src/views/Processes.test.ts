@@ -109,6 +109,7 @@ const initialSnapshot: HostSnapshot = {
       proto: 'tcp6', local_addr: '[::1]:3000', remote_addr: '[2001:db8::1]:443',
       state: 'ESTABLISHED', pid: 20, process_name: 'beta',
     },
+    { proto: 'tcp6', local_addr: '[::]:80', remote_addr: '[::]:0', state: 'LISTEN', pid: 40 },
     { proto: 'udp', local_addr: '0.0.0.0:4000', pid: 40 },
   ],
 }
@@ -119,6 +120,7 @@ async function render(
   snapshot: HostSnapshot = initialSnapshot,
   agent: Agent = fullAgent,
   remediation?: { reason: string; permissions_env?: string },
+  props: Record<string, unknown> = {},
 ) {
   apiMock.agents.mockResolvedValue([agent])
   apiMock.agent.mockResolvedValue(agent)
@@ -150,6 +152,7 @@ async function render(
 
   const i18n = createI18n({ legacy: false, locale: 'en', messages: { en } })
   wrapper = mount(Processes, {
+    props,
     global: { plugins: [i18n], stubs: { RouterLink: RouterLinkStub } },
   })
   await flushPromises()
@@ -178,7 +181,7 @@ afterEach(() => {
 describe('Processes network-connection filtering', () => {
   it('aggregates same-name PIDs by default and isolates an exact PID on demand', async () => {
     const page = await render()
-    await button(page, 'View connections').trigger('click')
+    await page.get('.connection-action').trigger('click')
 
     const connectionsPanel = page.findAll('section.panel')[1]
     expect(connectionsPanel.text()).toContain('1.1.1.1:443')
@@ -220,7 +223,7 @@ describe('Processes network-connection filtering', () => {
 
     const page = await render()
     await button(page, 'PID').trigger('click')
-    await button(page, 'View connections').trigger('click')
+    await page.get('.connection-action').trigger('click')
     await button(page, 'Refresh snapshot').trigger('click')
     await flushPromises()
     await vi.advanceTimersByTimeAsync(1000)
@@ -267,14 +270,139 @@ describe('Processes network-connection filtering', () => {
     const page = await render()
     await button(page, 'Connections').trigger('click')
 
+    const connectionsPanel = page.findAll('section.panel')[1]
+    await connectionsPanel.get('.field-mode input').setValue(true)
     const links = page.findAllComponents(RouterLinkStub)
-    expect(links.map((link) => link.props('to'))).toEqual([
+    expect(links).toHaveLength(4)
+    expect(links.map((link) => link.props('to'))).toEqual(expect.arrayContaining([
       { path: '/monitoring/new', query: { kind: 'tcp', target: '1.1.1.1', port: '443' } },
       { path: '/monitoring/new', query: { kind: 'tcp', target: '2.2.2.2', port: '8443' } },
       { path: '/monitoring/new', query: { kind: 'icmp', target: '3.3.3.3' } },
       { path: '/monitoring/new', query: { kind: 'tcp', target: '2001:db8::1', port: '443' } },
-    ])
+    ]))
     expect(links.every((link) => link.text() === 'Add monitor')).toBe(true)
+  })
+
+  it('keeps secondary fields in a full-width expandable summary row', async () => {
+    const page = await render()
+
+    expect(page.find('.process-summary-table').exists()).toBe(true)
+    expect(page.find('.full-fields-table').exists()).toBe(false)
+    expect(page.get('.summary-row .identity-cell').text()).toContain('PID 10')
+    expect(page.get('.summary-row .metric-value').text()).toContain('%')
+
+    await page.get('.detail-toggle').trigger('click')
+    const detail = page.get('.detail-row')
+    expect(detail.get('td').attributes('colspan')).toBe('4')
+    expect(detail.text()).toContain('Virtual')
+    expect(detail.text()).toContain('Uptime')
+    expect(detail.text()).toContain('Disk R / W')
+  })
+
+  it('filters locally and renders process rows in batches of 100', async () => {
+    const manyProcesses = Array.from({ length: 205 }, (_, index) => ({
+      pid: index + 1,
+      name: index === 204 ? 'needle-process' : `worker-${String(index).padStart(3, '0')}`,
+      cpu_pct: index,
+      rss_bytes: index + 1,
+    }))
+    const page = await render({ ...initialSnapshot, process_total: 205, processes: manyProcesses })
+
+    expect(page.findAll('.process-summary-table .summary-row')).toHaveLength(100)
+    await button(page, 'Show 100 more').trigger('click')
+    expect(page.findAll('.process-summary-table .summary-row')).toHaveLength(200)
+
+    await page.get('.data-search input').setValue('needle')
+    expect(page.findAll('.process-summary-table .summary-row')).toHaveLength(1)
+    expect(page.get('.process-summary-table .summary-row').text()).toContain('needle-process')
+  })
+
+  it('uses horizontal scrolling only for the optional all-fields mode', async () => {
+    const page = await render()
+    const processPanel = page.findAll('section.panel')[0]
+    const connectionPanel = page.findAll('section.panel')[1]
+    const tableWrap = processPanel.get('.table-wrap')
+
+    expect(tableWrap.classes()).not.toContain('all-fields')
+    expect(processPanel.find('.process-summary-table').exists()).toBe(true)
+    expect(connectionPanel.find('.connection-summary-table').exists()).toBe(true)
+    await processPanel.get('.field-mode input').setValue(true)
+    expect(tableWrap.classes()).toContain('all-fields')
+    expect(processPanel.find('.summary-table').exists()).toBe(false)
+    expect(processPanel.find('.full-fields-table').exists()).toBe(true)
+    expect(connectionPanel.find('.connection-summary-table').exists()).toBe(true)
+    expect(connectionPanel.find('.full-fields-table').exists()).toBe(false)
+
+    await connectionPanel.get('.field-mode input').setValue(true)
+    expect(connectionPanel.get('.table-wrap').classes()).toContain('all-fields')
+    expect(connectionPanel.find('.connection-summary-table').exists()).toBe(false)
+    expect(connectionPanel.find('.full-fields-table').exists()).toBe(true)
+  })
+
+  it('keeps process identity cells in the table layout in all-fields mode', async () => {
+    const page = await render()
+    const processPanel = page.findAll('section.panel')[0]
+    await processPanel.get('.field-mode input').setValue(true)
+
+    const firstRow = processPanel.get('.full-fields-table tbody tr')
+    const cells = firstRow.findAll('td')
+    expect(cells[0].classes()).not.toContain('truncate')
+    expect(cells[0].get('.truncate').text()).toBe('alpha')
+    expect(cells[1].text()).toBe('10')
+  })
+
+  it('keeps connections with a remote address ahead of listening sockets', async () => {
+    const page = await render()
+    await button(page, 'Connections').trigger('click')
+
+    const rows = page.findAll('.connection-summary-table .summary-row')
+    expect(rows).toHaveLength(6)
+    expect(rows.slice(0, 4).every((row) => row.get('.identity-cell strong').attributes('title') !== '—')).toBe(true)
+    expect(rows.slice(4).map((row) => row.get('.identity-cell strong').attributes('title')))
+      .toEqual(expect.arrayContaining(['[::]:0', '—']))
+    expect(rows[0].get('.connection-owner-layout').findAll(':scope > *')).toHaveLength(2)
+    expect(rows[0].get('.connection-owner-layout > .detail-toggle').text()).toBe('Details')
+  })
+
+  it('keeps duplicate connection rows independently keyed', async () => {
+    const duplicate = initialSnapshot.connections![0]
+    const page = await render({
+      ...initialSnapshot,
+      connections: [duplicate, { ...duplicate }],
+    })
+    await button(page, 'Connections').trigger('click')
+
+    const rows = page.findAll('.connection-summary-table .summary-row')
+    expect(rows).toHaveLength(2)
+    await rows[1].get('.detail-toggle').trigger('click')
+
+    expect(page.findAll('.connection-summary-table .detail-row')).toHaveLength(1)
+    expect(rows[0].get('.detail-toggle').attributes('aria-expanded')).toBe('false')
+    expect(rows[1].get('.detail-toggle').attributes('aria-expanded')).toBe('true')
+  })
+
+  it('keeps connection filters in stable toolbar slots across filter bases', async () => {
+    const page = await render()
+    await button(page, 'Connections').trigger('click')
+    const toolbar = page.get('.connection-toolbar')
+
+    expect(toolbar.get('.connection-process-filter').find('select#conn-filter').exists()).toBe(true)
+    expect(toolbar.get('.connection-sort-control').find('select#connection-sort').exists()).toBe(true)
+    await button(page, 'PID').trigger('click')
+    expect(toolbar.get('.connection-process-filter').find('select#conn-filter').exists()).toBe(true)
+    expect(toolbar.get('.connection-sort-control').find('select#connection-sort').exists()).toBe(true)
+  })
+
+  it('emits a peer-tab request from embedded process mode', async () => {
+    const page = await render(initialSnapshot, fullAgent, undefined, {
+      embedded: true,
+      fixedAgentId: 'agent-1',
+      fixedMode: 'processes',
+    })
+
+    expect(page.find('.workbench-tabs').exists()).toBe(false)
+    await page.get('.connection-action').trigger('click')
+    expect(page.emitted('request-mode')).toEqual([['connections', { name: 'alpha', pid: 10 }]])
   })
 
   it('does not expose the jump action without connection capability', async () => {

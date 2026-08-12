@@ -78,6 +78,7 @@ describe('paramsRangeError', () => {
     expect(paramsRangeError('icmp', { packet_count: '', packet_size: null })).toBeNull()
     expect(paramsRangeError('icmp', { packet_count: 5, packet_size: 56, global_timeout_ms: 10000 })).toBeNull()
     expect(paramsRangeError('http', { max_redirects: -1, max_response_bytes: 1024 })).toBeNull()
+		expect(paramsRangeError('http', { flow_fanout: 32 })).toBeNull()
     expect(paramsRangeError('tcp', { port: 443 })).toBeNull()
     expect(paramsRangeError('tcp', { flow_fanout: 0 })).toBeNull() // off
     expect(paramsRangeError('tcp', { port: 443, flow_fanout: 32 })).toBeNull() // max
@@ -92,6 +93,7 @@ describe('paramsRangeError', () => {
     expect(paramsRangeError('icmp', { packet_size: 70000 })?.labelKey).toBe('mform.packetSize')
     expect(paramsRangeError('http', { max_redirects: 21 })?.labelKey).toBe('mform.maxRedirects')
     expect(paramsRangeError('http', { max_response_bytes: 1 << 30 })?.labelKey).toBe('mform.maxResponseBytes')
+		expect(paramsRangeError('http', { flow_fanout: 33 })?.labelKey).toBe('mform.httpFlowFanout')
     expect(paramsRangeError('dns', { resolver_port: 70000 })?.labelKey).toBe('mform.resolverPort')
     expect(paramsRangeError('tcp', { port: 0 })?.labelKey).toBe('mform.port')
     expect(paramsRangeError('tcp', { flow_fanout: 33 })?.labelKey).toBe('mform.tcpFlowFanout')

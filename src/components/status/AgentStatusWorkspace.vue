@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type { AgentGroup, AgentStatusRow, MonitorGroup, TargetStatusRow } from '../../api'
 import type { AgentFilter } from '../../lib/agentStatusPage'
@@ -17,6 +17,8 @@ import OsIcon from '../agents/OsIcon.vue'
 import MonitorStateBadge from './MonitorStateBadge.vue'
 import TargetStatusHistory from './TargetStatusHistory.vue'
 import AgentConnectivityHistory from './AgentConnectivityHistory.vue'
+import HostMetrics from '../../views/HostMetrics.vue'
+import Processes from '../../views/Processes.vue'
 
 const props = defineProps<{
   agents: AgentStatusRow[]
@@ -44,6 +46,11 @@ const emit = defineEmits<{
 
 const { t, locale } = useI18n()
 const mobilePane = ref<'list' | 'detail'>(props.selectedAgentId ? 'detail' : 'list')
+const AGENT_LIST_COLLAPSED_KEY = 'nettact.targetStatus.agentListCollapsed'
+const agentListCollapsed = ref(localStorage.getItem(AGENT_LIST_COLLAPSED_KEY) === 'true')
+const tabsEl = ref<HTMLElement | null>(null)
+const connectionFilter = ref<{ name: string; pid: number } | null>(null)
+let tabsResizeObserver: ResizeObserver | undefined
 
 const selectedAgent = computed(() => props.agents.find((agent) => agent.id === props.selectedAgentId))
 const selectedTargets = computed(() => buildAgentTargetViews(props.targets, props.selectedAgentId, props.groups))
@@ -91,6 +98,23 @@ function updateTab(tab: AgentWorkspaceTab): void {
   emit('update:tab', tab)
 }
 
+function openProcessConnections(_mode: 'connections', filter: { name: string; pid: number }): void {
+  connectionFilter.value = filter
+  emit('update:tab', 'connections')
+}
+
+function scrollActiveTabIntoView(): void {
+  nextTick(() => {
+    const activeTab = tabsEl.value?.querySelector<HTMLElement>('[aria-selected="true"]')
+    if (typeof activeTab?.scrollIntoView !== 'function') return
+    activeTab.scrollIntoView({
+      behavior: 'auto',
+      block: 'nearest',
+      inline: 'center',
+    })
+  })
+}
+
 function updateHistoryMode(mode: AgentHistoryMode): void {
   emit('update:historyMode', mode)
 }
@@ -124,11 +148,43 @@ watch(
   },
   { immediate: true },
 )
+
+watch(() => props.tab, scrollActiveTabIntoView, { immediate: true })
+watch(agentListCollapsed, (collapsed) => {
+  localStorage.setItem(AGENT_LIST_COLLAPSED_KEY, String(collapsed))
+})
+
+onMounted(() => {
+  if (typeof ResizeObserver !== 'function' || !tabsEl.value) return
+  tabsResizeObserver = new ResizeObserver(scrollActiveTabIntoView)
+  tabsResizeObserver.observe(tabsEl.value)
+})
+
+onBeforeUnmount(() => tabsResizeObserver?.disconnect())
 </script>
 
 <template>
-  <section class="agent-workbench" :data-mobile-pane="mobilePane">
+  <section
+    class="agent-workbench"
+    :class="{ 'agent-list-collapsed': agentListCollapsed }"
+    :data-mobile-pane="mobilePane"
+  >
     <aside class="agent-list-pane" :aria-label="t('targetStatus.agentListAria')">
+      <div class="agent-list-toolbar">
+        <span>{{ t('targetStatus.viewAgents') }}</span>
+        <button
+          type="button"
+          class="agent-list-toggle"
+          :aria-label="t(agentListCollapsed ? 'targetStatus.expandAgentList' : 'targetStatus.collapseAgentList')"
+          :title="t(agentListCollapsed ? 'targetStatus.expandAgentList' : 'targetStatus.collapseAgentList')"
+          @click="agentListCollapsed = !agentListCollapsed"
+        >
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path v-if="agentListCollapsed" d="m9 5 7 7-7 7" />
+            <path v-else d="m15 5-7 7 7 7" />
+          </svg>
+        </button>
+      </div>
       <div class="agent-filters">
         <label class="agent-search">
           <span class="sr-only">{{ t('targetStatus.agentSearchLabel') }}</span>
@@ -195,9 +251,12 @@ watch(
             type="button"
             class="agent-select"
             :aria-current="selectedAgentId === agent.id ? 'true' : undefined"
+            :aria-label="agentLabel(agent)"
+            :title="agentListCollapsed ? agentLabel(agent) : undefined"
             @click="showAgent(agent.id)"
           >
             <span class="agent-device"><OsIcon :platform="agent.platform" :size="19" /></span>
+            <span class="agent-collapsed-label">{{ agentLabel(agent).slice(0, 4) }}</span>
             <span class="agent-row-copy">
               <strong>{{ agentLabel(agent) }}</strong>
               <small>{{ agent.hostname || agent.id }}</small>
@@ -246,12 +305,15 @@ watch(
           </div>
         </header>
 
-        <nav class="agent-tabs" role="tablist" :aria-label="t('targetStatus.agentTabsAria')">
+        <nav ref="tabsEl" class="agent-tabs" role="tablist" :aria-label="t('targetStatus.agentTabsAria')">
           <button
             v-for="item in ([
               { id: 'overview', label: t('targetStatus.agentTabOverview') },
               { id: 'targets', label: t('targetStatus.agentTabTargets', { n: selectedSummary.total }) },
               { id: 'history', label: t('targetStatus.agentTabHistory') },
+              { id: 'metrics', label: t('targetStatus.agentTabMetrics') },
+              { id: 'processes', label: t('targetStatus.agentTabProcesses') },
+              { id: 'connections', label: t('targetStatus.agentTabConnections') },
             ] as Array<{ id: AgentWorkspaceTab; label: string }>)"
             :key="item.id"
             type="button"
@@ -364,7 +426,7 @@ watch(
             </div>
           </section>
 
-          <section v-else class="agent-history" role="tabpanel">
+          <section v-else-if="tab === 'history'" class="agent-history" role="tabpanel">
             <div class="history-mode-switch" role="tablist" :aria-label="t('targetStatus.historyModeAria')">
               <button
                 type="button"
@@ -416,6 +478,21 @@ watch(
               </div>
             </div>
           </section>
+
+          <section v-else-if="tab === 'metrics'" class="agent-embedded-view" role="tabpanel">
+            <HostMetrics embedded :fixed-agent-id="selectedAgent.id" />
+          </section>
+
+          <section v-else class="agent-embedded-view" role="tabpanel">
+            <Processes
+              embedded
+              :fixed-agent-id="selectedAgent.id"
+              :fixed-mode="tab === 'connections' ? 'connections' : 'processes'"
+              :connection-filter-name="connectionFilter?.name || ''"
+              :connection-filter-pid="connectionFilter?.pid ?? null"
+              @request-mode="openProcessConnections"
+            />
+          </section>
         </div>
       </template>
 
@@ -451,6 +528,43 @@ watch(
 .agent-list-pane {
   display: block;
   background: var(--color-glass-strong);
+}
+
+.agent-list-toolbar {
+  display: none;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 52px;
+  padding: var(--space-2xs) var(--space-xs);
+  border-bottom: var(--rule-hair) solid var(--color-rule);
+}
+
+.agent-list-toolbar > span {
+  color: var(--color-muted);
+  font-size: var(--text-xs);
+  font-weight: 650;
+}
+
+.agent-list-toggle {
+  display: grid;
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  color: var(--color-ink-2);
+  border: var(--rule-hair) solid var(--color-rule);
+  border-radius: var(--radius-input);
+  background: var(--color-glass-subtle);
+  cursor: pointer;
+  place-items: center;
+}
+
+.agent-list-toggle svg {
+  width: 18px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
 }
 
 .agent-detail-pane {
@@ -563,6 +677,18 @@ watch(
 .agent-device {
   width: 36px;
   height: 36px;
+}
+
+.agent-collapsed-label {
+  display: none;
+  max-width: 3rem;
+  overflow: hidden;
+  color: var(--color-ink-2);
+  font-size: var(--text-xs);
+  font-weight: 650;
+  text-align: center;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .agent-row-copy {
@@ -692,10 +818,12 @@ watch(
 .agent-detail-identity h3 {
   min-width: 0;
   margin: 0;
-  overflow-wrap: anywhere;
+  overflow: hidden;
   font-family: var(--font-display);
   font-size: var(--text-lg);
   font-style: normal;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .agent-detail-identity p,
@@ -765,8 +893,13 @@ watch(
 .agent-overview,
 .agent-targets,
 .agent-history,
+.agent-embedded-view,
 .target-history {
   min-width: 0;
+}
+
+.agent-embedded-view {
+  container-type: inline-size;
 }
 
 .agent-summary-grid {
@@ -1031,6 +1164,7 @@ watch(
 
 .agent-select:focus-visible,
 .agent-history-shortcut:focus-visible,
+.agent-list-toggle:focus-visible,
 .mobile-back:focus-visible,
 .agent-tabs button:focus-visible,
 .history-mode-switch button:focus-visible,
@@ -1043,6 +1177,7 @@ watch(
 
 .agent-select:active,
 .agent-history-shortcut:active,
+.agent-list-toggle:active,
 .mobile-back:active,
 .agent-tabs button:active,
 .history-mode-switch button:active,
@@ -1055,6 +1190,7 @@ watch(
 @media (hover: hover) and (pointer: fine) {
   .agent-select:hover,
   .agent-history-shortcut:hover,
+  .agent-list-toggle:hover,
   .mobile-back:hover,
   .agent-tabs button:not(.active):hover,
   .history-mode-switch button:not(.active):hover,
@@ -1114,11 +1250,16 @@ watch(
   }
 }
 
-@media (min-width: 60rem) {
+@media (min-width: 72rem) {
   .agent-workbench {
     display: grid;
     grid-template-columns: minmax(290px, 340px) minmax(0, 1fr);
     min-height: 640px;
+    transition: grid-template-columns var(--dur-short) var(--ease-out);
+  }
+
+  .agent-workbench.agent-list-collapsed {
+    grid-template-columns: 5rem minmax(0, 1fr);
   }
 
   .agent-list-pane,
@@ -1130,6 +1271,45 @@ watch(
 
   .agent-list-pane {
     border-right: var(--rule-hair) solid var(--color-rule);
+  }
+
+  .agent-list-toolbar {
+    display: flex;
+  }
+
+  .agent-list-collapsed .agent-list-toolbar {
+    justify-content: center;
+    padding-inline: var(--space-2xs);
+  }
+
+  .agent-list-collapsed .agent-list-toolbar > span,
+  .agent-list-collapsed .agent-filters,
+  .agent-list-collapsed .agent-row-copy,
+  .agent-list-collapsed .agent-row-status,
+  .agent-list-collapsed .agent-history-shortcut {
+    display: none;
+  }
+
+  .agent-list-collapsed .agent-list-row {
+    display: block;
+  }
+
+  .agent-list-collapsed .agent-select {
+    width: 100%;
+    grid-template-columns: minmax(0, 1fr);
+    justify-items: center;
+    gap: var(--space-3xs);
+    min-height: 76px;
+    padding: var(--space-2xs);
+  }
+
+  .agent-list-collapsed .agent-collapsed-label {
+    display: block;
+    max-width: 100%;
+  }
+
+  .agent-list-collapsed .agent-list-row.selected {
+    box-shadow: inset var(--rule-fine) 0 var(--color-accent);
   }
 
   .agent-list {
@@ -1147,6 +1327,10 @@ watch(
     grid-template-columns: minmax(330px, 380px) minmax(0, 1fr);
   }
 
+  .agent-workbench.agent-list-collapsed {
+    grid-template-columns: 5rem minmax(0, 1fr);
+  }
+
   .agent-tab-content {
     padding: var(--space-md);
   }
@@ -1155,6 +1339,7 @@ watch(
 @media (prefers-reduced-motion: reduce) {
   .agent-select,
   .agent-history-shortcut,
+  .agent-list-toggle,
   .mobile-back,
   .agent-tabs button,
   .history-mode-switch button,

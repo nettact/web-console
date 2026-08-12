@@ -13,7 +13,7 @@ import {
 } from '../api'
 import { fmtBytes } from '../lib/format'
 import { agentLabel } from '../lib/agentLabel'
-import { quickAddQuery } from '../lib/netaddr'
+import { isUsableIp, parseRemoteAddr, quickAddQuery } from '../lib/netaddr'
 import {
   hasProcessScopes,
   hasConnectionScopes,
@@ -24,6 +24,24 @@ import PermissionRemediationDialog from '../components/status/PermissionRemediat
 
 const { t, te } = useI18n()
 const { permLabel } = usePermissionMeta()
+
+const props = withDefaults(defineProps<{
+  embedded?: boolean
+  fixedAgentId?: string
+  fixedMode?: 'processes' | 'connections'
+  connectionFilterName?: string
+  connectionFilterPid?: number | null
+}>(), {
+  embedded: false,
+  fixedAgentId: '',
+  fixedMode: undefined,
+  connectionFilterName: '',
+  connectionFilterPid: null,
+})
+
+const emit = defineEmits<{
+  'request-mode': [mode: 'connections', filter: { name: string; pid: number }]
+}>()
 
 // This page shows a live, on-demand snapshot of an agent's processes and network
 // connections. Nothing is stored server-side: opening the page asks the agent to
@@ -46,13 +64,29 @@ const error = ref('')
 // are `withheld` below — the page knows those are missing before it asks.
 const denialScopes = ref<SnapshotScopeResult[]>([])
 const sortKey = ref<'cpu' | 'ram' | 'name'>('cpu')
-const tab = ref<'processes' | 'connections'>('processes')
+const connectionSortKey = ref<'remote' | 'process' | 'state'>('remote')
+const tab = ref<'processes' | 'connections'>(props.fixedMode || 'processes')
+const processSearch = ref('')
+const connectionSearch = ref('')
+const showAllProcessFields = ref(false)
+const showAllConnectionFields = ref(false)
+const visibleProcessCount = ref(100)
+const visibleConnectionCount = ref(100)
+const expandedProcesses = ref<Set<number>>(new Set())
+const expandedConnections = ref<Set<string>>(new Set())
+const PAGE_SIZE = 100
 type ConnBasis = 'name' | 'pid'
 type ConnFilter =
   | { basis: 'name'; name: string }
   | { basis: 'pid'; pid: number; name: string }
 const connBasis = ref<ConnBasis>('name')
-const connFilter = ref<ConnFilter | null>(null)
+const connFilter = ref<ConnFilter | null>(
+  props.connectionFilterPid != null
+    ? { basis: 'pid', pid: props.connectionFilterPid, name: props.connectionFilterName }
+    : props.connectionFilterName
+      ? { basis: 'name', name: props.connectionFilterName }
+      : null,
+)
 let poll: number | undefined
 
 // Every process/connection snapshot scope, in the order the denial list shows
@@ -163,7 +197,7 @@ watch(
 async function loadAgents() {
   try {
     agents.value = await api.agents()
-    const q = String(route.query.agent || '')
+    const q = props.fixedAgentId || String(route.query.agent || '')
     if (q && agents.value.some((a) => a.id === q)) selected.value = q
     else if (!selected.value && agents.value.length) selected.value = agents.value[0].id
   } catch (e) {
@@ -309,7 +343,51 @@ const processes = computed<ProcessInfo[]>(() => {
   })
   return ps
 })
-const connections = computed<ConnectionInfo[]>(() => snapshot.value?.connections || [])
+
+function hasUsableRemote(connection: ConnectionInfo): boolean {
+  const parsed = parseRemoteAddr(connection.remote_addr)
+  return !!parsed && isUsableIp(parsed.ip) && parsed.port != null
+}
+
+const connections = computed<ConnectionInfo[]>(() => {
+  const rows = [...(snapshot.value?.connections || [])]
+  rows.sort((a, b) => {
+    if (connectionSortKey.value === 'process') {
+      return (a.process_name || '').localeCompare(b.process_name || '') || (a.pid ?? -1) - (b.pid ?? -1)
+    }
+    if (connectionSortKey.value === 'state') {
+      return (a.state || '').localeCompare(b.state || '') || a.proto.localeCompare(b.proto)
+    }
+    const aRemote = a.remote_addr || ''
+    const bRemote = b.remote_addr || ''
+    const aUsable = hasUsableRemote(a)
+    const bUsable = hasUsableRemote(b)
+    if (aUsable !== bUsable) return aUsable ? -1 : 1
+    return aRemote.localeCompare(bRemote)
+  })
+  return rows
+})
+
+const connectionCountByPID = computed(() => {
+  const counts = new Map<number, number>()
+  for (const connection of connections.value) {
+    if (connection.pid == null) continue
+    counts.set(connection.pid, (counts.get(connection.pid) || 0) + 1)
+  }
+  return counts
+})
+
+const filteredProcesses = computed(() => {
+  const query = processSearch.value.trim().toLocaleLowerCase()
+  if (!query) return processes.value
+  return processes.value.filter((process) =>
+    process.name.toLocaleLowerCase().includes(query)
+    || String(process.pid).includes(query)
+    || (process.user || '').toLocaleLowerCase().includes(query),
+  )
+})
+
+const visibleProcesses = computed(() => filteredProcesses.value.slice(0, visibleProcessCount.value))
 
 const filteredConnections = computed<ConnectionInfo[]>(() => {
   const cs = connections.value
@@ -400,6 +478,10 @@ function connQuickAddAria(c: ConnectionInfo): string {
 }
 
 function viewConnections(p: ProcessInfo) {
+  if (props.fixedMode) {
+    emit('request-mode', 'connections', { name: p.name, pid: p.pid })
+    return
+  }
   if (connBasis.value === 'name' && !p.name) connBasis.value = 'pid'
   if (connBasis.value === 'name') connFilter.value = { basis: 'name', name: p.name }
   else connFilter.value = { basis: 'pid', pid: p.pid, name: p.name }
@@ -554,6 +636,7 @@ function openFix(sc: SnapshotScopeResult): void {
 const fixDesktop = computed(() => isDesktopFullAccess(agent.value?.policy_source))
 
 async function onAgentChange() {
+  stopPoll()
   connFilter.value = null
   // The inventory is per agent; drop the previous one so a "how to fix" click
   // cannot show the old agent's policy line while the new one loads.
@@ -576,22 +659,120 @@ async function refreshNow() {
   await requestSnapshot(seq)
 }
 
+let mounted = false
 onMounted(async () => {
-  await loadAgents()
+  mounted = true
+  if (props.fixedAgentId) selected.value = props.fixedAgentId
+  else await loadAgents()
   await refreshNow()
 })
-onBeforeUnmount(stopPoll)
+
+const searchedConnections = computed(() => {
+  const query = connectionSearch.value.trim().toLocaleLowerCase()
+  if (!query) return filteredConnections.value
+  return filteredConnections.value.filter((connection) =>
+    connection.remote_addr?.toLocaleLowerCase().includes(query)
+    || connection.local_addr?.toLocaleLowerCase().includes(query)
+    || connection.process_name?.toLocaleLowerCase().includes(query)
+    || connection.proto.toLocaleLowerCase().includes(query)
+    || String(connection.pid ?? '').includes(query),
+  )
+})
+
+function connectionFingerprint(connection: ConnectionInfo): string {
+  return JSON.stringify([
+    connection.proto,
+    connection.local_addr || '',
+    connection.remote_addr || '',
+    connection.pid ?? null,
+    connection.process_name || '',
+    connection.state || '',
+  ])
+}
+
+const visibleConnectionRows = computed(() => {
+  const occurrences = new Map<string, number>()
+  return searchedConnections.value.slice(0, visibleConnectionCount.value).map((connection) => {
+    const fingerprint = connectionFingerprint(connection)
+    const occurrence = occurrences.get(fingerprint) ?? 0
+    occurrences.set(fingerprint, occurrence + 1)
+    return { connection, key: `${fingerprint}|${occurrence}` }
+  })
+})
+
+function toggleProcessDetails(pid: number): void {
+  const next = new Set(expandedProcesses.value)
+  if (next.has(pid)) next.delete(pid)
+  else next.add(pid)
+  expandedProcesses.value = next
+}
+
+function toggleConnectionDetails(key: string): void {
+  const next = new Set(expandedConnections.value)
+  if (next.has(key)) next.delete(key)
+  else next.add(key)
+  expandedConnections.value = next
+}
+
+function showMoreProcesses(): void {
+  visibleProcessCount.value += PAGE_SIZE
+}
+
+function showMoreConnections(): void {
+  visibleConnectionCount.value += PAGE_SIZE
+}
+onBeforeUnmount(() => {
+  stopPoll()
+})
+
+watch(() => props.fixedAgentId, async (next, previous) => {
+  if (!mounted || !next || next === previous) return
+  selected.value = next
+  await onAgentChange()
+})
+
+watch(() => props.fixedMode, (next) => {
+  if (next) tab.value = next
+})
+
+watch(
+  [() => props.connectionFilterName, () => props.connectionFilterPid],
+  ([name, pid]) => {
+    if (pid != null) {
+      connBasis.value = 'pid'
+      connFilter.value = { basis: 'pid', pid, name }
+    } else if (name) {
+      connBasis.value = 'name'
+      connFilter.value = { basis: 'name', name }
+    }
+  },
+)
+
+watch(processSearch, () => {
+  visibleProcessCount.value = PAGE_SIZE
+  expandedProcesses.value = new Set()
+})
+
+watch([connectionSearch, connFilter], () => {
+  visibleConnectionCount.value = PAGE_SIZE
+  expandedConnections.value = new Set()
+})
 </script>
 
 <template>
-  <main class="page data-workbench" aria-labelledby="processes-title">
-    <div class="page-head workbench-head">
+  <main
+    class="page data-workbench"
+    :class="{ embedded }"
+    :aria-labelledby="embedded ? undefined : 'processes-title'"
+    :aria-label="embedded ? t('processes.title') : undefined"
+  >
+    <div class="page-head workbench-head" :class="{ 'embedded-head': embedded }">
       <div class="head-copy">
-        <h2 id="processes-title">{{ t('processes.title') }}</h2>
+        <h2 v-if="!embedded" id="processes-title">{{ t('processes.title') }}</h2>
         <p class="hint sub">{{ t('processes.sub') }}</p>
       </div>
       <span class="spacer"></span>
-      <div class="picker" v-if="agents.length">
+      <div class="picker" v-if="!embedded && agents.length">
         <label>Agent</label>
         <select v-model="selected" @change="onAgentChange">
           <option v-for="a in agents" :key="a.id" :value="a.id">
@@ -602,6 +783,14 @@ onBeforeUnmount(stopPoll)
           {{ loading ? t('processes.fetching') : t('processes.refreshSnapshot') }}
         </button>
       </div>
+      <button
+        v-else-if="embedded"
+        class="btn embedded-refresh"
+        :disabled="loading || !selected"
+        @click="refreshNow"
+      >
+        {{ loading ? t('processes.fetching') : t('processes.refreshSnapshot') }}
+      </button>
     </div>
 
     <p v-if="error" class="err" role="alert">{{ error }}</p>
@@ -631,7 +820,7 @@ onBeforeUnmount(stopPoll)
     </div>
 
     <template v-if="permitted">
-      <div class="tabs workbench-tabs" role="tablist" :aria-label="t('processes.title')">
+      <div v-if="!fixedMode" class="tabs workbench-tabs" role="tablist" :aria-label="t('processes.title')">
         <button
           v-if="canProcs"
           id="processes-tab-processes"
@@ -666,12 +855,16 @@ onBeforeUnmount(stopPoll)
       <section
         id="processes-panel-processes"
         class="panel table-sheet"
-        v-if="canProcs"
+        v-if="canProcs && (!fixedMode || fixedMode === 'processes')"
         v-show="tab === 'processes'"
         role="tabpanel"
         aria-labelledby="processes-tab-processes"
       >
-        <div class="panel-head">
+        <div class="panel-head data-toolbar">
+          <label class="data-search">
+            <span>{{ t('processes.searchProcesses') }}</span>
+            <input v-model="processSearch" type="search" :placeholder="t('processes.searchProcessesPlaceholder')" />
+          </label>
           <span class="spacer"></span>
           <div class="sort" v-if="colResource">
             <label>{{ t('processes.sortLabel') }}</label>
@@ -681,9 +874,19 @@ onBeforeUnmount(stopPoll)
               <option value="name">{{ t('processes.sortName') }}</option>
             </select>
           </div>
+          <label class="field-mode">
+            <input v-model="showAllProcessFields" type="checkbox" />
+            <span>{{ t('processes.showAllFields') }}</span>
+          </label>
         </div>
-        <div class="table-wrap" role="region" tabindex="0" :aria-label="t('processes.tabProcesses')">
-          <table class="data-table">
+        <div
+          class="table-wrap"
+          :class="{ 'all-fields': showAllProcessFields }"
+          role="region"
+          tabindex="0"
+          :aria-label="t('processes.tabProcesses')"
+        >
+          <table v-if="showAllProcessFields" class="data-table full-fields-table">
             <thead>
               <tr>
                 <th v-if="colBasic">{{ t('processes.thProcName') }}</th>
@@ -700,9 +903,9 @@ onBeforeUnmount(stopPoll)
             </thead>
             <tbody>
               <tr v-if="loading && !processes.length"><td :colspan="procCols || 1" class="hint">{{ t('processes.waitingAgent') }}</td></tr>
-              <tr v-else-if="!processes.length"><td :colspan="procCols || 1" class="hint">{{ t('common.noData') }}</td></tr>
-              <tr v-for="p in processes" :key="p.pid">
-                <td class="mono" v-if="colBasic">{{ p.name }}</td>
+              <tr v-else-if="!filteredProcesses.length"><td :colspan="procCols || 1" class="hint">{{ t('common.noData') }}</td></tr>
+              <tr v-for="p in visibleProcesses" :key="p.pid">
+                <td class="mono" v-if="colBasic"><span class="truncate" :title="p.name">{{ p.name }}</span></td>
                 <td class="mono" v-if="colBasic">{{ p.pid }}</td>
                 <td v-if="colBasic">{{ p.status || '—' }}</td>
                 <td class="mono dim" v-if="colOwner">{{ p.user || '—' }}</td>
@@ -723,6 +926,66 @@ onBeforeUnmount(stopPoll)
               </tr>
             </tbody>
           </table>
+          <table v-else class="data-table summary-table process-summary-table">
+            <thead>
+              <tr>
+                <th>{{ t('processes.processIdentity') }}</th>
+                <th class="num metric-column">CPU</th>
+                <th class="num metric-column">{{ t('processes.thMem') }}</th>
+                <th class="action-column">{{ t('processes.connectionsAndDetails') }}</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-if="loading && !processes.length"><td colspan="4" class="hint">{{ t('processes.waitingAgent') }}</td></tr>
+              <tr v-else-if="!filteredProcesses.length"><td colspan="4" class="hint">{{ t('common.noData') }}</td></tr>
+              <template v-for="p in visibleProcesses" :key="p.pid">
+                <tr class="summary-row">
+                  <td class="identity-cell">
+                    <strong class="truncate" :title="p.name">{{ p.name || '—' }}</strong>
+                    <span class="mono">PID {{ p.pid }}</span>
+                  </td>
+                  <td class="num metric-value"><span class="metric-label">CPU</span><span class="metric-reading">{{ p.cpu_pct != null ? `${p.cpu_pct.toFixed(1)}%` : '—' }}</span></td>
+                  <td class="num metric-value"><span class="metric-label">{{ t('processes.thMem') }}</span><span class="metric-reading">{{ p.rss_bytes != null ? fmtBytes(p.rss_bytes) : '—' }}</span></td>
+                  <td class="row-actions">
+                    <button
+                      v-if="canConns && colConnOwner"
+                      type="button"
+                      class="link-btn connection-action"
+                      :aria-label="t('processes.viewConnsAria', { name: p.name, pid: p.pid })"
+                      @click="viewConnections(p)"
+                    >
+                      {{ t('processes.connectionCount', { n: connectionCountByPID.get(p.pid) || 0 }) }}
+                    </button>
+                    <button
+                      type="button"
+                      class="detail-toggle"
+                      :aria-expanded="expandedProcesses.has(p.pid)"
+                      @click="toggleProcessDetails(p.pid)"
+                    >
+                      {{ expandedProcesses.has(p.pid) ? t('processes.hideDetails') : t('processes.showDetails') }}
+                    </button>
+                  </td>
+                </tr>
+                <tr v-if="expandedProcesses.has(p.pid)" class="detail-row">
+                  <td colspan="4">
+                    <dl class="row-detail-grid">
+                      <div><dt>{{ t('processes.thUser') }}</dt><dd class="mono truncate" :title="p.user || '—'">{{ p.user || '—' }}</dd></div>
+                      <div><dt>{{ t('processes.thStatus') }}</dt><dd>{{ p.status || '—' }}</dd></div>
+                      <div><dt>{{ t('processes.thVirt') }}</dt><dd class="mono">{{ p.virt_bytes != null ? fmtBytes(p.virt_bytes) : '—' }}</dd></div>
+                      <div><dt>{{ t('processes.thRuntime') }}</dt><dd class="mono">{{ p.run_time_seconds != null ? fmtRun(p.run_time_seconds) : '—' }}</dd></div>
+                      <div><dt>{{ t('processes.thDisk') }}</dt><dd class="mono">{{ p.disk_read_bytes != null ? fmtBytes(p.disk_read_bytes) : '—' }} / {{ p.disk_write_bytes != null ? fmtBytes(p.disk_write_bytes) : '—' }}</dd></div>
+                    </dl>
+                  </td>
+                </tr>
+              </template>
+            </tbody>
+          </table>
+        </div>
+        <div class="result-footer">
+          <span>{{ t('processes.showingResults', { shown: visibleProcesses.length, total: filteredProcesses.length }) }}</span>
+          <button v-if="visibleProcesses.length < filteredProcesses.length" type="button" class="btn" @click="showMoreProcesses">
+            {{ t('processes.showMore') }}
+          </button>
         </div>
       </section>
 
@@ -730,12 +993,16 @@ onBeforeUnmount(stopPoll)
       <section
         id="processes-panel-connections"
         class="panel table-sheet"
-        v-if="canConns"
+        v-if="canConns && (!fixedMode || fixedMode === 'connections')"
         v-show="tab === 'connections'"
         role="tabpanel"
         aria-labelledby="processes-tab-connections"
       >
-        <div class="panel-head">
+        <div class="panel-head data-toolbar connection-toolbar">
+          <label class="data-search">
+            <span>{{ t('processes.searchConnections') }}</span>
+            <input v-model="connectionSearch" type="search" :placeholder="t('processes.searchConnectionsPlaceholder')" />
+          </label>
           <div class="basis" v-if="colConnOwner" role="group" :aria-label="t('processes.connBasisLabel')">
             <span class="basis-label">{{ t('processes.connBasisLabel') }}</span>
             <button
@@ -758,7 +1025,7 @@ onBeforeUnmount(stopPoll)
             </button>
           </div>
           <span class="spacer"></span>
-          <div class="sort" v-if="colConnOwner">
+          <div class="sort connection-process-filter" v-if="colConnOwner">
             <label for="conn-filter">{{ t('processes.connFilterLabel') }}</label>
             <select v-if="connBasis === 'name'" id="conn-filter" v-model="connNameValue">
               <option value="">{{ t('processes.connFilterAll') }}</option>
@@ -771,9 +1038,27 @@ onBeforeUnmount(stopPoll)
               </option>
             </select>
           </div>
+          <div class="sort connection-sort-control">
+            <label for="connection-sort">{{ t('processes.sortLabel') }}</label>
+            <select id="connection-sort" v-model="connectionSortKey">
+              <option value="remote">{{ t('processes.sortRemote') }}</option>
+              <option value="process">{{ t('processes.sortProcess') }}</option>
+              <option value="state">{{ t('processes.sortState') }}</option>
+            </select>
+          </div>
+          <label class="field-mode">
+            <input v-model="showAllConnectionFields" type="checkbox" />
+            <span>{{ t('processes.showAllFields') }}</span>
+          </label>
         </div>
-        <div class="table-wrap" role="region" tabindex="0" :aria-label="t('processes.tabConnections')">
-          <table class="data-table">
+        <div
+          class="table-wrap"
+          :class="{ 'all-fields': showAllConnectionFields }"
+          role="region"
+          tabindex="0"
+          :aria-label="t('processes.tabConnections')"
+        >
+          <table v-if="showAllConnectionFields" class="data-table full-fields-table">
             <thead>
               <tr>
                 <th v-if="colSummary">{{ t('processes.thProto') }}</th>
@@ -787,14 +1072,14 @@ onBeforeUnmount(stopPoll)
             </thead>
             <tbody>
               <tr v-if="loading && !connections.length"><td :colspan="connCols || 1" class="hint">{{ t('processes.waitingAgent') }}</td></tr>
-              <tr v-else-if="connFilter && !filteredConnections.length">
+              <tr v-else-if="connFilter && !searchedConnections.length">
                 <td :colspan="connCols || 1" class="hint">
                   {{ connFilterEmptyMsg }}
                   <button class="link-btn" @click="connFilter = null">{{ t('processes.clearFilter') }}</button>
                 </td>
               </tr>
-              <tr v-else-if="!connections.length"><td :colspan="connCols || 1" class="hint">{{ t('common.noData') }}</td></tr>
-              <tr v-for="(c, i) in filteredConnections" :key="i">
+              <tr v-else-if="!searchedConnections.length"><td :colspan="connCols || 1" class="hint">{{ t('common.noData') }}</td></tr>
+              <tr v-for="{ connection: c, key } in visibleConnectionRows" :key="key">
                 <td class="mono" v-if="colSummary">{{ c.proto }}</td>
                 <td class="mono" v-if="colLocal">{{ c.local_addr || '—' }}</td>
                 <td class="mono dim" v-if="colRemote">{{ c.remote_addr || '—' }}</td>
@@ -814,6 +1099,64 @@ onBeforeUnmount(stopPoll)
               </tr>
             </tbody>
           </table>
+          <table v-else class="data-table summary-table connection-summary-table">
+            <thead>
+              <tr>
+                <th>{{ t('processes.thRemoteAddr') }}</th>
+                <th>{{ t('processes.protocolAndStatus') }}</th>
+                <th>{{ t('processes.processAndDetails') }}</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-if="loading && !connections.length"><td colspan="3" class="hint">{{ t('processes.waitingAgent') }}</td></tr>
+              <tr v-else-if="connFilter && !searchedConnections.length">
+                <td colspan="3" class="hint">{{ connFilterEmptyMsg }} <button class="link-btn" @click="connFilter = null">{{ t('processes.clearFilter') }}</button></td>
+              </tr>
+              <tr v-else-if="!searchedConnections.length"><td colspan="3" class="hint">{{ t('common.noData') }}</td></tr>
+              <template v-for="{ connection: c, key } in visibleConnectionRows" :key="key">
+                <tr class="summary-row">
+                  <td class="identity-cell">
+                    <strong class="mono truncate" :title="c.remote_addr || '—'">{{ c.remote_addr || '—' }}</strong>
+                  </td>
+                  <td class="connection-state">
+                    <strong class="mono">{{ c.proto.toUpperCase() }}</strong>
+                    <span class="truncate" :title="c.state || '—'">{{ c.state || '—' }}</span>
+                  </td>
+                  <td class="connection-owner">
+                    <div class="connection-owner-layout">
+                      <div class="connection-owner-copy">
+                        <span class="truncate" :title="c.process_name || '—'">{{ c.process_name || '—' }}</span>
+                        <span class="mono">PID {{ c.pid ?? '—' }}</span>
+                      </div>
+                      <button
+                        type="button"
+                        class="detail-toggle"
+                        :aria-expanded="expandedConnections.has(key)"
+                        @click="toggleConnectionDetails(key)"
+                      >
+                        {{ expandedConnections.has(key) ? t('processes.hideDetails') : t('processes.showDetails') }}
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+                <tr v-if="expandedConnections.has(key)" class="detail-row">
+                  <td colspan="3">
+                    <dl class="row-detail-grid connection-detail-grid">
+                      <div><dt>{{ t('processes.thLocalAddr') }}</dt><dd class="mono truncate" :title="c.local_addr || '—'">{{ c.local_addr || '—' }}</dd></div>
+                      <div><dt>{{ t('processes.thRemoteAddr') }}</dt><dd class="mono truncate" :title="c.remote_addr || '—'">{{ c.remote_addr || '—' }}</dd></div>
+                      <div v-if="connQuickAdd(c)"><dt>{{ t('processes.monitorAction') }}</dt><dd><RouterLink class="link-btn" :to="{ path: '/monitoring/new', query: connQuickAdd(c)! }" :aria-label="connQuickAddAria(c)">{{ t('processes.quickAdd') }}</RouterLink></dd></div>
+                    </dl>
+                  </td>
+                </tr>
+              </template>
+            </tbody>
+          </table>
+        </div>
+        <div class="result-footer">
+          <span>{{ t('processes.showingResults', { shown: visibleConnectionRows.length, total: searchedConnections.length }) }}</span>
+          <button v-if="visibleConnectionRows.length < searchedConnections.length" type="button" class="btn" @click="showMoreConnections">
+            {{ t('processes.showMore') }}
+          </button>
         </div>
       </section>
     </template>
@@ -831,7 +1174,24 @@ onBeforeUnmount(stopPoll)
 <style scoped>
 /* Hallmark · designed-as-app · design-system: design.md · page: Processes */
 .data-workbench {
+  container-type: inline-size;
   font-variant-numeric: tabular-nums;
+}
+.data-workbench.embedded {
+  width: 100%;
+  max-width: none;
+  padding: 0;
+}
+.embedded-head {
+  align-items: center;
+  margin-bottom: var(--space-sm);
+}
+.embedded-head .sub {
+  margin-top: 0;
+}
+.embedded-refresh {
+  flex: none;
+  white-space: nowrap;
 }
 .workbench-head {
   align-items: flex-start;
@@ -961,9 +1321,12 @@ onBeforeUnmount(stopPoll)
   transform: translateY(1px);
 }
 .table-wrap {
-  overflow-x: auto;
+  overflow-x: hidden;
   overscroll-behavior-inline: contain;
   scrollbar-gutter: stable;
+}
+.table-wrap.all-fields {
+  overflow-x: auto;
 }
 .table-wrap:focus-visible {
   outline: var(--rule-fine) solid var(--color-focus);
@@ -977,8 +1340,211 @@ onBeforeUnmount(stopPoll)
   backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
   -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
 }
-.table-sheet .data-table {
-  min-width: 820px;
+.table-sheet .full-fields-table {
+  width: 100%;
+  min-width: 70rem;
+}
+.table-sheet .full-fields-table th,
+.table-sheet .full-fields-table td {
+  white-space: nowrap;
+}
+.table-sheet .full-fields-table td:first-child {
+  width: 15%;
+  min-width: 8rem;
+  max-width: 18rem;
+}
+.table-sheet .full-fields-table td:first-child .truncate {
+  max-width: 100%;
+}
+.summary-table {
+  width: 100%;
+  table-layout: fixed;
+}
+.summary-table th,
+.summary-table td {
+  min-width: 0;
+  white-space: nowrap;
+}
+.process-summary-table th:first-child {
+  width: auto;
+}
+.process-summary-table .metric-column {
+  width: 7rem;
+}
+.process-summary-table .action-column {
+  width: 15rem;
+}
+.connection-summary-table th:first-child {
+  width: 42%;
+}
+.connection-summary-table th:nth-child(2) {
+  width: 23%;
+}
+.connection-summary-table th:nth-child(3) {
+  width: 35%;
+}
+.truncate {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.identity-cell,
+.connection-state,
+.connection-owner,
+.connection-owner-copy {
+  min-width: 0;
+}
+.connection-owner-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--space-xs);
+  min-width: 0;
+}
+.identity-cell strong,
+.connection-state strong {
+  color: var(--color-ink);
+  font-size: var(--text-sm);
+}
+.identity-cell span,
+.connection-state span,
+.connection-owner-copy > span {
+  display: block;
+  margin-top: var(--space-3xs);
+  overflow: hidden;
+  color: var(--color-muted);
+  font-size: var(--text-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.metric-value {
+  width: 7rem;
+  font-family: var(--font-outlier);
+  font-variant-numeric: tabular-nums;
+}
+.metric-label {
+  display: none;
+}
+.metric-reading {
+  white-space: nowrap;
+}
+.row-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-xs);
+  min-width: 0;
+}
+.detail-toggle {
+  min-height: 44px;
+  padding: 0 var(--space-xs);
+  color: var(--color-ink-2);
+  font: inherit;
+  font-size: var(--text-xs);
+  white-space: nowrap;
+  border: var(--rule-hair) solid var(--color-rule);
+  border-radius: var(--radius-input);
+  background: var(--color-glass-subtle);
+  cursor: pointer;
+}
+.detail-row td {
+  padding: 0;
+  white-space: normal;
+  background: var(--color-paper-3);
+}
+.row-detail-grid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: var(--space-xs);
+  margin: 0;
+  padding: var(--space-xs) var(--space-sm);
+}
+.row-detail-grid div {
+  min-width: 0;
+}
+.row-detail-grid dt {
+  color: var(--color-muted);
+  font-size: var(--text-xs);
+}
+.row-detail-grid dd {
+  min-width: 0;
+  margin: var(--space-3xs) 0 0;
+  color: var(--color-ink-2);
+  font-size: var(--text-sm);
+  white-space: nowrap;
+}
+.connection-detail-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+.data-toolbar {
+  gap: var(--space-xs);
+}
+.connection-toolbar {
+  display: grid;
+  grid-template-columns: minmax(15rem, .9fr) auto minmax(18rem, 1.6fr);
+  align-items: end;
+}
+.connection-toolbar .data-search {
+  width: auto;
+  min-width: 0;
+  flex: none;
+}
+.connection-toolbar .spacer {
+  display: none;
+}
+.connection-process-filter {
+  min-width: 0;
+}
+.connection-process-filter select {
+  width: 100%;
+  min-width: 0;
+}
+.connection-sort-control {
+  grid-column: 1;
+  justify-self: start;
+}
+.connection-toolbar .field-mode {
+  grid-column: 2 / -1;
+  justify-self: start;
+}
+.data-search {
+  display: grid;
+  gap: var(--space-3xs);
+  flex: 1 1 16rem;
+  min-width: min(16rem, 100%);
+}
+.data-search > span,
+.field-mode span {
+  color: var(--color-muted);
+  font-size: var(--text-xs);
+}
+.data-search input {
+  width: 100%;
+  min-height: 44px;
+}
+.field-mode {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2xs);
+  min-height: 44px;
+  white-space: nowrap;
+}
+.field-mode input {
+  width: 18px;
+  height: 18px;
+}
+.result-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-xs);
+  min-height: 58px;
+  padding: var(--space-2xs) var(--space-sm);
+  color: var(--color-muted);
+  font-size: var(--text-xs);
+  border-top: var(--rule-hair) solid var(--color-rule);
 }
 .table-sheet .panel-head {
   min-height: 56px;
@@ -1076,6 +1642,11 @@ onBeforeUnmount(stopPoll)
 }
 
 @media (max-width: 768px) {
+  .data-search {
+    width: 100%;
+    min-width: 0;
+    flex: none;
+  }
   .workbench-head {
     align-items: stretch;
   }
@@ -1104,6 +1675,65 @@ onBeforeUnmount(stopPoll)
   }
 }
 
+@container (max-width: 48rem) {
+  .data-search {
+    width: 100%;
+    min-width: 0;
+    flex: none;
+  }
+  .workbench-head {
+    align-items: stretch;
+  }
+  .picker {
+    width: 100%;
+    flex-wrap: wrap;
+  }
+  .picker select {
+    flex: 1 1 220px;
+    max-width: none;
+  }
+  .panel-head {
+    align-items: stretch;
+    flex-direction: column;
+  }
+  .connection-toolbar {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .connection-toolbar > * {
+    grid-column: 1;
+  }
+  .connection-sort-control,
+  .connection-toolbar .field-mode {
+    justify-self: stretch;
+  }
+  .panel-head .spacer {
+    display: none;
+  }
+  .sort,
+  .basis {
+    width: 100%;
+    flex-wrap: wrap;
+  }
+  .sort select {
+    flex: 1 1 180px;
+  }
+  .process-summary-table .action-column {
+    width: 12rem;
+  }
+  .connection-summary-table th:first-child {
+    width: 40%;
+  }
+  .connection-summary-table th:nth-child(2) {
+    width: 25%;
+  }
+  .connection-summary-table th:nth-child(3) {
+    width: 35%;
+  }
+  .row-detail-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
 @media (max-width: 414px) {
   .picker .btn {
     width: 100%;
@@ -1120,6 +1750,99 @@ onBeforeUnmount(stopPoll)
   }
   .seg {
     flex: 1;
+  }
+}
+
+@container (max-width: 26rem) {
+  .embedded-refresh {
+    width: 100%;
+  }
+  .picker .btn {
+    width: 100%;
+  }
+  .workbench-tabs {
+    width: 100%;
+  }
+  .workbench-tabs .tab {
+    flex: 1 0 auto;
+  }
+  .basis-label,
+  .sort label {
+    flex-basis: 100%;
+  }
+  .seg {
+    flex: 1;
+  }
+  .summary-table,
+  .summary-table tbody,
+  .summary-table tr,
+  .summary-table td {
+    display: block;
+    width: 100%;
+  }
+  .summary-table thead {
+    display: none;
+  }
+  .summary-table .summary-row {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: var(--space-xs);
+    padding: var(--space-xs);
+    border-bottom: var(--rule-hair) solid var(--color-rule);
+  }
+  .summary-table .summary-row > td {
+    padding: 0;
+    border-bottom: 0;
+  }
+  .process-summary-table .identity-cell {
+    grid-column: 1 / -1;
+  }
+  .process-summary-table .metric-value {
+    width: auto;
+    text-align: left;
+  }
+  .process-summary-table .metric-value:nth-child(2) {
+    width: 4.75rem;
+  }
+  .process-summary-table .metric-value:nth-child(3) {
+    width: 6.5rem;
+  }
+  .metric-label,
+  .metric-reading {
+    display: block;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .metric-label {
+    margin-bottom: var(--space-3xs);
+    color: var(--color-muted);
+    font-family: var(--font-body);
+    font-size: var(--text-xs);
+  }
+  .process-summary-table .row-actions {
+    grid-column: 1 / -1;
+    justify-content: space-between;
+  }
+  .connection-summary-table .summary-row {
+    grid-template-columns: minmax(0, 1fr) minmax(0, .7fr);
+  }
+  .connection-summary-table .connection-owner {
+    grid-column: 1 / -1;
+  }
+  .detail-row td {
+    display: block;
+  }
+  .row-detail-grid,
+  .connection-detail-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .result-footer {
+    align-items: stretch;
+    flex-direction: column;
+  }
+  .result-footer .btn {
+    width: 100%;
   }
 }
 </style>
