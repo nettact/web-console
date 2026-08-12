@@ -641,7 +641,7 @@ export default {
         trace_proxy_unreachable: 'proxy address unreachable',
         trace_proxy_reachable: 'proxy address reachable',
         size_correlated: 'packet loss rises with packet size ({sizeSmall}B {lossSmall}% → {sizeLarge}B {lossLarge}%, physical-layer degradation)',
-        ecmp_member: 'a fixed subset of source-port flows fails ({badStable}/{flows} stable bad, {ok} clean; ECMP/LAG member-level fault)',
+        ecmp_member: 'a fixed subset of source-port flows fails ({badStable}/{flows} stable bad, {badNew} new, {ok} clean; ECMP/LAG member-level fault)',
       },
       advisory: {
         no_reference: 'Adding a gateway or public reference target gives a more accurate location.',
@@ -1421,6 +1421,7 @@ export default {
     errHostHyphen: 'A hostname label cannot start or end with "-"',
     errHostChar: 'The hostname contains an invalid character',
     errParamRange: '{field} must be between {min} and {max}',
+    errParamInteger: '{field} must be a whole number',
     errURLScheme: 'The URL must start with http:// or https://',
     errURLInvalid: 'Invalid URL',
     errURLNoHost: 'The URL is missing a host',

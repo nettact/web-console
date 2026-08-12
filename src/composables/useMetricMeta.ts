@@ -57,14 +57,25 @@ export function useMetricMeta() {
   // probe.tcp.flow_fanout) to its localized label; classifierTone maps it to a
   // card tone. The two classifiers share an "insufficient evidence" code. These
   // MUST NOT be routed through probeReasonLabel — size-sweep code 1 would render
-  // as "Timeout" and mislabel the diagnosis.
-  const classifierCodeLabel = (kind: string, code: number) =>
-    t(`metrics.classifier.${kind.replace(/\./g, '_')}_${Math.round(code)}`)
+  // as "Timeout" and mislabel the diagnosis. An unknown code renders the raw
+  // number with an 'unknown' tone: a code the console does not know must never
+  // read as healthy.
+  const classifierCodeLabel = (kind: string, code: number) => {
+    const key = `metrics.classifier.${kind.replace(/\./g, '_')}_${Math.round(code)}`
+    return te(key) ? t(key) : String(Math.round(code))
+  }
   const classifierTone = (kind: string, code: number): Tone => {
     const n = Math.round(code)
-    if (kind === 'probe.icmp.size_sweep') return n === 1 ? 'bad' : n === 2 ? 'unknown' : 'good'
-    // probe.tcp.flow_fanout: 2 = member-level, 3 = all flows failed; 4 = insufficient.
-    return n === 2 || n === 3 ? 'bad' : n === 4 ? 'unknown' : 'good'
+    if (kind === 'probe.icmp.size_sweep') {
+      if (n === 0) return 'good'
+      if (n === 1) return 'bad'
+      return 'unknown'
+    }
+    // probe.tcp.flow_fanout: 0/1 = no deterministic bad subset; 2 = member-level,
+    // 3 = all flows failed; 4 = insufficient.
+    if (n === 0 || n === 1) return 'good'
+    if (n === 2 || n === 3) return 'bad'
+    return 'unknown'
   }
 
   const SEV_TONE: Record<string, Tone> = { critical: 'bad', warning: 'bad', info: 'unknown' }

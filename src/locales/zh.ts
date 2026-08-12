@@ -634,7 +634,7 @@ export default {
         trace_proxy_unreachable: '代理地址不可达',
         trace_proxy_reachable: '代理地址可达',
         size_correlated: '丢包随包长上升（{sizeSmall}B {lossSmall}% → {sizeLarge}B {lossLarge}%，物理层劣化）',
-        ecmp_member: '固定的一组源端口流失败（{badStable}/{flows} 稳定异常、{ok} 正常，ECMP/LAG 成员级故障）',
+        ecmp_member: '固定的一组源端口流失败（{badStable}/{flows} 稳定异常、{badNew} 新发、{ok} 正常，ECMP/LAG 成员级故障）',
       },
       advisory: {
         no_reference: '添加网关或公网参照目标可获得更准确的故障定位。',
@@ -1414,6 +1414,7 @@ export default {
     errHostHyphen: '主机名的分段不能以「-」开头或结尾',
     errHostChar: '主机名包含无效字符',
     errParamRange: '{field} 必须在 {min} 到 {max} 之间',
+    errParamInteger: '{field} 必须是整数',
     errURLScheme: '网址必须以 http:// 或 https:// 开头',
     errURLInvalid: '网址格式无效',
     errURLNoHost: '网址缺少主机名',

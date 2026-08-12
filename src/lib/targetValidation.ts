@@ -129,6 +129,9 @@ export interface ParamRangeError {
   labelKey: string
   min: number
   max: number
+  // true when the value was rejected for being non-integer (a fractional count
+  // the server's int field would refuse to decode) rather than out of range.
+  integer?: boolean
 }
 
 // Bounds mirror server-core/api/probevalidate.go. The `min`/`max` attributes on
@@ -183,7 +186,12 @@ export function paramsRangeError(kind: string, params: Record<string, unknown> |
       const v = Number(raw)
       if (!Number.isFinite(v)) continue // a non-numeric entry is dropped before save
       if (v < r.min || v > r.max || (r.integer && !Number.isInteger(v))) {
-        return { labelKey: PARAM_LABEL_OVERRIDES[kind]?.[r.key] ?? r.labelKey, min: r.min, max: r.max }
+        return {
+          labelKey: PARAM_LABEL_OVERRIDES[kind]?.[r.key] ?? r.labelKey,
+          min: r.min,
+          max: r.max,
+          integer: r.integer && !Number.isInteger(v),
+        }
       }
     }
   }

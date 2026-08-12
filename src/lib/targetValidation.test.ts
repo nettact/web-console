@@ -96,7 +96,10 @@ describe('paramsRangeError', () => {
     expect(paramsRangeError('tcp', { port: 0 })?.labelKey).toBe('mform.port')
     expect(paramsRangeError('tcp', { flow_fanout: 33 })?.labelKey).toBe('mform.tcpFlowFanout')
     expect(paramsRangeError('tcp', { flow_fanout: -1 })?.labelKey).toBe('mform.tcpFlowFanout')
-    expect(paramsRangeError('tcp', { flow_fanout: 2.5 })?.labelKey).toBe('mform.tcpFlowFanout') // integer count
+    const frac = paramsRangeError('tcp', { flow_fanout: 2.5 })
+    expect(frac?.labelKey).toBe('mform.tcpFlowFanout') // integer count
+    expect(frac?.integer).toBe(true) // the renderer says "whole number", not "between 0 and 32"
+    expect(paramsRangeError('tcp', { flow_fanout: 8 })?.integer).toBeFalsy()
     expect(paramsRangeError('icmp', { interval_seconds: 90000 })?.labelKey).toBe('mform.interval')
   })
 

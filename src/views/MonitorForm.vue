@@ -608,7 +608,12 @@ async function save() {
   // browser never runs constraint validation. Check the ranges for real.
   const range = paramsRangeError(form.kind, form.params as Record<string, unknown> | undefined)
   if (range) {
-    error.value = tr('mform.errParamRange', { field: tr(range.labelKey), min: range.min, max: range.max })
+    // A fractional value in an integer field is not "out of range" (2.5 IS between
+    // 0 and 32) — it needs its own message, or the user can't tell why the save
+    // fails.
+    error.value = range.integer
+      ? tr('mform.errParamInteger', { field: tr(range.labelKey) })
+      : tr('mform.errParamRange', { field: tr(range.labelKey), min: range.min, max: range.max })
     return
   }
   const detErr = detectionRangeError()
