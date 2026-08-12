@@ -725,6 +725,19 @@ watch(
   },
 )
 
+// A proxied TCP target cannot fan out: pinning the local source port only
+// changes the agent→proxy tuple, not the target-facing one the ECMP hash keys
+// on. Clearing fan-out whenever a TCP target ends up proxied — whether the proxy
+// was picked first or the kind changed into TCP while a proxy was already set —
+// keeps the save from being rejected for a value the form itself just made
+// impossible.
+watch(
+  [() => form.proxy_id, () => form.kind],
+  ([proxyId, kind]) => {
+    if (proxyId && kind === 'tcp') form.params!.flow_fanout = 0
+  },
+)
+
 onMounted(loadAll)
 </script>
 
@@ -856,9 +869,13 @@ onMounted(loadAll)
             <label class="field check"><input type="checkbox" v-model="form.params!.tls" /><span>{{ tr('mform.tcpTls') }}</span></label>
             <label class="field check" v-if="form.params!.tls"><input type="checkbox" v-model="form.params!.ignore_tls" /><span>{{ tr('mform.ignoreTls') }}</span></label>
             <!-- flow_fanout bounds mirror the server (server-core/api/probevalidate.go,
-                 maxFlowFanout = 32); 0/1 = off (a single flow), 2..32 = fan-out. -->
-            <label class="field"><span>{{ tr('mform.tcpFlowFanout') }}</span><input type="number" min="0" max="32" v-model.number="form.params!.flow_fanout" placeholder="0" /></label>
-            <p class="hint tiny wide">{{ tr('mform.tcpFlowFanoutHint') }}</p>
+                 maxFlowFanout = 32); 0/1 = off (a single flow), 2..32 = fan-out. A
+                 proxied target cannot fan out (the pin would only change the
+                 agent→proxy tuple), so the field is disabled and the save is blocked
+                 server-side if it were somehow still set. -->
+            <label class="field"><span>{{ tr('mform.tcpFlowFanout') }}</span><input type="number" min="0" max="32" v-model.number="form.params!.flow_fanout" placeholder="0" :disabled="!!form.proxy_id" /></label>
+            <p class="hint tiny wide" v-if="form.proxy_id">{{ tr('mform.tcpFlowFanoutProxyOff') }}</p>
+            <p class="hint tiny wide" v-else>{{ tr('mform.tcpFlowFanoutHint') }}</p>
           </template>
         </div>
       </section>

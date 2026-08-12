@@ -155,7 +155,22 @@ export function useIncidentLabels() {
       // fallback contract — so a server/console vocabulary drift shows a visible
       // token instead of a blank chip.
       if (!te(key)) return c.kind
-      let s = t(key, { count: c.count ?? 0, name: c.name ?? '' })
+      // The size_correlated / ecmp_member clues carry their evidence in typed
+      // fields (see api.ts AttributionClue); pass them through so the rendered
+      // line shows the sizes/losses and flow counts the diagnosis rests on. The
+      // extra params are harmless for clues that do not use them.
+      let s = t(key, {
+        count: c.count ?? 0,
+        name: c.name ?? '',
+        sizeSmall: c.size_small ?? 0,
+        lossSmall: (c.loss_small ?? 0).toFixed(1),
+        sizeLarge: c.size_large ?? 0,
+        lossLarge: (c.loss_large ?? 0).toFixed(1),
+        flows: c.flows ?? 0,
+        badStable: c.bad_stable ?? 0,
+        badNew: c.bad_new ?? 0,
+        ok: c.ok ?? 0,
+      })
       if (c.targets?.length) s += ` (${c.targets.join(', ')})`
       return mark + s
     },

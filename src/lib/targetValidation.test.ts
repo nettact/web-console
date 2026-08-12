@@ -96,6 +96,7 @@ describe('paramsRangeError', () => {
     expect(paramsRangeError('tcp', { port: 0 })?.labelKey).toBe('mform.port')
     expect(paramsRangeError('tcp', { flow_fanout: 33 })?.labelKey).toBe('mform.tcpFlowFanout')
     expect(paramsRangeError('tcp', { flow_fanout: -1 })?.labelKey).toBe('mform.tcpFlowFanout')
+    expect(paramsRangeError('tcp', { flow_fanout: 2.5 })?.labelKey).toBe('mform.tcpFlowFanout') // integer count
     expect(paramsRangeError('icmp', { interval_seconds: 90000 })?.labelKey).toBe('mform.interval')
   })
 

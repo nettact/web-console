@@ -6,7 +6,7 @@
 
 import type { KindSummary, Sample } from '../api'
 import type { Tone } from '../lib/metricMeta'
-import { NAT_CODE_KINDS, PROBE_ERROR_KINDS, natCodeLabel, natTone, probeReasonTone, fmtNum } from '../lib/metricMeta'
+import { NAT_CODE_KINDS, PROBE_ERROR_KINDS, CLASSIFIER_KINDS, natCodeLabel, natTone, probeReasonTone, fmtNum } from '../lib/metricMeta'
 import { availability, countRestarts, toPoints, uptimeOnline } from '../lib/timeline'
 import { fmtByUnit, isByteUnit } from '../lib/format'
 import { useMetricMeta } from './useMetricMeta'
@@ -32,7 +32,7 @@ export interface Card {
 
 export function useMetricCards() {
   const { t } = useI18n()
-  const { unitLabel, natInfo, probeReasonLabel, probeReasonInfo, fmtDur, fmtTime } = useMetricMeta()
+  const { unitLabel, natInfo, probeReasonLabel, probeReasonInfo, classifierCodeLabel, classifierTone, fmtDur, fmtTime } = useMetricMeta()
 
   function buildCard(m: CardInput): Card {
     const pts = toPoints(m.samples)
@@ -91,6 +91,22 @@ export function useMetricCards() {
         value: probeReasonLabel(last.v),
         small: true,
         info: probeReasonInfo(),
+        foot: t('metrics.nat.foot', { time: fmtTime(new Date(last.t).toISOString()) }),
+      }
+    }
+
+    if (CLASSIFIER_KINDS.has(m.kind)) {
+      // A DEGRADE classifier (size_sweep / flow_fanout): the code is a diagnosis,
+      // not a probe failure reason, so it gets its own label/tone (see
+      // classifierCodeLabel in useMetricMeta) — routing it through probe reasons
+      // would render "Timeout" for a size-correlation verdict.
+      const last = pts[pts.length - 1]
+      return {
+        label: m.label,
+        color: m.color,
+        tone: classifierTone(m.kind, last.v),
+        value: classifierCodeLabel(m.kind, last.v),
+        small: true,
         foot: t('metrics.nat.foot', { time: fmtTime(new Date(last.t).toISOString()) }),
       }
     }
@@ -171,13 +187,26 @@ export function useMetricCards() {
 
     // Probe error class: 0 (none) is a valid determinate "no error", so no stale
     // fallback — always the newest value.
+    if (PROBE_ERROR_KINDS.has(m.kind)) {
+      return {
+        label: m.label,
+        color: m.color,
+        tone: probeReasonTone(latest.value),
+        value: probeReasonLabel(latest.value),
+        small: true,
+        info: probeReasonInfo(),
+        foot: t('metrics.nat.foot', { time: fmtTime(latest.ts) }),
+      }
+    }
+
+    // DEGRADE classifier: its own label/tone (see classifierCodeLabel) — never
+    // the probe-reason rendering, which would mislabel the codes.
     return {
       label: m.label,
       color: m.color,
-      tone: probeReasonTone(latest.value),
-      value: probeReasonLabel(latest.value),
+      tone: classifierTone(m.kind, latest.value),
+      value: classifierCodeLabel(m.kind, latest.value),
       small: true,
-      info: probeReasonInfo(),
       foot: t('metrics.nat.foot', { time: fmtTime(latest.ts) }),
     }
   }

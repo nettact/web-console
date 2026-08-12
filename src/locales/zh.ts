@@ -633,8 +633,8 @@ export default {
         trace_reached: 'trace 可达目标',
         trace_proxy_unreachable: '代理地址不可达',
         trace_proxy_reachable: '代理地址可达',
-        size_correlated: '丢包随包长上升（物理层劣化）',
-        ecmp_member: '固定的一组源端口流失败（ECMP/LAG 成员级故障）',
+        size_correlated: '丢包随包长上升（{sizeSmall}B {lossSmall}% → {sizeLarge}B {lossLarge}%，物理层劣化）',
+        ecmp_member: '固定的一组源端口流失败（{badStable}/{flows} 稳定异常、{ok} 正常，ECMP/LAG 成员级故障）',
       },
       advisory: {
         no_reference: '添加网关或公网参照目标可获得更准确的故障定位。',
@@ -1379,6 +1379,7 @@ export default {
     tcpTls: '连接后进行 TLS 握手（SSL/TLS）',
     tcpFlowFanout: '源端口扇出探测',
     tcpFlowFanoutHint: '用多个固定源端口分别连接，识别 ECMP/LAG 成员级故障',
+    tcpFlowFanoutProxyOff: '走代理的目标无法扇出：对端源端口由代理决定',
     // nat
     secNat: 'NAT 检测选项',
     stunServer: 'STUN 服务器',
@@ -2269,6 +2270,16 @@ export default {
         '过滤行为：NAT 允许哪些外部端点主动把包发进来。\n• Endpoint-Independent：只要建立过映射，任意外部端点都能进（完全锥型）。\n• Address-Dependent：仅曾通信过的目标 IP（任意端口）可进（受限锥型）。\n• Address-and-Port-Dependent：仅曾通信过的 IP+端口可进（端口受限锥型，最严格）。',
       infoType:
         'NAT 类型：由映射 + 过滤行为归纳（RFC 3489）。\n• Open Internet：无 NAT，公网可直连。\n• Full Cone：端点无关映射 + 端点无关过滤，最利于 P2P。\n• Restricted Cone：端点无关映射 + 地址相关过滤。\n• Port-Restricted Cone：端点无关映射 + 地址端口相关过滤（家用最常见）。\n• Symmetric：地址端口相关映射，P2P 打洞最难。',
+    },
+    classifier: {
+      probe_icmp_size_sweep_0: '平坦',
+      probe_icmp_size_sweep_1: '随包长上升',
+      probe_icmp_size_sweep_2: '证据不足',
+      probe_tcp_flow_fanout_0: '单流',
+      probe_tcp_flow_fanout_1: '均匀',
+      probe_tcp_flow_fanout_2: '成员级',
+      probe_tcp_flow_fanout_3: '全部失败',
+      probe_tcp_flow_fanout_4: '证据不足',
     },
     probeReason: {
       none: '正常',

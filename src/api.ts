@@ -870,6 +870,18 @@ export interface AttributionClue {
   name?: string
   type?: string
   reason_code?: number
+  // size_correlated evidence: the two payload sizes the sweep compared and the
+  // loss percent at each (mirrors notification.AttributionClue).
+  size_small?: number
+  size_large?: number
+  loss_small?: number
+  loss_large?: number
+  // ecmp_member evidence: the flows attempted and how the deterministic bad
+  // subset split across cycles (mirrors notification.AttributionClue).
+  flows?: number
+  bad_stable?: number
+  bad_new?: number
+  ok?: number
 }
 
 // One incident: a group-aware, stable fault lifecycle. `state` is 'open' |

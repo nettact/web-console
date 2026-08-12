@@ -53,6 +53,20 @@ export function useMetricMeta() {
   const probeReasonLabel = (code: number) => t(`metrics.probeReason.${PROBE_REASON_KEY[Math.round(code)] ?? 'other'}`)
   const probeReasonInfo = () => t('metrics.probeReason.info')
 
+  // classifierCodeLabel maps a DEGRADE classifier code (probe.icmp.size_sweep /
+  // probe.tcp.flow_fanout) to its localized label; classifierTone maps it to a
+  // card tone. The two classifiers share an "insufficient evidence" code. These
+  // MUST NOT be routed through probeReasonLabel — size-sweep code 1 would render
+  // as "Timeout" and mislabel the diagnosis.
+  const classifierCodeLabel = (kind: string, code: number) =>
+    t(`metrics.classifier.${kind.replace(/\./g, '_')}_${Math.round(code)}`)
+  const classifierTone = (kind: string, code: number): Tone => {
+    const n = Math.round(code)
+    if (kind === 'probe.icmp.size_sweep') return n === 1 ? 'bad' : n === 2 ? 'unknown' : 'good'
+    // probe.tcp.flow_fanout: 2 = member-level, 3 = all flows failed; 4 = insufficient.
+    return n === 2 || n === 3 ? 'bad' : n === 4 ? 'unknown' : 'good'
+  }
+
   const SEV_TONE: Record<string, Tone> = { critical: 'bad', warning: 'bad', info: 'unknown' }
   const sevTone = (s: string): Tone => SEV_TONE[s] || 'unknown'
   const sevLabel = (s: string) => {
@@ -70,5 +84,5 @@ export function useMetricMeta() {
   }
   const fmtTime = (s: string) => new Date(s).toLocaleString(toDateLocale(locale.value), { hour12: false })
 
-  return { familyLabel, metricLabel, unitLabel, natInfo, probeReasonLabel, probeReasonInfo, sevTone, sevLabel, fmtDur, fmtTime }
+  return { familyLabel, metricLabel, unitLabel, natInfo, probeReasonLabel, probeReasonInfo, classifierCodeLabel, classifierTone, sevTone, sevLabel, fmtDur, fmtTime }
 }

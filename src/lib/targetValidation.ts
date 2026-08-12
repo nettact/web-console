@@ -135,7 +135,7 @@ export interface ParamRangeError {
 // the inputs are advisory only — this component saves from a button click, not a
 // form submit, so the browser never runs constraint validation. These checks are
 // what actually keeps an unusable value from reaching the server.
-const PARAM_RANGES: Record<string, ReadonlyArray<{ key: string; labelKey: string; min: number; max: number }>> = {
+const PARAM_RANGES: Record<string, ReadonlyArray<{ key: string; labelKey: string; min: number; max: number; integer?: boolean }>> = {
   common: [
     { key: 'interval_seconds', labelKey: 'mform.interval', min: 0, max: 86400 },
     { key: 'timeout_ms', labelKey: 'mform.timeout', min: 0, max: 300000 },
@@ -148,7 +148,9 @@ const PARAM_RANGES: Record<string, ReadonlyArray<{ key: string; labelKey: string
   dns: [{ key: 'resolver_port', labelKey: 'mform.resolverPort', min: 0, max: 65535 }],
   tcp: [
     { key: 'port', labelKey: 'mform.port', min: 1, max: 65535 },
-    { key: 'flow_fanout', labelKey: 'mform.tcpFlowFanout', min: 0, max: 32 },
+    // flow_fanout is an integer count of flows; a fractional value would pass
+    // the range check and then fail decoding into the server's int field.
+    { key: 'flow_fanout', labelKey: 'mform.tcpFlowFanout', min: 0, max: 32, integer: true },
   ],
   http: [
     { key: 'max_redirects', labelKey: 'mform.maxRedirects', min: -1, max: 20 },
@@ -180,7 +182,7 @@ export function paramsRangeError(kind: string, params: Record<string, unknown> |
       if (raw === undefined || raw === null || raw === '') continue
       const v = Number(raw)
       if (!Number.isFinite(v)) continue // a non-numeric entry is dropped before save
-      if (v < r.min || v > r.max) {
+      if (v < r.min || v > r.max || (r.integer && !Number.isInteger(v))) {
         return { labelKey: PARAM_LABEL_OVERRIDES[kind]?.[r.key] ?? r.labelKey, min: r.min, max: r.max }
       }
     }

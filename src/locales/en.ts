@@ -640,8 +640,8 @@ export default {
         trace_reached: 'traceroute reached the target',
         trace_proxy_unreachable: 'proxy address unreachable',
         trace_proxy_reachable: 'proxy address reachable',
-        size_correlated: 'packet loss rises with packet size (physical-layer degradation)',
-        ecmp_member: 'a fixed subset of source-port flows fails (ECMP/LAG member-level fault)',
+        size_correlated: 'packet loss rises with packet size ({sizeSmall}B {lossSmall}% → {sizeLarge}B {lossLarge}%, physical-layer degradation)',
+        ecmp_member: 'a fixed subset of source-port flows fails ({badStable}/{flows} stable bad, {ok} clean; ECMP/LAG member-level fault)',
       },
       advisory: {
         no_reference: 'Adding a gateway or public reference target gives a more accurate location.',
@@ -1387,6 +1387,7 @@ export default {
     tcpTls: 'Perform a TLS handshake after connect (SSL/TLS)',
     tcpFlowFanout: 'Source-port fan-out',
     tcpFlowFanoutHint: 'Connect with several pinned source ports to catch ECMP/LAG member-level faults',
+    tcpFlowFanoutProxyOff: 'Fan-out is off for a proxied target: the proxy owns the target-facing source port',
     // nat
     secNat: 'NAT detection options',
     stunServer: 'STUN server',
@@ -2286,6 +2287,16 @@ export default {
         'Filtering behavior: which external endpoints may send inbound packets.\n• Endpoint-Independent: any external endpoint may reach an existing mapping (full cone).\n• Address-Dependent: only previously contacted IPs (any port) may reach it (restricted cone).\n• Address-and-Port-Dependent: only a previously contacted IP+port may reach it (port-restricted cone, strictest).',
       infoType:
         'NAT type: derived from mapping + filtering behavior (RFC 3489).\n• Open Internet: no NAT, directly reachable.\n• Full Cone: endpoint-independent mapping + filtering, best for P2P.\n• Restricted Cone: endpoint-independent mapping + address-dependent filtering.\n• Port-Restricted Cone: endpoint-independent mapping + address-and-port-dependent filtering (most common at home).\n• Symmetric: address-and-port-dependent mapping, hardest for P2P hole-punching.',
+    },
+    classifier: {
+      probe_icmp_size_sweep_0: 'Flat',
+      probe_icmp_size_sweep_1: 'Size-correlated',
+      probe_icmp_size_sweep_2: 'Insufficient evidence',
+      probe_tcp_flow_fanout_0: 'Single flow',
+      probe_tcp_flow_fanout_1: 'Uniform',
+      probe_tcp_flow_fanout_2: 'Member-level',
+      probe_tcp_flow_fanout_3: 'All flows failed',
+      probe_tcp_flow_fanout_4: 'Insufficient evidence',
     },
     probeReason: {
       none: 'None',
