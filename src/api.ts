@@ -7,7 +7,7 @@ export interface User {
 }
 export interface ListenStatus {
   effective_addr: string
-  source: 'default' | 'flag' | 'db'
+  source: 'default' | 'flag' | 'db' | 'env'
   desktop: boolean
   pending_addr?: string
   fallback_from?: string
