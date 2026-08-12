@@ -331,7 +331,10 @@ describe('MonitorForm save navigation', () => {
   // DEGRADE-001/002: the size-sweep checkbox rides with the ping kinds, the
   // source-port fan-out input with TCP — each only in its own advanced block.
   it('shows the degradation controls only for the kinds that run them', async () => {
-    const labels = (page: ReturnType<typeof mount>) => page.findAll('label.field span').map((s) => s.text())
+    // Field names render as a direct span in label.field, and as the <strong>
+    // title inside a label.check-row (the size-sweep checkbox's explanatory row).
+    const labels = (page: ReturnType<typeof mount>) =>
+      page.findAll('label.field span, label.check-row strong').map((s) => s.text())
 
     for (const kind of ['icmp', 'gateway']) {
       const page = await render()

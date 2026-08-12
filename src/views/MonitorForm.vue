@@ -839,14 +839,16 @@ onMounted(loadAll)
             <label class="field"><span>{{ tr('mform.packetSize') }}</span><input type="number" min="0" max="65500" v-model.number="form.params!.packet_size" placeholder="13" /></label>
             <label class="field"><span>{{ tr('mform.perPingTimeout') }}</span><input type="number" min="0" max="300000" v-model.number="form.params!.timeout_ms" placeholder="1000" /></label>
             <label class="field"><span>{{ tr('mform.globalTimeout') }}</span><input type="number" min="0" max="300000" v-model.number="form.params!.global_timeout_ms" placeholder="10000" /></label>
-            <!-- Sweep sizes default to protocol/config.DefaultSweepSizes = [64,512,1400]
+            <!-- Sweep sizes default to protocol/config.DefaultSweepSizes = [64,512,1232]
                  when payload_sizes is empty; the server caps an explicit list at 2..8
-                 sizes (probevalidate.go), each in 1..65500. -->
-            <label class="field check">
+                 distinct sizes (probevalidate.go), each in 1..config.MaxSweepPayloadSize. -->
+            <label class="check-row" :title="tr('mform.sizeSweepTip')">
               <input type="checkbox" v-model="form.params!.size_sweep" />
-              <span>{{ tr('mform.sizeSweep') }}</span>
+              <span class="check-text">
+                <strong>{{ tr('mform.sizeSweep') }}</strong>
+                <em class="hint tiny">{{ tr('mform.sizeSweepHint') }}</em>
+              </span>
             </label>
-            <p class="hint tiny wide">{{ tr('mform.sizeSweepHint') }}</p>
           </template>
           <template v-else-if="form.kind === 'dns'">
             <label class="field">
@@ -877,10 +879,15 @@ onMounted(loadAll)
                  maxFlowFanout = 32); 0/1 = off (a single flow), 2..32 = fan-out. A
                  proxied target cannot fan out (the pin would only change the
                  agent→proxy tuple), so the field is disabled and the save is blocked
-                 server-side if it were somehow still set. -->
-            <label class="field"><span>{{ tr('mform.tcpFlowFanout') }}</span><input type="number" min="0" max="32" v-model.number="form.params!.flow_fanout" placeholder="0" :disabled="!!form.proxy_id" /></label>
-            <p class="hint tiny wide" v-if="form.proxy_id">{{ tr('mform.tcpFlowFanoutProxyOff') }}</p>
-            <p class="hint tiny wide" v-else>{{ tr('mform.tcpFlowFanoutHint') }}</p>
+                 server-side if it were somehow still set. The hint lives inside the
+                 field column so it stays aligned under the input instead of spanning
+                 the whole grid row. -->
+            <label class="field" :title="tr('mform.tcpFlowFanoutTip')">
+              <span>{{ tr('mform.tcpFlowFanout') }}</span>
+              <input type="number" min="0" max="32" v-model.number="form.params!.flow_fanout" placeholder="0" :disabled="!!form.proxy_id" />
+              <span class="hint tiny" v-if="form.proxy_id">{{ tr('mform.tcpFlowFanoutProxyOff') }}</span>
+              <span class="hint tiny" v-else>{{ tr('mform.tcpFlowFanoutHint') }}</span>
+            </label>
           </template>
         </div>
       </section>

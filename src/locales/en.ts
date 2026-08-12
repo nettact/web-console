@@ -1366,6 +1366,8 @@ export default {
     globalTimeout: 'Global timeout (ms)',
     sizeSweep: 'Size sweep',
     sizeSweepHint: 'Probe at several packet sizes to catch loss that rises with packet size (physical-layer degradation)',
+    sizeSweepTip:
+      'Probes every cycle at payload sizes 64 / 512 / 1232 B (or a custom list). If loss rises sharply with packet size — e.g. ~0% at 64B but high at 1232B — the path is degrading at the physical layer (optics, CRC/FEC), not congested: congestion loses equally across sizes. Enabling this multiplies the echoes per cycle by the number of sizes.',
     resolverServer: 'Resolver server',
     resolverServerHint: 'Defaults to the system resolver. UDP/TCP/DoT: an IP/hostname; DoH: an https URL or hostname.',
     resolverPort: 'Resolver port',
@@ -1387,6 +1389,8 @@ export default {
     tcpTls: 'Perform a TLS handshake after connect (SSL/TLS)',
     tcpFlowFanout: 'Source-port fan-out',
     tcpFlowFanoutHint: 'Connect with several pinned source ports to catch ECMP/LAG member-level faults',
+    tcpFlowFanoutTip:
+      'Connects with several FIXED source ports each cycle, so the same five-tuple hits the same ECMP/LAG member every time. A fixed subset failing while others stay clean indicates a member-level fault; uniform loss across flows is congestion. Direct targets only (a proxied target’s source port belongs to the proxy). 0/1 = off; each cycle performs that many connections, so keep it modest.',
     tcpFlowFanoutProxyOff: 'Fan-out is off for a proxied target: the proxy owns the target-facing source port',
     // nat
     secNat: 'NAT detection options',

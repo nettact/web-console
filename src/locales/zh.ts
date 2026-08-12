@@ -1355,6 +1355,8 @@ export default {
     globalTimeout: '全局超时（毫秒）',
     sizeSweep: '按包长扫描',
     sizeSweepHint: '以多个数据包大小探测，识别随包长恶化的物理层劣化（光模块/网线/CRC）',
+    sizeSweepTip:
+      '每轮以 64 / 512 / 1232 B（或自定义列表）等多个载荷大小探测。若丢包率随包长急剧上升——如 64B 约 0%、1232B 很高——说明路径在物理层劣化（光模块/CRC/FEC），而非拥塞：拥塞丢包对包长不敏感。开启后每轮探测次数按尺寸数量成倍增加。',
     // dns
     resolverServer: '域名解析服务器',
     resolverServerHint: '默认使用系统解析器。UDP/TCP/DoT 填 IP 或主机名；DoH 填 https URL 或主机名。',
@@ -1379,6 +1381,8 @@ export default {
     tcpTls: '连接后进行 TLS 握手（SSL/TLS）',
     tcpFlowFanout: '源端口扇出探测',
     tcpFlowFanoutHint: '用多个固定源端口分别连接，识别 ECMP/LAG 成员级故障',
+    tcpFlowFanoutTip:
+      '每轮用多个固定的源端口连接，同一五元组每轮都命中同一个 ECMP/LAG 成员。若固定的一组流失败而其余正常，说明成员级故障；各流均匀丢包则是拥塞。仅限直连目标（走代理时源端口由代理决定）。0/1 为关闭；每轮执行这么多次连接，请保持适度。',
     tcpFlowFanoutProxyOff: '走代理的目标无法扇出：对端源端口由代理决定',
     // nat
     secNat: 'NAT 检测选项',
