@@ -307,7 +307,7 @@ onMounted(load)
                       <div class="agent-facts">
                         <span class="fact-item">{{ tr('targetStatus.statusLabel') }}: {{ tr('targetStatus.reason.' + a.reason_code) }}</span>
                         <span class="fact-item">
-                          {{ tr('targetStatus.availability24h') }}: {{ agentAvailabilityLabel(a.availability_24h) }}
+                          {{ tr(`targetStatus.availability${targetStatus.timeRange}`) }}: {{ agentAvailabilityLabel(a.availability) }}
                         </span>
                         <span v-if="a.execution_state === 'pending' && a.pending_since" class="fact-item">
                           {{ tr('targetStatus.pendingSince', { time: fmtTime(a.pending_since) }) }}

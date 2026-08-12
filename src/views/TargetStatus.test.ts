@@ -31,7 +31,9 @@ const statusRow = {
   affected_agents: 1,
   worst_severity: 'critical' as const,
   last_observed_at: '2026-07-18T05:00:00Z',
-  availability_24h: 0.92,
+  availability: 0.92,
+  availability_rounds: 100,
+  availability_ok_rounds: 92,
   signal_ids: ['signal-1'],
   incident_ids: ['incident-1'],
   agents: [{
@@ -49,7 +51,9 @@ const statusRow = {
     last_metric_kind: 'probe.dns.duration_ms',
     last_unit: 'ms',
     last_observed_at: '2026-07-18T05:00:00Z',
-    availability_24h: 0.92,
+    availability: 0.92,
+    availability_rounds: 100,
+    availability_ok_rounds: 92,
     fault: {
       signal_id: 'signal-1',
       incident_id: 'incident-1',
@@ -108,6 +112,8 @@ beforeEach(() => {
   agentStatus.stale = false
   agentStatus.error = ''
   targetStatus.generatedAt = '2026-07-18T05:00:01Z'
+  targetStatus.timeRange = '24h'
+  targetStatus.requestedTimeRange = '24h'
   targetStatus.targets = [statusRow]
   targetStatus.loaded = true
   targetStatus.stale = false
@@ -138,7 +144,8 @@ describe('group-centric target-status page', () => {
     expect(wrapper.text()).toContain('Taipei NUC')
     expect(wrapper.text()).toContain('Empty Group')
     // The global board and selected-target workspace show the same authoritative ratio.
-    expect(wrapper.get('.board-availability').text()).toBe('92%')
+    expect(wrapper.get('.board-availability strong').text()).toBe('92%')
+    expect(wrapper.get('.board-availability small').text()).toContain('92 / 100')
     expect(wrapper.get('.target-summary-grid').text()).toContain(i18n.global.t('targetStatus.availability24h'))
     expect(wrapper.get('.target-summary-grid').text()).toContain('92%')
     expect(router.currentRoute.value.query).toEqual({ view: 'targets', target: 'target-1', agent: 'agent-1' })
@@ -154,6 +161,36 @@ describe('group-centric target-status page', () => {
     expect(wrapper.find('.target-detail-workspace').exists()).toBe(false)
     expect(wrapper.find('.target-board-row').exists()).toBe(true)
     expect(wrapper.get('.view-switch button.active').text()).toBe(i18n.global.t('targetStatus.viewTargets'))
+  })
+
+  it('selects and restores the availability range through the URL', async () => {
+    apiMock.targetStatuses.mockResolvedValueOnce({
+      generated_at: '2026-07-18T05:00:02Z',
+      site_id: 'site_default',
+      time_range: '7d',
+      targets: [{
+        ...statusRow,
+        availability: 0.975,
+        availability_rounds: 1_000,
+        availability_ok_rounds: 975,
+      }],
+    })
+    const router = createRouter({
+      history: createMemoryHistory(),
+      routes: [{ path: '/target-status', component: TargetStatus }],
+    })
+    await router.push('/target-status?view=targets&window=7d')
+    await router.isReady()
+
+    const wrapper = mount(TargetStatus, { global: { plugins: [router, i18n] } })
+    await vi.waitFor(() => expect(targetStatus.timeRange).toBe('7d'))
+
+    expect(wrapper.get('.availability-window button.active').text()).toBe(i18n.global.t('targetStatus.range7d'))
+    expect(wrapper.get('.target-table-head').text()).toContain(i18n.global.t('targetStatus.availability7d'))
+    expect(wrapper.get('.board-availability strong').text()).toBe('97.5%')
+    expect(wrapper.get('.board-availability small').text()).toContain('975 / 1,000')
+    expect(router.currentRoute.value.query.window).toBe('7d')
+    wrapper.unmount()
   })
 
   it('expands one target workspace directly below its row', async () => {
@@ -282,7 +319,7 @@ describe('group-centric target-status page', () => {
       agent: 'agent-1',
       tab: 'history',
     })
-    expect(apiMock.agentStatusHistory).toHaveBeenCalledWith('agent-1')
+    expect(apiMock.agentStatusHistory).toHaveBeenCalledWith('agent-1', expect.any(Number))
   })
 
   it('selects the first Agent as soon as the initial Agent rows arrive', async () => {

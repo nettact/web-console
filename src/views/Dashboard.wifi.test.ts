@@ -504,6 +504,8 @@ describe('Dashboard network adapter list', () => {
       display_state: 'healthy',
       applicable_agents: 1,
       affected_agents: 0,
+      availability_rounds: 100,
+      availability_ok_rounds: 100,
       signal_ids: [],
       incident_ids: [],
       agents: [{
@@ -517,7 +519,9 @@ describe('Dashboard network adapter list', () => {
         missing_permissions: [],
         matched_selector: '',
         block_reason: '',
-        availability_24h: 1,
+        availability: 1,
+        availability_rounds: 100,
+        availability_ok_rounds: 100,
       }],
     })
     targetStatus.targets = [monitor('icmp-1', 'Cloudflare DNS'), monitor('icmp-2', 'Google DNS')]

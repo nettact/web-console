@@ -25,9 +25,11 @@ const { buildCards } = useMetricCards()
 const props = withDefaults(defineProps<{
   embedded?: boolean
   fixedAgentId?: string
+  fixedRangeSec?: number
 }>(), {
   embedded: false,
   fixedAgentId: '',
+  fixedRangeSec: 0,
 })
 
 const agents = ref<Agent[]>([])
@@ -35,7 +37,8 @@ const agentId = ref('')
 const series = ref<SeriesInfo[]>([])
 const targetKey = ref('')
 const selectedKinds = ref<string[]>([])
-const rangeSec = ref(6 * 3600)
+const localRangeSec = ref(6 * 3600)
+const rangeSec = computed(() => props.fixedRangeSec || localRangeSec.value)
 const samplesByKind = ref<Record<string, Sample[]>>({})
 const error = ref('')
 const loading = ref(false)
@@ -415,6 +418,11 @@ watch(() => props.fixedAgentId, async (next, previous) => {
   agentId.value = next
   onAgentChange()
 })
+
+watch(() => props.fixedRangeSec, (next, previous) => {
+  if (!mounted || !props.embedded || !next || next === previous) return
+  void loadData()
+})
 </script>
 
 <template>
@@ -449,9 +457,9 @@ watch(() => props.fixedAgentId, async (next, previous) => {
           </div>
         </div>
 
-        <div class="fg">
+        <div v-if="!embedded" class="fg">
           <span>{{ t('metrics.timeRange') }}</span>
-          <RangePicker v-model="rangeSec" @change="loadData" />
+          <RangePicker v-model="localRangeSec" @change="loadData" />
         </div>
 
         <button class="btn refresh" @click="loadData">{{ t('common.refresh') }}</button>

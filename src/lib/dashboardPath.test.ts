@@ -18,6 +18,8 @@ function target(
     display_state: probeState === 'healthy' ? 'healthy' : 'probe_failed',
     applicable_agents: 1,
     affected_agents: probeState === 'healthy' ? 0 : 1,
+    availability_rounds: 0,
+    availability_ok_rounds: 0,
     signal_ids: [],
     incident_ids: [],
     agents: [{
@@ -31,6 +33,8 @@ function target(
       missing_permissions: [],
       matched_selector: '',
       block_reason: '',
+      availability_rounds: 0,
+      availability_ok_rounds: 0,
     }],
   }
 }

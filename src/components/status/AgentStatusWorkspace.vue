@@ -16,6 +16,7 @@ import { toDateLocale } from '../../i18n'
 import OsIcon from '../agents/OsIcon.vue'
 import MonitorStateBadge from './MonitorStateBadge.vue'
 import TargetStatusHistory from './TargetStatusHistory.vue'
+import { formatAvailability, formatAvailabilityRounds } from '../../lib/targetStatus'
 import AgentConnectivityHistory from './AgentConnectivityHistory.vue'
 import HostMetrics from '../../views/HostMetrics.vue'
 import Processes from '../../views/Processes.vue'
@@ -32,6 +33,7 @@ const props = defineProps<{
   statusFilter: AgentFilter
   tab: AgentWorkspaceTab
   historyMode: AgentHistoryMode
+  rangeSec: number
 }>()
 
 const emit = defineEmits<{
@@ -412,7 +414,8 @@ onBeforeUnmount(() => tabsResizeObserver?.disconnect())
                   <MonitorStateBadge dim="fault" :state="row.agent.fault_state" />
                 </div>
                 <span class="target-row-availability">
-                  {{ row.agent.availability_24h == null ? '—' : `${Math.round(row.agent.availability_24h * 1000) / 10}%` }}
+                  <strong>{{ formatAvailability(row.agent.availability) ?? '—' }}</strong>
+                  <small>{{ formatAvailabilityRounds(row.agent.availability_ok_rounds, row.agent.availability_rounds) ?? t('targetStatus.noVerdictRounds') }}</small>
                 </span>
                 <time :datetime="row.agent.last_observed_at">{{ fmt(row.agent.last_observed_at) }}</time>
                 <button type="button" class="history-row-action" @click="openTargetHistory(row)">
@@ -453,6 +456,7 @@ onBeforeUnmount(() => tabsResizeObserver?.disconnect())
               v-if="historyMode === 'connectivity'"
               :agent-id="selectedAgent.id"
               active
+              :range-sec="rangeSec"
             />
 
             <div v-else class="target-history">
@@ -471,6 +475,7 @@ onBeforeUnmount(() => tabsResizeObserver?.disconnect())
                 v-if="selectedHistoryTarget"
                 :target="selectedHistoryTarget"
                 :agent-id="selectedAgent.id"
+                :range-sec="rangeSec"
               />
               <div v-else class="quiet-state">
                 <strong>{{ t('targetStatus.noAgentTargets') }}</strong>
@@ -480,7 +485,7 @@ onBeforeUnmount(() => tabsResizeObserver?.disconnect())
           </section>
 
           <section v-else-if="tab === 'metrics'" class="agent-embedded-view" role="tabpanel">
-            <HostMetrics embedded :fixed-agent-id="selectedAgent.id" />
+            <HostMetrics embedded :fixed-agent-id="selectedAgent.id" :fixed-range-sec="rangeSec" />
           </section>
 
           <section v-else class="agent-embedded-view" role="tabpanel">
@@ -1129,6 +1134,17 @@ onBeforeUnmount(() => tabsResizeObserver?.disconnect())
   font-family: var(--font-outlier);
   font-size: var(--text-xs);
   font-variant-numeric: tabular-nums;
+}
+
+.target-row-availability {
+  display: flex;
+  flex-direction: column;
+}
+
+.target-row-availability small {
+  color: var(--color-muted);
+  font-size: 10px;
+  white-space: nowrap;
 }
 
 .agent-target-row time {

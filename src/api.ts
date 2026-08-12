@@ -544,10 +544,12 @@ export interface TargetAgentStatusRow {
   last_observed_at?: string
   confirm?: ConfirmProgress
   fault?: TargetFaultRef
-  availability_24h?: number
-  // Sub-threshold streaks that recovered over the same 24h — the explanation for
+  availability?: number
+  availability_rounds: number
+  availability_ok_rounds: number
+  // Sub-threshold streaks that recovered over the selected window — the explanation for
   // an availability figure under 100% with no fault beside it.
-  fluctuations_24h?: number
+  fluctuations?: number
 }
 // One target's aggregated current status across every applicable Agent.
 export interface TargetStatusRow {
@@ -563,11 +565,13 @@ export interface TargetStatusRow {
   // Present only for faulted targets.
   worst_severity?: WorstSeverity
   last_observed_at?: string
-  // Share of verdict-reaching probe rounds in the last 24h that succeeded (0..1).
+  // Share of verdict-reaching probe rounds in the selected window that succeeded (0..1).
   // Absent when the window holds no verdict at all — "unknown" is not "0%".
-  availability_24h?: number
+  availability?: number
+  availability_rounds: number
+  availability_ok_rounds: number
   // Recovered sub-threshold streaks over the same window, summed across agents.
-  fluctuations_24h?: number
+  fluctuations?: number
   signal_ids: string[]
   incident_ids: string[]
   agents: TargetAgentStatusRow[]
@@ -576,6 +580,7 @@ export interface TargetStatusRow {
 export interface SiteTargetStatuses {
   generated_at: string
   site_id: string
+  time_range: TimeRange
   targets: TargetStatusRow[]
 }
 
@@ -1595,13 +1600,13 @@ export interface AvailabilityRatio {
   ok_rounds: number
   ratio: number
 }
-export type AvailabilityWindow = '24h' | '7d' | '30d'
+export type TimeRange = '3h' | '24h' | '7d' | '30d' | '90d'
 export interface SiteAvailability {
   window: string
   targets: Record<string, AvailabilityRatio>
 }
 export interface TargetAvailabilityWindow {
-  window: AvailabilityWindow
+  window: TimeRange
   total: AvailabilityRatio
   agents: AvailabilityRatio[]
 }
@@ -2377,8 +2382,12 @@ export const api = {
   // freshness). Agent-scoped, session-protected.
   agentInterfaces: (id: string) =>
     req<AgentInterfaces>('GET', `/api/v1/agents/${encodeURIComponent(id)}/interfaces`),
-  agentStatusHistory: (id: string) =>
-    req<StatusEvent[]>('GET', `/api/v1/agents/${encodeURIComponent(id)}/status-history`),
+  agentStatusHistory: (id: string, since?: number) => {
+    const p = new URLSearchParams()
+    if (since) p.set('since', String(since))
+    const qs = p.toString()
+    return req<StatusEvent[]>('GET', `/api/v1/agents/${encodeURIComponent(id)}/status-history${qs ? '?' + qs : ''}`)
+  },
   // The agent's whole permission catalog — granted and not granted — each
   // ungranted one carrying the exact policy line that would grant it.
   agentPermissions: (id: string) =>
@@ -2423,8 +2432,8 @@ export const api = {
     req<MonitorStatusRow[]>('GET', `/api/v1/agents/${encodeURIComponent(id)}/monitor-status`),
   // Authoritative current status for every target of a site, in one deterministic
   // batch. The single source of current target health across the console.
-  targetStatuses: (siteID: string) =>
-    req<SiteTargetStatuses>('GET', `/api/v1/sites/${encodeURIComponent(siteID)}/target-statuses`),
+  targetStatuses: (siteID: string, window: TimeRange = '24h') =>
+    req<SiteTargetStatuses>('GET', `/api/v1/sites/${encodeURIComponent(siteID)}/target-statuses?window=${window}`),
   listTokens: () => req<EnrollmentToken[]>('GET', '/api/v1/enrollment-tokens'),
   createToken: (note: string) =>
     req<{ token: string; expires_in_minutes: number }>('POST', '/api/v1/enrollment-tokens', { note }),
@@ -2504,6 +2513,7 @@ export const api = {
       target?: string
       detector?: 'availability' | 'agent_connectivity'
       state?: 'firing' | 'resolved'
+      since?: number
       limit?: number
     } = {},
   ) => {
@@ -2598,9 +2608,9 @@ export const api = {
   },
   // Availability over a window: every target of a site, or one target broken
   // down per Agent.
-  siteAvailability: (siteID: string, window: AvailabilityWindow = '24h') =>
+  siteAvailability: (siteID: string, window: TimeRange = '24h') =>
     req<SiteAvailability>('GET', `/api/v1/sites/${encodeURIComponent(siteID)}/availability?window=${window}`),
-  targetAvailability: (targetID: string, windows: AvailabilityWindow[] = ['24h', '7d', '30d']) =>
+  targetAvailability: (targetID: string, windows: TimeRange[] = ['3h', '24h', '7d', '30d', '90d']) =>
     req<TargetAvailability>(
       'GET',
       `/api/v1/targets/${encodeURIComponent(targetID)}/availability?windows=${windows.join(',')}`,

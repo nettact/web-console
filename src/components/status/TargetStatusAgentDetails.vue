@@ -3,7 +3,7 @@ import { computed, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import type { TargetAgentStatusRow, TargetFaultRef, TargetStatusRow } from '../../api'
-import { formatAvailability } from '../../lib/targetStatus'
+import { formatAvailability, formatAvailabilityRounds } from '../../lib/targetStatus'
 import { toDateLocale } from '../../i18n'
 import { notifications } from '../../notifications'
 import { agentIndex } from '../../agentStatus'
@@ -13,6 +13,7 @@ import MonitorStateBadge from './MonitorStateBadge.vue'
 import PermissionChips from './PermissionChips.vue'
 import PermissionRemediationDialog from './PermissionRemediationDialog.vue'
 import TargetStatusPerformance from './TargetStatusPerformance.vue'
+import { targetStatus } from '../../targetStatus'
 
 const props = defineProps<{
   target: TargetStatusRow
@@ -21,6 +22,7 @@ const props = defineProps<{
 
 const router = useRouter()
 const { t, te, locale } = useI18n()
+const availabilityTitle = computed(() => t(`targetStatus.availability${targetStatus.timeRange}`))
 const { attributionSentence, clueLabel } = useIncidentLabels()
 
 // The owning incident's one-line "where is the problem most likely", or '' when
@@ -97,10 +99,15 @@ function reasonLabel(agent: TargetAgentStatusRow): string {
 }
 
 function availabilityLabel(agent: TargetAgentStatusRow): string {
-  return formatAvailability(agent.availability_24h) ?? t('targetStatus.availabilityUnknown')
+  return formatAvailability(agent.availability) ?? t('targetStatus.availabilityUnknown')
 }
 
-// Fluctuations over the same 24 hours the availability figure covers, per Agent.
+function availabilityRoundsLabel(agent: TargetAgentStatusRow): string {
+  const rounds = formatAvailabilityRounds(agent.availability_ok_rounds, agent.availability_rounds)
+  return rounds ? t('targetStatus.verdictRounds', { rounds }) : t('targetStatus.noVerdictRounds')
+}
+
+// Fluctuations over the same selected window the availability figure covers, per Agent.
 // It rides along on the authoritative status batch (one grouped query for the whole
 // site) rather than being fetched here, so the number costs nothing extra and
 // cannot disagree with the count shown on the collapsed row.
@@ -192,14 +199,14 @@ function openHistory(agentID: string): void {
           <strong>{{ reasonLabel(agent) }}</strong>
         </div>
         <div class="fact-card availability-fact">
-          <span>{{ t('targetStatus.availability24h') }}</span>
+          <span>{{ availabilityTitle }}</span>
           <strong>{{ availabilityLabel(agent) }}</strong>
+          <small>{{ availabilityRoundsLabel(agent) }}</small>
           <!-- The explanation for a figure below 100% that raised no fault. The card
                opens the history page, where each one is listed with its cause. -->
-          <small v-if="agent.fluctuations_24h" class="flux-note">
-            {{ t('targetStatus.fluctuationCount24h', { n: agent.fluctuations_24h }) }}
+          <small v-if="agent.fluctuations" class="flux-note">
+            {{ t('targetStatus.fluctuationCount', { n: agent.fluctuations, window: targetStatus.timeRange }) }}
           </small>
-          <small v-else>{{ t('targetStatus.availabilityHint') }}</small>
         </div>
         <div class="fact-card">
           <span>{{ t('targetStatus.executionContext') }}</span>

@@ -23,6 +23,8 @@ function agent(over: Partial<TargetAgentStatusRow> = {}): TargetAgentStatusRow {
     missing_permissions: [],
     matched_selector: 'all',
     block_reason: '',
+    availability_rounds: 0,
+    availability_ok_rounds: 0,
     ...over,
   }
 }
@@ -38,6 +40,8 @@ function target(id: string, row: TargetAgentStatusRow, groupID = 'group-1'): Tar
     display_state: 'healthy',
     applicable_agents: 1,
     affected_agents: 0,
+    availability_rounds: 0,
+    availability_ok_rounds: 0,
     signal_ids: [],
     incident_ids: [],
     agents: [row],

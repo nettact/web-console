@@ -7,7 +7,6 @@ const apiMock = vi.hoisted(() => ({
   metricsSummary: vi.fn(),
   faultSignals: vi.fn(),
   fluctuations: vi.fn(),
-  targetAvailability: vi.fn(),
 }))
 vi.mock('../../api', () => ({ api: apiMock }))
 
@@ -65,7 +64,6 @@ beforeEach(() => {
   apiMock.metricsSummary.mockReset().mockResolvedValue({ window_seconds: 21_600, kinds: {} })
   apiMock.faultSignals.mockReset().mockResolvedValue([])
   apiMock.fluctuations.mockReset().mockResolvedValue({ items: [], total: 0 })
-  apiMock.targetAvailability.mockReset().mockResolvedValue({ target_id: 'target-1', windows: [] })
 })
 
 describe('target history availability across storage tiers', () => {
@@ -107,5 +105,10 @@ describe('target history availability across storage tiers', () => {
     expect(wrapper.get('.summary tbody').text()).toContain('83.3%')
     expect(wrapper.get('.summary tbody').text()).toContain('1')
     expect(wrapper.get('.status-chart-card .metric-chart-stub').text()).toBe('1,0.5,1')
+    expect(apiMock.faultSignals).toHaveBeenCalledWith(expect.objectContaining({
+      target: 'target-1',
+      agent: 'agent-1',
+      since: expect.any(Number),
+    }))
   })
 })

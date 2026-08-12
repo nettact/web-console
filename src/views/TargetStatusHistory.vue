@@ -13,6 +13,13 @@ const targetID = computed(() => String(route.params.targetId || ''))
 const agentID = computed(() => String(route.params.agentId || ''))
 const target = computed(() => targetIndex.value.get(targetID.value))
 const agent = computed(() => target.value?.agents.find((item) => item.agent_id === agentID.value))
+const rangeSec = computed(() => ({
+  '3h': 3 * 3600,
+  '24h': 24 * 3600,
+  '7d': 7 * 86400,
+  '30d': 30 * 86400,
+  '90d': 90 * 86400,
+})[targetStatus.requestedTimeRange])
 const backLocation = computed(() => ({
   path: '/target-status',
   query: { target: targetID.value, agent: agentID.value },
@@ -53,7 +60,7 @@ const backLocation = computed(() => ({
         </div>
       </header>
 
-      <TargetStatusHistory :target="target" :agent-id="agentID" />
+      <TargetStatusHistory :target="target" :agent-id="agentID" :range-sec="rangeSec" />
     </template>
   </main>
 </template>

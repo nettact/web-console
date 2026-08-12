@@ -540,7 +540,7 @@ describe('IncidentReport', () => {
     const history = sections[sections.length - 1]
     const cells = history.findAll('tbody td.mono').map((td) => td.text())
 
-    expect(cells[0]).toBe('99.9%')
+    expect(cells[0]).toBe('99.99%')
   })
 
   it('suppresses success-flag metrics on failed rounds', async () => {

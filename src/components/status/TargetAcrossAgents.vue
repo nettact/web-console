@@ -1,15 +1,13 @@
 <script setup lang="ts">
 // By-target comparison: the same monitoring target as seen from several agents.
 // The summary table's current state comes from the authoritative target-status
-// batch (per-agent execution/probe/fault) and its 24h/7d/30d availability from the
-// server's own verdict-round accounting; the range availability/outages/latest
-// columns, trend charts, per-agent status bands and NAT/TCP cards stay
-// metric-based (historical), overlaying one line/row per agent.
+// batch (per-agent execution/probe/fault). Availability, outages, latest values,
+// trend charts, per-agent status bands and NAT/TCP cards all use the page range,
+// overlaying one line/row per agent.
 import { ref, computed, watch, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import {
   api,
-  type AvailabilityWindow,
   type FaultSignal,
   type Fluctuation,
   type KindSummary,
@@ -35,7 +33,7 @@ import {
 } from '../../lib/metricMeta'
 import { bandSeriesFor, type Prober } from '../../lib/targetGroups'
 import { availability, availabilityOutages, toPoints, type Pt } from '../../lib/timeline'
-import { availabilityTone, formatAvailability, type Tone } from '../../lib/targetStatus'
+import { formatAvailability } from '../../lib/targetStatus'
 import { targetIndex } from '../../targetStatus'
 import { fmtByUnit, isByteUnit } from '../../lib/format'
 import { agentLabel } from '../../lib/agentLabel'
@@ -56,10 +54,6 @@ const { t } = useI18n()
 const { metricLabel, unitLabel } = useMetricMeta()
 const { buildCard, buildCodeCard } = useMetricCards()
 
-// The fixed windows the server reports availability over, shown per Agent beside
-// the range-scoped historical figure.
-const AVAIL_WINDOWS: AvailabilityWindow[] = ['24h', '7d', '30d']
-
 const samples = ref<Record<string, Sample[]>>({}) // key: `${agentId}::${kind}`
 // Server-side aggregates for categorical code kinds (NAT / TCP error): the
 // cards only need latest (+ determinate fallback), so these come from the
@@ -69,13 +63,10 @@ const faults = ref<FaultSignal[]>([])
 const fluctuations = ref<Fluctuation[]>([])
 const fluxTotal = ref(0)
 const fluxLoaded = ref(false)
-// window -> agent id -> success ratio. A missing entry is "unknown", never 0%.
-const availWindows = ref<Record<string, Map<string, number>>>({})
 const loading = ref(false)
 let dataSeq = 0
 let faultSeq = 0
 let fluxSeq = 0
-let availSeq = 0
 let baselineSeq = 0
 
 const skey = (agentId: string, kind: string) => `${agentId}::${kind}`
@@ -358,8 +349,8 @@ async function loadBaselines() {
   }
 }
 
-// Confirmed fault history for this target, newest confirmation first. Signals are
-// target-scoped (one request covers every Agent), and each row carries its own
+// Confirmed fault history for this target and selected range, newest confirmation
+// first. Signals are target-scoped (one request covers every Agent), and each row carries its own
 // frozen evidence, so nothing here is re-derived from metric samples. A
 // monitor-less system series has no target id to scope by and shows no records.
 async function loadFaults() {
@@ -375,6 +366,7 @@ async function loadFaults() {
     const list = await api.faultSignals({
       target: props.monitorId,
       agent: props.restrictToProbers && props.probers.length === 1 ? props.probers[0].agent.id : undefined,
+      since: Math.floor(Date.now() / 1000) - props.rangeSec,
       limit: 20,
     })
     if (seq !== faultSeq) return
@@ -425,27 +417,6 @@ async function loadFluctuations() {
 // Per-Agent availability over the server's fixed windows. Rounds that reached no
 // verdict are absent from the denominator, and an Agent with no verdict at all in
 // a window is simply missing here — rendered "unknown" rather than 0%.
-async function loadAvailability() {
-  const seq = ++availSeq
-  if (!props.monitorId) {
-    availWindows.value = {}
-    return
-  }
-  try {
-    const res = await api.targetAvailability(props.monitorId, AVAIL_WINDOWS)
-    if (seq !== availSeq) return
-    const out: Record<string, Map<string, number>> = {}
-    for (const w of res.windows) {
-      const byAgent = new Map<string, number>()
-      for (const ratio of w.agents) if (ratio.agent_id) byAgent.set(ratio.agent_id, ratio.ratio)
-      out[w.window] = byAgent
-    }
-    availWindows.value = out
-  } catch {
-    if (seq === availSeq) availWindows.value = {}
-  }
-}
-
 // Fluctuations per Agent over the range, for the summary column beside outages.
 // Counted client-side from the rows already loaded rather than with one request
 // per Agent.
@@ -467,17 +438,11 @@ const fluxTruncated = computed(() => fluxTotal.value > fluctuations.value.length
 const fluxCell = (agentId: string): string =>
   fluxLoaded.value && !fluxTruncated.value ? String(fluxCountByAgent.value.get(agentId) ?? 0) : '—'
 
-const windowRatio = (agentId: string, window: AvailabilityWindow) => availWindows.value[window]?.get(agentId)
-const windowAvail = (agentId: string, window: AvailabilityWindow): string =>
-  formatAvailability(windowRatio(agentId, window)) ?? t('targetStatus.availabilityUnknown')
-const windowTone = (agentId: string, window: AvailabilityWindow): Tone => availabilityTone(windowRatio(agentId, window))
-
 function reload() {
   applyDefaults()
   loadData()
   loadFaults()
   loadFluctuations()
-  loadAvailability()
   loadBaselines()
 }
 
@@ -486,9 +451,10 @@ watch([
   () => props.target,
   () => props.probers.map((p) => p.agent.id).join(','),
 ], reload)
-// Fluctuations are range-scoped, so they reload with the range picker.
+// Every historical source is range-scoped, so they reload together.
 watch(() => props.rangeSec, () => {
   loadData()
+  loadFaults()
   loadFluctuations()
 })
 onMounted(reload)
@@ -505,9 +471,6 @@ onMounted(reload)
           <tr>
             <th>{{ t('targetStatus.thAgent') }}</th>
             <th>{{ t('targetStatus.thCurrent') }}</th>
-            <th class="num">{{ t('targetStatus.availability24h') }}</th>
-            <th class="num">{{ t('targetStatus.availability7d') }}</th>
-            <th class="num">{{ t('targetStatus.availability30d') }}</th>
             <th class="num">{{ t('targetStatus.thAvailability') }}</th>
             <th class="num">{{ t('targetStatus.thOutages') }}</th>
             <th class="num" :title="t('targetStatus.fluctuationsHint')">
@@ -529,12 +492,6 @@ onMounted(reload)
               </span>
               <span v-else class="hint">—</span>
             </td>
-            <td
-              v-for="w in AVAIL_WINDOWS"
-              :key="w"
-              class="num mono"
-              :class="`t-${windowTone(r.id, w)}`"
-            >{{ windowAvail(r.id, w) }}</td>
             <td class="num mono" :class="`t-${r.availTone}`">{{ r.avail === null ? '—' : r.avail }}</td>
             <td class="num mono">{{ r.avail === null ? '—' : r.outages }}</td>
             <td class="num mono">{{ fluxCell(r.id) }}</td>

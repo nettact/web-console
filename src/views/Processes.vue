@@ -920,7 +920,7 @@ watch([connectionSearch, connFilter], () => {
                     :aria-label="t('processes.viewConnsAria', { name: p.name, pid: p.pid })"
                     @click="viewConnections(p)"
                   >
-                    {{ t('processes.viewConns') }}
+                    {{ t('processes.connectionCount', { n: connectionCountByPID.get(p.pid) || 0 }) }}
                   </button>
                 </td>
               </tr>

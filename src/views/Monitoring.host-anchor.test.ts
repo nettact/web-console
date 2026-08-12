@@ -69,13 +69,14 @@ describe('authoritative monitor status composition', () => {
       target_id: 'mon-http', group_id: 'group-default', name: 'Public site', kind: 'http',
       target: 'https://example.com', enabled: true, display_state: 'partial_failure',
       applicable_agents: 5, affected_agents: 4,
+      availability_rounds: 0, availability_ok_rounds: 0,
       signal_ids: [], incident_ids: [],
       agents: [
-        { agent_id: 'blocked', agent_name: 'Blocked Agent', agent_online: true, execution_state: 'permission_blocked', probe_state: 'no_data', fault_state: 'normal', reason_code: 'permission_blocked', missing_permissions: ['probe.http'], matched_selector: '', block_reason: '' },
-        { agent_id: 'failed', agent_name: 'Failed Agent', agent_online: true, execution_state: 'collecting', probe_state: 'failed', fault_state: 'normal', reason_code: 'probe_failed', missing_permissions: [], matched_selector: '', block_reason: '' },
-        { agent_id: 'confirming', agent_name: 'Confirming Agent', agent_online: true, execution_state: 'collecting', probe_state: 'failed', fault_state: 'confirming', reason_code: 'fault_confirming', missing_permissions: [], matched_selector: '', block_reason: '', confirm: { fail_rounds: 2, need_rounds: 3 } },
-        { agent_id: 'healthy', agent_name: 'Healthy Agent', agent_online: true, execution_state: 'collecting', probe_state: 'healthy', fault_state: 'normal', reason_code: 'ok', missing_permissions: [], matched_selector: '', block_reason: '' },
-        { agent_id: 'offline', agent_name: 'Offline Agent', agent_online: false, execution_state: 'agent_offline', probe_state: 'stale', fault_state: 'normal', reason_code: 'agent_offline', missing_permissions: [], matched_selector: '', block_reason: '' },
+        { agent_id: 'blocked', agent_name: 'Blocked Agent', agent_online: true, execution_state: 'permission_blocked', probe_state: 'no_data', fault_state: 'normal', reason_code: 'permission_blocked', missing_permissions: ['probe.http'], matched_selector: '', block_reason: '', availability_rounds: 0, availability_ok_rounds: 0 },
+        { agent_id: 'failed', agent_name: 'Failed Agent', agent_online: true, execution_state: 'collecting', probe_state: 'failed', fault_state: 'normal', reason_code: 'probe_failed', missing_permissions: [], matched_selector: '', block_reason: '', availability_rounds: 0, availability_ok_rounds: 0 },
+        { agent_id: 'confirming', agent_name: 'Confirming Agent', agent_online: true, execution_state: 'collecting', probe_state: 'failed', fault_state: 'confirming', reason_code: 'fault_confirming', missing_permissions: [], matched_selector: '', block_reason: '', availability_rounds: 0, availability_ok_rounds: 0, confirm: { fail_rounds: 2, need_rounds: 3 } },
+        { agent_id: 'healthy', agent_name: 'Healthy Agent', agent_online: true, execution_state: 'collecting', probe_state: 'healthy', fault_state: 'normal', reason_code: 'ok', missing_permissions: [], matched_selector: '', block_reason: '', availability_rounds: 0, availability_ok_rounds: 0 },
+        { agent_id: 'offline', agent_name: 'Offline Agent', agent_online: false, execution_state: 'agent_offline', probe_state: 'stale', fault_state: 'normal', reason_code: 'agent_offline', missing_permissions: [], matched_selector: '', block_reason: '', availability_rounds: 0, availability_ok_rounds: 0 },
       ],
     } satisfies TargetStatusRow]
 

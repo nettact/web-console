@@ -12,11 +12,13 @@ import { i18n } from '../../i18n'
 const target = {
   target_id: 'target-1', group_id: 'group-1', name: 'Public DNS', kind: 'dns', target: '1.1.1.1', enabled: true,
   display_state: 'healthy' as const, applicable_agents: 1, affected_agents: 0,
+  availability_rounds: 0, availability_ok_rounds: 0,
   signal_ids: [], incident_ids: [],
   agents: [{
     agent_id: 'agent-1', agent_name: 'Agent 1', agent_online: true,
     execution_state: 'collecting' as const, probe_state: 'healthy' as const, fault_state: 'normal' as const,
     reason_code: 'ok' as const, missing_permissions: [], matched_selector: 'all', block_reason: '',
+    availability_rounds: 0, availability_ok_rounds: 0,
   }],
 }
 
@@ -70,14 +72,13 @@ describe('Agent-level target history drill-down', () => {
 
   it('loads series for only the selected Agent and scopes them by stable target id', async () => {
     const wrapper = mount(TargetStatusHistory, {
-      props: { target, agentId: 'agent-1' },
+      props: { target, agentId: 'agent-1', rangeSec: 7 * 86400 },
       global: {
         plugins: [i18n],
         stubs: {
-          RangePicker: { template: '<div data-test="range" />' },
           TargetAcrossAgents: {
-            props: ['probers', 'monitorId', 'restrictToProbers'],
-            template: '<div data-test="charts">{{ probers.length }}:{{ monitorId }}:{{ probers[0].series.length }}</div>',
+            props: ['probers', 'monitorId', 'restrictToProbers', 'rangeSec'],
+            template: '<div data-test="charts">{{ probers.length }}:{{ monitorId }}:{{ probers[0].series.length }}:{{ rangeSec }}</div>',
           },
         },
       },
@@ -88,7 +89,7 @@ describe('Agent-level target history drill-down', () => {
     expect(apiMock.agent).toHaveBeenCalledWith('agent-1')
     expect(apiMock.listSeries).toHaveBeenCalledTimes(1)
     expect(apiMock.listSeries).toHaveBeenCalledWith('agent-1')
-    expect(wrapper.get('[data-test="charts"]').text()).toBe('1:target-1:2')
+    expect(wrapper.get('[data-test="charts"]').text()).toBe('1:target-1:2:604800')
 
     const chartElement = wrapper.get('[data-test="charts"]').element
     await wrapper.setProps({ target: { ...target, name: 'Public DNS (refreshed status)' } })

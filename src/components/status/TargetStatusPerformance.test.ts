@@ -26,9 +26,9 @@ beforeEach(() => {
 })
 
 describe('target-status Agent performance facts', () => {
-  it('shows latest latency, packet loss, and two-hour raw latency P95 for ICMP', async () => {
+  it('shows latest latency, packet loss, and selected-range raw latency P95 for ICMP', async () => {
     const wrapper = mount(TargetStatusPerformance, {
-      props: { targetId: 'target-1', targetKind: 'icmp', agentId: 'agent-1' },
+      props: { targetId: 'target-1', targetKind: 'icmp', agentId: 'agent-1', rangeSec: 24 * 3600 },
       global: { plugins: [i18n] },
     })
     await flushPromises()
@@ -37,7 +37,7 @@ describe('target-status Agent performance facts', () => {
     expect(apiMock.metricsSummary).toHaveBeenCalledWith(
       'agent-1',
       ['probe.icmp.rtt_ms', 'probe.icmp.loss_pct'],
-      { monitor: 'target-1' },
+      { monitor: 'target-1', sinceSeconds: 24 * 3600 },
     )
     expect(wrapper.get('[data-test="latency"] strong').text()).toBe('35 ms')
     expect(wrapper.get('[data-test="loss"] strong').text()).toBe('2.5%')
@@ -78,7 +78,7 @@ describe('target-status Agent performance facts', () => {
     expect(apiMock.metricsSummary).toHaveBeenCalledWith(
       'agent-1',
       ['probe.http.latency_ms'],
-      { monitor: 'target-1' },
+      { monitor: 'target-1', sinceSeconds: 24 * 3600 },
     )
     expect(wrapper.get('[data-test="latency"]').classes()).toContain('tone-attention')
     expect(wrapper.get('[data-test="latency"]').classes()).not.toContain('tone-severe')
@@ -99,7 +99,7 @@ describe('target-status Agent performance facts', () => {
     expect(apiMock.metricsSummary).toHaveBeenCalledWith(
       'agent-1',
       ['probe.nat.rtt_ms', 'probe.nat.type'],
-      { monitor: 'target-1' },
+      { monitor: 'target-1', sinceSeconds: 24 * 3600 },
     )
     expect(wrapper.get('[data-test="latency"]').classes()).not.toContain('tone-attention')
     expect(wrapper.get('[data-test="latency"]').classes()).not.toContain('tone-severe')

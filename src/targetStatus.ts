@@ -1,5 +1,5 @@
 import { computed, reactive } from 'vue'
-import { api, type TargetStatusRow } from './api'
+import { api, type TargetStatusRow, type TimeRange } from './api'
 import { openEventStream, type EventStream } from './lib/sse'
 
 // Authoritative current target-status store (STATUS-001), a reactive singleton
@@ -18,6 +18,8 @@ const SITE = 'site_default'
 
 export const targetStatus = reactive<{
   generatedAt: string
+  timeRange: TimeRange
+  requestedTimeRange: TimeRange
   targets: TargetStatusRow[]
   loaded: boolean // a successful snapshot has been seen at least once
   stale: boolean // showing a prior snapshot after a failed refresh
@@ -30,6 +32,8 @@ export const targetStatus = reactive<{
   live: boolean // SSE stream connected
 }>({
   generatedAt: '',
+  timeRange: '24h',
+  requestedTimeRange: '24h',
   targets: [],
   loaded: false,
   stale: false,
@@ -63,6 +67,7 @@ let pendingDemand = false
 // or a later login) from writing success/error/stale/target data into the cleared
 // singleton, and stops an old run's cleanup from clobbering a new run's flags.
 let lifecycle = 0
+let requestedTimeRange: TimeRange = '24h'
 
 // One authoritative batch fetch. Single in-flight guard so overlapping triggers
 // (SSE + focus) collapse to one request; the last success always wins. Triggers
@@ -80,16 +85,17 @@ export async function refreshTargetStatus(): Promise<void> {
     do {
       pendingDemand = false
       try {
-        const r = await api.targetStatuses(SITE)
+        const r = await api.targetStatuses(SITE, requestedTimeRange)
         // The lifecycle was stopped (or replaced by a later login) while this
         // request was in flight — its result belongs to a session that no longer
         // exists, so drop it rather than write it into the cleared singleton.
         if (lifecycle !== runLifecycle) return
         targetStatus.targets = r.targets
         targetStatus.generatedAt = r.generated_at
+        targetStatus.timeRange = r.time_range
         targetStatus.loaded = true
         targetStatus.stale = false
-        targetStatus.syncing = false
+        targetStatus.syncing = r.time_range !== requestedTimeRange
         targetStatus.error = ''
       } catch (e) {
         if (lifecycle !== runLifecycle) return
@@ -113,6 +119,20 @@ export async function refreshTargetStatus(): Promise<void> {
     // clearing it here would clobber the new run's in-flight state.
     if (lifecycle === runLifecycle) inFlight = false
   }
+}
+
+// Changes the page-wide time range used by every target-status consumer. The
+// current snapshot keeps its own timeRange until the replacement lands,
+// so data from the old range is never relabelled while the request is in flight.
+export function setTargetStatusTimeRange(range: TimeRange): void {
+  if (requestedTimeRange === range) {
+    if (targetStatus.stale || targetStatus.error) void refreshTargetStatus()
+    return
+  }
+  requestedTimeRange = range
+  targetStatus.requestedTimeRange = range
+  if (targetStatus.loaded) targetStatus.syncing = true
+  void refreshTargetStatus()
 }
 
 // Debounce-coalesce a burst of SSE events into a single batch refresh (~300 ms).
@@ -185,4 +205,7 @@ export function resetTargetStatus(): void {
   targetStatus.error = ''
   targetStatus.targets = []
   targetStatus.generatedAt = ''
+  targetStatus.timeRange = '24h'
+  targetStatus.requestedTimeRange = '24h'
+  requestedTimeRange = '24h'
 }

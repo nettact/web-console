@@ -21,6 +21,8 @@ const target: TargetStatusRow = {
   display_state: 'blocked',
   applicable_agents: 1,
   affected_agents: 1,
+  availability_rounds: 0,
+  availability_ok_rounds: 0,
   signal_ids: [],
   incident_ids: [],
   agents: [
@@ -35,6 +37,8 @@ const target: TargetStatusRow = {
       missing_permissions: ['host.process.owner.read'],
       matched_selector: 'all',
       block_reason: '',
+      availability_rounds: 0,
+      availability_ok_rounds: 0,
     },
   ],
 }

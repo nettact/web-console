@@ -19,6 +19,8 @@ const agent = (id: string, name = id): TargetAgentStatusRow => ({
   missing_permissions: [],
   matched_selector: 'all',
   block_reason: '',
+  availability_rounds: 0,
+  availability_ok_rounds: 0,
 })
 
 const target = (id: string, groupID: string, state: DisplayState, agents = [agent('agent-a')]): TargetStatusRow => ({
@@ -31,6 +33,8 @@ const target = (id: string, groupID: string, state: DisplayState, agents = [agen
   display_state: state,
   applicable_agents: agents.length,
   affected_agents: state === 'healthy' || state === 'disabled' ? 0 : agents.length,
+  availability_rounds: 0,
+  availability_ok_rounds: 0,
   signal_ids: [],
   incident_ids: [],
   agents,
@@ -104,4 +108,3 @@ describe('target-status page model', () => {
     expect(isStatusFilter('unknown-state')).toBe(false)
   })
 })
-

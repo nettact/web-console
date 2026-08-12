@@ -3,14 +3,24 @@ import { computed, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { api, type MetricsSummary } from '../../api'
 import { fmtNum, natCodeLabel, natTone } from '../../lib/metricMeta'
+import { targetStatus } from '../../targetStatus'
 
 const { t } = useI18n()
 
-const props = defineProps<{
+const props = withDefaults(defineProps<{
   targetId: string
   targetKind: string
   agentId: string
-}>()
+  rangeSec?: number
+}>(), { rangeSec: 0 })
+
+const pageRangeSec = computed(() => props.rangeSec || ({
+  '3h': 3 * 3600,
+  '24h': 24 * 3600,
+  '7d': 7 * 86400,
+  '30d': 30 * 86400,
+  '90d': 90 * 86400,
+})[targetStatus.requestedTimeRange])
 
 const latencyKinds: Record<string, string> = {
   icmp: 'probe.icmp.rtt_ms',
@@ -23,9 +33,8 @@ const latencyKinds: Record<string, string> = {
 
 const propsLatencyKind = computed(() => latencyKinds[props.targetKind] || '')
 const supportsLoss = computed(() => props.targetKind === 'icmp' || props.targetKind === 'gateway')
-// latest/P95 come pre-aggregated from the server over the 2h raw window (the
-// server default), so one lightweight request replaces pulling ~7k samples per
-// kind into the browser.
+// Latest/P95 come pre-aggregated from raw retention. Wider page ranges are
+// clamped to that retention boundary because percentiles of rollups are invalid.
 const summary = ref<MetricsSummary | null>(null)
 let loadSequence = 0
 
@@ -84,7 +93,7 @@ async function loadPerformance(): Promise<void> {
   if (supportsLoss.value) kinds.push('probe.icmp.loss_pct')
   if (props.targetKind === 'nat') kinds.push('probe.nat.type')
   const result = await api
-    .metricsSummary(props.agentId, kinds, { monitor: props.targetId })
+    .metricsSummary(props.agentId, kinds, { monitor: props.targetId, sinceSeconds: Math.min(pageRangeSec.value, 2 * 86400) })
     .catch(() => null)
   if (sequence !== loadSequence) return
   summary.value = result
@@ -94,6 +103,7 @@ watch([
   () => props.targetId,
   () => props.targetKind,
   () => props.agentId,
+  pageRangeSec,
 ], loadPerformance)
 onMounted(loadPerformance)
 </script>

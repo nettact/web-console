@@ -349,6 +349,7 @@ describe('Processes network-connection filtering', () => {
     expect(cells[0].classes()).not.toContain('truncate')
     expect(cells[0].get('.truncate').text()).toBe('alpha')
     expect(cells[1].text()).toBe('10')
+    expect(firstRow.get('.link-btn').text()).toBe('1 connection')
   })
 
   it('keeps connections with a remote address ahead of listening sockets', async () => {

@@ -4,10 +4,11 @@ import { useI18n } from 'vue-i18n'
 import type { ProbeTarget, TargetStatusRow } from '../../api'
 import type { TargetStatusGroupView } from '../../lib/targetStatusPage'
 import { targetLabel, typeLabel } from '../../lib/targetLabels'
-import { availabilityTone, formatAvailability } from '../../lib/targetStatus'
+import { availabilityTone, formatAvailability, formatAvailabilityRounds } from '../../lib/targetStatus'
 import { toDateLocale } from '../../i18n'
 import MonitorStateBadge from './MonitorStateBadge.vue'
 import TargetStatusAgentDetails from './TargetStatusAgentDetails.vue'
+import { targetStatus } from '../../targetStatus'
 
 const props = defineProps<{
   view: TargetStatusGroupView
@@ -22,6 +23,7 @@ const emit = defineEmits<{
 }>()
 
 const { t, locale } = useI18n()
+const availabilityTitle = computed(() => t(`targetStatus.availability${targetStatus.timeRange}`))
 
 function asProbeTarget(row: TargetStatusRow): ProbeTarget {
   return { id: row.target_id, group_id: row.group_id, kind: row.kind, name: row.name, target: row.target, enabled: row.enabled }
@@ -81,10 +83,15 @@ const faultCells = computed(() => {
 const faultCell = (row: TargetStatusRow): FaultCell =>
   faultCells.value.get(row.target_id) ?? { kind: 'none', severity: '', fail: 0, need: 0 }
 
-// An absent ratio is "unknown", never 0%: a 24h window that reached no verdict
+// An absent ratio is "unknown", never 0%: a window that reached no verdict
 // (blocked, unsupported, Agent offline throughout) says nothing about uptime.
 function availabilityLabel(row: TargetStatusRow): string {
-  return formatAvailability(row.availability_24h) ?? t('targetStatus.availabilityUnknown')
+  return formatAvailability(row.availability) ?? t('targetStatus.availabilityUnknown')
+}
+
+function availabilityRounds(row: TargetStatusRow): string {
+  const rounds = formatAvailabilityRounds(row.availability_ok_rounds, row.availability_rounds)
+  return rounds ? t('targetStatus.verdictRounds', { rounds }) : t('targetStatus.noVerdictRounds')
 }
 </script>
 
@@ -150,7 +157,7 @@ function availabilityLabel(row: TargetStatusRow): string {
           <span>{{ t('targetStatus.currentState') }}</span>
           <span>{{ t('targetStatus.agentImpact') }}</span>
           <span>{{ t('targetStatus.faultTitle') }}</span>
-          <span>{{ t('targetStatus.availability24h') }}</span>
+          <span>{{ availabilityTitle }}</span>
           <span>{{ t('targetStatus.lastObserved') }}</span>
           <span class="action-column">{{ t('targetStatus.detailAction') }}</span>
         </div>
@@ -197,20 +204,21 @@ function availabilityLabel(row: TargetStatusRow): string {
               <span v-else class="muted">{{ t('targetStatus.fault.normal') }}</span>
             </div>
 
-            <div class="availability-cell" :data-label="t('targetStatus.availability24h')">
+            <div class="availability-cell" :data-label="availabilityTitle">
               <span
                 class="avail-pill"
-                :class="`is-${availabilityTone(row.availability_24h)}`"
+                :class="`is-${availabilityTone(row.availability)}`"
                 :title="t('targetStatus.availabilityHint')"
               >{{ availabilityLabel(row) }}</span>
+              <span class="availability-rounds">{{ availabilityRounds(row) }}</span>
               <!-- A figure under 100% used to be a dead end here: no fault to open,
                    nothing to click. This says how many dips are behind it; expanding
                    the row shows each one's cause. -->
               <span
-                v-if="row.fluctuations_24h"
+                v-if="row.fluctuations"
                 class="flux-note"
                 :title="t('targetStatus.fluctuationsHint')"
-              >{{ t('targetStatus.fluctuationCount24h', { n: row.fluctuations_24h }) }}</span>
+              >{{ t('targetStatus.fluctuationCount', { n: row.fluctuations, window: targetStatus.timeRange }) }}</span>
             </div>
 
             <div class="observed-cell" :data-label="t('targetStatus.lastObserved')">{{ fmtTime(row.last_observed_at) }}</div>
@@ -478,6 +486,16 @@ function availabilityLabel(row: TargetStatusRow): string {
   align-items: center;
   gap: 5px;
   flex-wrap: wrap;
+}
+.availability-cell { align-content: center; }
+.availability-rounds {
+  flex-basis: 100%;
+  overflow: hidden;
+  color: var(--text-muted);
+  font-size: 9.5px;
+  font-variant-numeric: tabular-nums;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .impact-cell strong { font-size: 14px; }
 .impact-cell strong.affected { color: var(--color-danger-text); }

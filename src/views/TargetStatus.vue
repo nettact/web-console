@@ -2,11 +2,11 @@
 import { computed, nextTick, onActivated, onDeactivated, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
-import { api, type AgentGroup, type MonitorGroup } from '../api'
+import { api, type AgentGroup, type MonitorGroup, type TimeRange } from '../api'
 import AgentStatusWorkspace from '../components/status/AgentStatusWorkspace.vue'
 import TargetStatusBoard from '../components/status/TargetStatusBoard.vue'
 import { agentStatus } from '../agentStatus'
-import { targetStatus } from '../targetStatus'
+import { setTargetStatusTimeRange, targetStatus } from '../targetStatus'
 import {
   DISPLAY_STATE_ORDER,
   buildStatusGroups,
@@ -60,10 +60,20 @@ const agentHistoryMode = ref<AgentHistoryMode>('connectivity')
 const targetTab = ref<TargetWorkspaceTab>('overview')
 const selectedTargetId = ref('')
 const selectedAgentId = ref('')
+const timeRanges: TimeRange[] = ['3h', '24h', '7d', '30d', '90d']
+const timeRangeSeconds: Record<TimeRange, number> = {
+  '3h': 3 * 3600,
+  '24h': 24 * 3600,
+  '7d': 7 * 86400,
+  '30d': 30 * 86400,
+  '90d': 90 * 86400,
+}
 let initialRouteQueryApplied = false
 let applyingRoute = false
 
 const queryText = (value: unknown): string => typeof value === 'string' ? value : ''
+const isTimeRange = (value: string): value is TimeRange => timeRanges.includes(value as TimeRange)
+const rangeSec = computed(() => timeRangeSeconds[targetStatus.requestedTimeRange])
 
 function applyRouteQuery(): void {
   applyingRoute = true
@@ -89,6 +99,8 @@ function applyRouteQuery(): void {
     selectedTargetId.value = targetFromRoute
   }
   selectedAgentId.value = queryText(route.query.agent)
+  const rawWindow = queryText(route.query.window)
+  setTargetStatusTimeRange(isTimeRange(rawWindow) ? rawWindow : '24h')
   initialRouteQueryApplied = true
   applyingRoute = false
 }
@@ -207,6 +219,7 @@ function applyDefaultAgentSelection(): void {
 
 function querySnapshot(): Record<string, string> {
   const query: Record<string, string> = { view: view.value }
+  if (targetStatus.requestedTimeRange !== '24h') query.window = targetStatus.requestedTimeRange
   if (selectedAgentId.value) query.agent = selectedAgentId.value
   if (view.value === 'agents') {
     if (agentSearch.value.trim()) query.aq = agentSearch.value.trim()
@@ -256,6 +269,7 @@ watch([
   targetTab,
   selectedTargetId,
   selectedAgentId,
+  () => targetStatus.requestedTimeRange,
 ], () => {
   if (!ready.value || applyingRoute) return
   const query = querySnapshot()
@@ -322,6 +336,22 @@ onActivated(() => {
         <p class="sub">{{ t('targetStatus.sub') }}</p>
       </div>
       <div class="status-head-actions">
+        <div class="availability-control">
+          <span class="availability-control-label">{{ t('targetStatus.timeRange') }}</span>
+          <div class="availability-window" role="group" :aria-label="t('targetStatus.timeRange')">
+            <button
+              v-for="range in timeRanges"
+              :key="range"
+              type="button"
+              :class="{ active: targetStatus.requestedTimeRange === range }"
+              :aria-pressed="targetStatus.requestedTimeRange === range"
+              :disabled="targetStatus.syncing && targetStatus.requestedTimeRange === range"
+              @click="setTargetStatusTimeRange(range)"
+            >
+              {{ t(`targetStatus.range${range}`) }}
+            </button>
+          </div>
+        </div>
         <div class="view-switch" role="tablist" :aria-label="t('targetStatus.viewSwitchAria')">
           <button
             type="button"
@@ -396,6 +426,7 @@ onActivated(() => {
         :status-filter="agentStatusFilter"
         :tab="agentTab"
         :history-mode="agentHistoryMode"
+        :range-sec="rangeSec"
         @update:selected-agent-id="selectedAgentId = $event"
         @update:selected-target-id="selectedTargetId = $event"
         @update:search="agentSearch = $event"
@@ -470,6 +501,7 @@ onActivated(() => {
       :selected-target-id="selectedTargetId"
       :selected-agent-id="selectedAgentId"
       :tab="targetTab"
+      :range-sec="rangeSec"
       @update:selected-target-id="selectedTargetId = $event"
       @update:selected-agent-id="selectedAgentId = $event"
       @update:tab="targetTab = $event"
@@ -505,6 +537,7 @@ onActivated(() => {
   display: flex;
   align-items: center;
   justify-content: flex-end;
+  flex-wrap: wrap;
   gap: var(--space-xs);
   min-width: 0;
 }
@@ -516,6 +549,65 @@ onActivated(() => {
   border: var(--rule-hair) solid var(--color-rule);
   border-radius: var(--radius-input);
   background: var(--color-paper-2);
+}
+
+.availability-control {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+  padding: var(--space-3xs);
+  border: var(--rule-hair) solid var(--color-rule);
+  border-radius: var(--radius-input);
+  background: var(--color-paper-2);
+}
+
+.availability-control-label {
+  padding-inline: var(--space-2xs);
+  color: var(--color-muted);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.availability-window {
+  display: inline-grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  padding-left: var(--space-3xs);
+  border-left: var(--rule-hair) solid var(--color-rule);
+}
+
+.availability-window button {
+  min-width: 66px;
+  min-height: 36px;
+  padding-inline: var(--space-2xs);
+  border: 0;
+  border-radius: calc(var(--radius-input) - var(--space-3xs));
+  color: var(--color-ink-2);
+  background: transparent;
+  font-size: var(--text-xs);
+  cursor: pointer;
+}
+
+.availability-window button.active {
+  color: var(--color-ink);
+  background: var(--color-glass-strong);
+  box-shadow: var(--shadow-card);
+}
+
+.availability-window button:focus-visible {
+  outline: var(--rule-fine) solid var(--color-focus);
+  outline-offset: calc(var(--rule-fine) * -1);
+}
+
+.availability-window button:disabled {
+  cursor: progress;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .availability-window button:not(.active):hover {
+    color: var(--color-ink);
+    background: var(--color-glass-hover);
+  }
 }
 
 .view-switch button {
@@ -900,6 +992,28 @@ onActivated(() => {
 
   .view-switch {
     flex: 1 1 240px;
+  }
+
+  .availability-control {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    flex: 1 1 100%;
+  }
+
+  .availability-control-label {
+    padding-block: var(--space-2xs);
+  }
+
+  .availability-window {
+    width: 100%;
+    padding-top: var(--space-3xs);
+    padding-left: 0;
+    border-top: var(--rule-hair) solid var(--color-rule);
+    border-left: 0;
+  }
+
+  .availability-window button {
+    min-width: 0;
   }
 
   .view-switch button {

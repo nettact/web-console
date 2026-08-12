@@ -83,14 +83,22 @@ export function agentHeadlineTone(row: TargetAgentStatusRow): Tone {
   return PROBE_TONE[row.probe_state]
 }
 
-// Render a 0..1 ratio by truncating to one decimal place. Never round an
+// Render a 0..1 ratio with more precision as it approaches 100%. Never round an
 // observed failure up to 100%: unavailability evidence takes precedence over a
 // cosmetically rounded headline. No verdict remains unknown rather than 0%.
 export function formatAvailability(ratio: number | undefined): string | null {
   if (ratio === undefined || ratio === null || Number.isNaN(ratio)) return null
   const clamped = Math.min(Math.max(ratio, 0), 1)
-  const tenths = clamped >= 1 ? 1000 : Math.min(999, Math.floor(clamped * 1000))
-  return `${tenths / 10}%`
+  if (clamped >= 1) return '100%'
+  const percent = clamped * 100
+  const digits = percent >= 99.99 ? 3 : percent >= 99.9 ? 2 : 1
+  const scale = 10 ** digits
+  return `${Math.floor(percent * scale) / scale}%`
+}
+
+export function formatAvailabilityRounds(ok: number | undefined, total: number | undefined): string | null {
+  if (!total || ok == null) return null
+  return `${ok.toLocaleString()} / ${total.toLocaleString()}`
 }
 
 // availabilityTone grades a ratio for the badge beside it. The thresholds are

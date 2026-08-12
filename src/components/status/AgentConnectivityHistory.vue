@@ -7,6 +7,7 @@ import { toDateLocale } from '../../i18n'
 const props = defineProps<{
   agentId: string
   active: boolean
+  rangeSec: number
 }>()
 
 const { t, locale } = useI18n()
@@ -25,7 +26,8 @@ async function load(): Promise<void> {
   loading.value = true
   error.value = ''
   try {
-    const result = await api.agentStatusHistory(props.agentId)
+    const since = Math.floor(Date.now() / 1000) - props.rangeSec
+    const result = await api.agentStatusHistory(props.agentId, since)
     if (sequence !== loadSequence) return
     events.value = result
   } catch (cause) {
@@ -37,7 +39,7 @@ async function load(): Promise<void> {
   }
 }
 
-watch([() => props.agentId, () => props.active], load, { immediate: true })
+watch([() => props.agentId, () => props.active, () => props.rangeSec], load, { immediate: true })
 </script>
 
 <template>

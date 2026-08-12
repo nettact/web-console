@@ -8,16 +8,18 @@ import {
   type AgentTargetTone,
   type TargetWorkspaceTab,
 } from '../../lib/targetStatusAgentView'
-import { formatAvailability } from '../../lib/targetStatus'
+import { formatAvailability, formatAvailabilityRounds } from '../../lib/targetStatus'
 import { toDateLocale } from '../../i18n'
 import MonitorStateBadge from './MonitorStateBadge.vue'
 import TargetStatusHistory from './TargetStatusHistory.vue'
+import { targetStatus } from '../../targetStatus'
 
 const props = defineProps<{
   groups: TargetStatusGroupView[]
   selectedTargetId: string
   selectedAgentId: string
   tab: TargetWorkspaceTab
+  rangeSec: number
 }>()
 
 const emit = defineEmits<{
@@ -27,6 +29,7 @@ const emit = defineEmits<{
 }>()
 
 const { t, locale } = useI18n()
+const availabilityTitle = computed(() => t(`targetStatus.availability${targetStatus.timeRange}`))
 
 const visibleTargetCount = computed(() =>
   props.groups.reduce((sum, group) => sum + group.targets.length, 0),
@@ -73,6 +76,11 @@ function fmt(value?: string | null): string {
 
 function availability(value?: number | null): string {
   return formatAvailability(value ?? undefined) ?? t('targetStatus.availabilityUnknown')
+}
+
+function availabilityRounds(ok: number, total: number): string {
+  const rounds = formatAvailabilityRounds(ok, total)
+  return rounds ? t('targetStatus.verdictRounds', { rounds }) : t('targetStatus.noVerdictRounds')
 }
 
 function openTarget(targetID: string): void {
@@ -143,7 +151,7 @@ watch(
             <span>{{ t('targetStatus.targetColumn') }}</span>
             <span>{{ t('targetStatus.currentState') }}</span>
             <span>{{ t('targetStatus.agentImpact') }}</span>
-            <span>{{ t('targetStatus.availability24h') }}</span>
+            <span>{{ availabilityTitle }}</span>
             <span>{{ t('targetStatus.lastObserved') }}</span>
             <span></span>
           </div>
@@ -168,7 +176,10 @@ watch(
               <span class="board-impact">
                 {{ t('targetStatus.affected', { affected: target.affected_agents, total: target.applicable_agents }) }}
               </span>
-              <span class="board-availability">{{ availability(target.availability_24h) }}</span>
+              <span class="board-availability">
+                <strong>{{ availability(target.availability) }}</strong>
+                <small>{{ availabilityRounds(target.availability_ok_rounds, target.availability_rounds) }}</small>
+              </span>
               <time :datetime="target.last_observed_at">{{ fmt(target.last_observed_at) }}</time>
               <span class="board-open" aria-hidden="true">›</span>
             </button>
@@ -224,8 +235,9 @@ watch(
                       <strong>{{ selectedTarget.affected_agents }}/{{ selectedTarget.applicable_agents }}</strong>
                     </div>
                     <div>
-                      <span>{{ t('targetStatus.availability24h') }}</span>
-                      <strong>{{ availability(selectedTarget.availability_24h) }}</strong>
+                      <span>{{ availabilityTitle }}</span>
+                      <strong>{{ availability(selectedTarget.availability) }}</strong>
+                      <small>{{ availabilityRounds(selectedTarget.availability_ok_rounds, selectedTarget.availability_rounds) }}</small>
                     </div>
                     <div>
                       <span>{{ t('targetStatus.incidentsLabel') }}</span>
@@ -293,7 +305,10 @@ watch(
                         <MonitorStateBadge dim="fault" :state="agent.fault_state" />
                       </div>
                       <span class="matrix-reason">{{ t(`targetStatus.reason.${agent.reason_code}`) }}</span>
-                      <span class="matrix-availability">{{ availability(agent.availability_24h) }}</span>
+                      <span class="matrix-availability">
+                        <strong>{{ availability(agent.availability) }}</strong>
+                        <small>{{ availabilityRounds(agent.availability_ok_rounds, agent.availability_rounds) }}</small>
+                      </span>
                       <time :datetime="agent.last_observed_at">{{ fmt(agent.last_observed_at) }}</time>
                       <button type="button" class="history-action" @click="openHistory(agent.agent_id)">
                         {{ t('targetStatus.openHistory') }}
@@ -321,6 +336,7 @@ watch(
                     v-if="selectedAgent"
                     :target="selectedTarget"
                     :agent-id="selectedAgent.agent_id"
+                    :range-sec="rangeSec"
                   />
                 </section>
               </div>
@@ -527,6 +543,27 @@ watch(
 .agent-matrix-row time {
   font-family: var(--font-outlier);
   font-variant-numeric: tabular-nums;
+}
+
+.board-availability,
+.matrix-availability {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  min-width: 0;
+}
+
+.board-availability strong,
+.matrix-availability strong {
+  font-size: var(--text-sm);
+  font-weight: 650;
+}
+
+.board-availability small,
+.matrix-availability small {
+  color: var(--color-muted);
+  font-size: 10px;
+  white-space: nowrap;
 }
 
 .board-open {

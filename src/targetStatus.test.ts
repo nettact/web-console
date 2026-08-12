@@ -6,7 +6,13 @@ const streamMock = vi.hoisted(() => ({ close: vi.fn() }))
 vi.mock('./api', () => ({ api: apiMock }))
 vi.mock('./lib/sse', () => ({ openEventStream: vi.fn(() => streamMock) }))
 
-import { refreshTargetStatus, resetTargetStatus, stopTargetStatus, targetStatus } from './targetStatus'
+import {
+  refreshTargetStatus,
+  resetTargetStatus,
+  setTargetStatusTimeRange,
+  stopTargetStatus,
+  targetStatus,
+} from './targetStatus'
 
 function deferred<T>() {
   let resolve!: (value: T) => void
@@ -21,6 +27,7 @@ function deferred<T>() {
 const response = (name: string) => ({
   generated_at: `2026-07-17T12:00:0${name === 'first' ? 1 : 2}Z`,
   site_id: 'site_default',
+  time_range: '24h' as const,
   targets: [{ target_id: name }],
 })
 
@@ -30,6 +37,23 @@ beforeEach(() => {
 })
 
 describe('authoritative target-status refresh', () => {
+  it('requests a replacement snapshot when the page time range changes', async () => {
+    apiMock.targetStatuses.mockResolvedValueOnce(response('first')).mockResolvedValueOnce({
+      ...response('second'),
+      time_range: '7d',
+    })
+    await refreshTargetStatus()
+
+    setTargetStatusTimeRange('7d')
+    expect(targetStatus.requestedTimeRange).toBe('7d')
+    expect(targetStatus.timeRange).toBe('24h')
+    expect(targetStatus.syncing).toBe(true)
+    await vi.waitFor(() => expect(targetStatus.timeRange).toBe('7d'))
+
+    expect(apiMock.targetStatuses).toHaveBeenLastCalledWith('site_default', '7d')
+    expect(targetStatus.targets[0]?.target_id).toBe('second')
+  })
+
   it('runs one trailing refresh when demand arrives in flight', async () => {
     const first = deferred<ReturnType<typeof response>>()
     const second = deferred<ReturnType<typeof response>>()
