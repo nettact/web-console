@@ -79,6 +79,12 @@ describe('paramsRangeError', () => {
     expect(paramsRangeError('icmp', { packet_count: 5, packet_size: 56, global_timeout_ms: 10000 })).toBeNull()
     expect(paramsRangeError('http', { max_redirects: -1, max_response_bytes: 1024 })).toBeNull()
     expect(paramsRangeError('tcp', { port: 443 })).toBeNull()
+    expect(paramsRangeError('tcp', { flow_fanout: 0 })).toBeNull() // off
+    expect(paramsRangeError('tcp', { port: 443, flow_fanout: 32 })).toBeNull() // max
+    // size_sweep is a boolean; PARAM_RANGES only checks numeric keys it knows, so
+    // the flag must never trip the range check.
+    expect(paramsRangeError('icmp', { size_sweep: true })).toBeNull()
+    expect(paramsRangeError('icmp', { size_sweep: false })).toBeNull()
   })
 
   it('rejects the values the server would reject', () => {
@@ -88,6 +94,8 @@ describe('paramsRangeError', () => {
     expect(paramsRangeError('http', { max_response_bytes: 1 << 30 })?.labelKey).toBe('mform.maxResponseBytes')
     expect(paramsRangeError('dns', { resolver_port: 70000 })?.labelKey).toBe('mform.resolverPort')
     expect(paramsRangeError('tcp', { port: 0 })?.labelKey).toBe('mform.port')
+    expect(paramsRangeError('tcp', { flow_fanout: 33 })?.labelKey).toBe('mform.tcpFlowFanout')
+    expect(paramsRangeError('tcp', { flow_fanout: -1 })?.labelKey).toBe('mform.tcpFlowFanout')
     expect(paramsRangeError('icmp', { interval_seconds: 90000 })?.labelKey).toBe('mform.interval')
   })
 
@@ -104,6 +112,7 @@ describe('paramsRangeError', () => {
   it('ignores params belonging to another kind, matching the server', () => {
     expect(paramsRangeError('http', { packet_count: 100000 })).toBeNull()
     expect(paramsRangeError('dns', { max_redirects: 999 })).toBeNull()
+    expect(paramsRangeError('icmp', { flow_fanout: 999 })).toBeNull() // tcp-only param
   })
 })
 

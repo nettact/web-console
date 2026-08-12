@@ -30,6 +30,9 @@ const CLUE_POLARITY: Record<string, 'ok' | 'fail' | 'info'> = {
   reason: 'fail',
   proxy_fail: 'fail',
   trace_died_in_lan: 'fail',
+  // Info clues carry no mark; they add color to an already-explained attribution.
+  size_correlated: 'info',
+  ecmp_member: 'info',
 }
 
 export function useIncidentLabels() {

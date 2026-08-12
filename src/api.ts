@@ -640,6 +640,8 @@ export interface ProbeParams {
   packet_size?: number
   packet_count?: number
   global_timeout_ms?: number
+  size_sweep?: boolean
+  payload_sizes?: number[]
   // dns
   record_type?: string
   resolver_server?: string
@@ -658,6 +660,7 @@ export interface ProbeParams {
   // tcp
   port?: number
   tls?: boolean
+  flow_fanout?: number
   // nat (STUN behavior discovery)
   nat_transport?: string
   stun_server2?: string

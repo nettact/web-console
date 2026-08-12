@@ -633,6 +633,8 @@ export default {
         trace_reached: 'trace 可达目标',
         trace_proxy_unreachable: '代理地址不可达',
         trace_proxy_reachable: '代理地址可达',
+        size_correlated: '丢包随包长上升（物理层劣化）',
+        ecmp_member: '固定的一组源端口流失败（ECMP/LAG 成员级故障）',
       },
       advisory: {
         no_reference: '添加网关或公网参照目标可获得更准确的故障定位。',
@@ -1351,6 +1353,8 @@ export default {
     packetSize: '数据包大小（字节）',
     perPingTimeout: '单次 ping 超时（毫秒）',
     globalTimeout: '全局超时（毫秒）',
+    sizeSweep: '按包长扫描',
+    sizeSweepHint: '以多个数据包大小探测，识别随包长恶化的物理层劣化（光模块/网线/CRC）',
     // dns
     resolverServer: '域名解析服务器',
     resolverServerHint: '默认使用系统解析器。UDP/TCP/DoT 填 IP 或主机名；DoH 填 https URL 或主机名。',
@@ -1373,6 +1377,8 @@ export default {
     requestBody: '请求体',
     // tcp
     tcpTls: '连接后进行 TLS 握手（SSL/TLS）',
+    tcpFlowFanout: '源端口扇出探测',
+    tcpFlowFanoutHint: '用多个固定源端口分别连接，识别 ECMP/LAG 成员级故障',
     // nat
     secNat: 'NAT 检测选项',
     stunServer: 'STUN 服务器',
@@ -2205,6 +2211,7 @@ export default {
       probe_icmp_jitter_ms: '抖动',
       probe_icmp_samples: '有效采样数',
       probe_icmp_sent: '发包数',
+      probe_icmp_size_sweep: '包长扫描',
       probe_dns_resolve_ms: '解析时延',
       probe_dns_ok: '解析成功',
       probe_http_status: '状态码',
@@ -2215,6 +2222,7 @@ export default {
       probe_tcp_dns_ms: 'DNS 解析',
       probe_tcp_tls_ms: 'TLS 握手',
       probe_tcp_error_class: '连接错误',
+      probe_tcp_flow_fanout: '源端口扇出',
       probe_nat_ok: '绑定测试',
       probe_nat_rtt_ms: '绑定耗时',
       probe_nat_mapping: '映射行为',

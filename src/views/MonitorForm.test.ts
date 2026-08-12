@@ -328,6 +328,31 @@ describe('MonitorForm save navigation', () => {
     expect(labels(page)).not.toContain(en.mform.perPingTimeout)
   })
 
+  // DEGRADE-001/002: the size-sweep checkbox rides with the ping kinds, the
+  // source-port fan-out input with TCP — each only in its own advanced block.
+  it('shows the degradation controls only for the kinds that run them', async () => {
+    const labels = (page: ReturnType<typeof mount>) => page.findAll('label.field span').map((s) => s.text())
+
+    for (const kind of ['icmp', 'gateway']) {
+      const page = await render()
+      await page.get('select').setValue(kind)
+      await flushPromises()
+      expect(labels(page)).toContain(en.mform.sizeSweep)
+      expect(page.find('input[min="0"][max="32"]').exists()).toBe(false)
+      page.unmount()
+    }
+
+    const page = await render()
+    await page.get('select').setValue('tcp')
+    await flushPromises()
+    expect(labels(page)).toContain(en.mform.tcpFlowFanout)
+    // The fan-out input carries the probevalidate.go bounds as min/max + the off
+    // default as its placeholder.
+    const fanout = page.get('input[min="0"][max="32"]')
+    expect((fanout.element as HTMLInputElement).placeholder).toBe('0')
+    expect(labels(page)).not.toContain(en.mform.sizeSweep)
+  })
+
   it('leaves an already-schemed url untouched', async () => {
     apiMock.setTargets.mockResolvedValue({ ok: true, warnings: [] })
     const page = await render()

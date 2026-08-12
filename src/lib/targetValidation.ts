@@ -146,7 +146,10 @@ const PARAM_RANGES: Record<string, ReadonlyArray<{ key: string; labelKey: string
     { key: 'global_timeout_ms', labelKey: 'mform.globalTimeout', min: 0, max: 300000 },
   ],
   dns: [{ key: 'resolver_port', labelKey: 'mform.resolverPort', min: 0, max: 65535 }],
-  tcp: [{ key: 'port', labelKey: 'mform.port', min: 1, max: 65535 }],
+  tcp: [
+    { key: 'port', labelKey: 'mform.port', min: 1, max: 65535 },
+    { key: 'flow_fanout', labelKey: 'mform.tcpFlowFanout', min: 0, max: 32 },
+  ],
   http: [
     { key: 'max_redirects', labelKey: 'mform.maxRedirects', min: -1, max: 20 },
     { key: 'max_response_bytes', labelKey: 'mform.maxResponseBytes', min: 0, max: 10485760 },

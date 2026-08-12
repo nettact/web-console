@@ -821,6 +821,14 @@ onMounted(loadAll)
             <label class="field"><span>{{ tr('mform.packetSize') }}</span><input type="number" min="0" max="65500" v-model.number="form.params!.packet_size" placeholder="13" /></label>
             <label class="field"><span>{{ tr('mform.perPingTimeout') }}</span><input type="number" min="0" max="300000" v-model.number="form.params!.timeout_ms" placeholder="1000" /></label>
             <label class="field"><span>{{ tr('mform.globalTimeout') }}</span><input type="number" min="0" max="300000" v-model.number="form.params!.global_timeout_ms" placeholder="10000" /></label>
+            <!-- Sweep sizes default to protocol/config.DefaultSweepSizes = [64,512,1400]
+                 when payload_sizes is empty; the server caps an explicit list at 2..8
+                 sizes (probevalidate.go), each in 1..65500. -->
+            <label class="field check">
+              <input type="checkbox" v-model="form.params!.size_sweep" />
+              <span>{{ tr('mform.sizeSweep') }}</span>
+            </label>
+            <p class="hint tiny wide">{{ tr('mform.sizeSweepHint') }}</p>
           </template>
           <template v-else-if="form.kind === 'dns'">
             <label class="field">
@@ -847,6 +855,10 @@ onMounted(loadAll)
           <template v-else-if="form.kind === 'tcp'">
             <label class="field check"><input type="checkbox" v-model="form.params!.tls" /><span>{{ tr('mform.tcpTls') }}</span></label>
             <label class="field check" v-if="form.params!.tls"><input type="checkbox" v-model="form.params!.ignore_tls" /><span>{{ tr('mform.ignoreTls') }}</span></label>
+            <!-- flow_fanout bounds mirror the server (server-core/api/probevalidate.go,
+                 maxFlowFanout = 32); 0/1 = off (a single flow), 2..32 = fan-out. -->
+            <label class="field"><span>{{ tr('mform.tcpFlowFanout') }}</span><input type="number" min="0" max="32" v-model.number="form.params!.flow_fanout" placeholder="0" /></label>
+            <p class="hint tiny wide">{{ tr('mform.tcpFlowFanoutHint') }}</p>
           </template>
         </div>
       </section>
