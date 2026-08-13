@@ -6,6 +6,7 @@ const apiMock = vi.hoisted(() => ({
   metrics: vi.fn(),
   metricsSummary: vi.fn(),
   faultSignals: vi.fn(),
+  incidents: vi.fn(),
   fluctuations: vi.fn(),
 }))
 vi.mock('../../api', () => ({ api: apiMock }))
@@ -90,6 +91,14 @@ beforeEach(() => {
   })
   apiMock.metricsSummary.mockReset().mockResolvedValue({ window_seconds: 21_600, kinds: {} })
   apiMock.faultSignals.mockReset().mockResolvedValue([])
+  apiMock.incidents.mockReset().mockResolvedValue({
+    items: [],
+    total: 0,
+    page: 1,
+    page_size: 1,
+    summary: { open: 0, opened_24h: 0, resolved_24h: 0, top_layer: '' },
+    storms: [],
+  })
   apiMock.fluctuations.mockReset().mockResolvedValue({ items: [], total: 0 })
 })
 
@@ -221,6 +230,15 @@ describe('target history availability evidence', () => {
       `${Date.now() - 604_800_000}:${Date.now()}`,
     )
     expect(wrapper.get('.coverage-cell').text()).toContain('2 min')
+    // The sample series contains one failed run, but fault count follows the
+    // fault centre's incident total instead of inferring an outage from it.
+    expect(wrapper.get('.event-counts span').text()).toContain('0')
+    expect(apiMock.incidents).toHaveBeenCalledWith(1, 1, expect.objectContaining({
+      target: 'target-1',
+      agent: 'agent-1',
+      since: expect.any(String),
+      until: expect.any(String),
+    }))
     expect(apiMock.faultSignals).toHaveBeenCalledWith(expect.objectContaining({
       target: 'target-1',
       agent: 'agent-1',

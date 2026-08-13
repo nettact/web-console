@@ -3039,7 +3039,7 @@ export default {
     thAvailability: 'Availability',
     thCoverage: 'Data coverage',
     thEvents: 'Events',
-    thOutages: 'Outages',
+    thFaults: 'Faults',
     thFluctuations: 'Fluctuations',
     thLatest: 'Latest value',
     coverageNone: 'No observations in this window',

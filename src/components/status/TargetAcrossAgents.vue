@@ -1,7 +1,7 @@
 <script setup lang="ts">
 // By-target comparison: the same monitoring target as seen from several agents.
 // The summary table's current state comes from the authoritative target-status
-// batch (per-agent execution/probe/fault). Availability, outages, latest values,
+// batch (per-agent execution/probe/fault). Availability, fault counts, latest values,
 // trend charts, per-agent status bands and NAT/TCP cards all use the page range,
 // overlaying one line/row per agent.
 import { ref, computed, watch, onMounted } from 'vue'
@@ -35,7 +35,7 @@ import {
   primaryNumericKind,
 } from '../../lib/metricMeta'
 import { bandSeriesFor, type Prober } from '../../lib/targetGroups'
-import { availability, availabilityOutages, toPoints, type Pt } from '../../lib/timeline'
+import { availability, toPoints, type Pt } from '../../lib/timeline'
 import { formatAvailability, formatAvailabilityRounds } from '../../lib/targetStatus'
 import { targetIndex } from '../../targetStatus'
 import { fmtByUnit, isByteUnit } from '../../lib/format'
@@ -63,6 +63,9 @@ const samples = ref<Record<string, Sample[]>>({}) // key: `${agentId}::${kind}`
 // NAT and classifiers). key: `${agentId}::${kind}`.
 const summaries = ref<Record<string, KindSummary>>({})
 const faults = ref<FaultSignal[]>([])
+// Filtered incident totals from the same endpoint used by the fault centre.
+// null means the count could not be loaded; absence means it does not apply.
+const incidentCounts = ref<Record<string, number | null>>({})
 const fluctuations = ref<Fluctuation[]>([])
 const fluxTotal = ref(0)
 const fluxLoaded = ref(false)
@@ -80,6 +83,7 @@ interface AvailabilitySnapshotRow {
 const availabilitySnapshot = ref<Record<string, AvailabilitySnapshotRow>>({})
 let dataSeq = 0
 let faultSeq = 0
+let incidentCountSeq = 0
 let fluxSeq = 0
 let baselineSeq = 0
 let evidenceSeq = 0
@@ -120,7 +124,7 @@ const cardKinds = computed(() => allKinds.value.filter((k) => INFO_KINDS.has(k))
 
 const selectedNumeric = ref<string[]>([])
 
-// The historical band series used for the summary's availability/outages.
+// The historical band series used for availability and its evidence coverage.
 const band = computed(() => bandSeriesFor(props.family))
 // User-created probes have a server-derived verdict for every completed round.
 // Unlike family metrics (for example HTTP status or averaged ICMP loss), this
@@ -255,7 +259,7 @@ interface SummaryRow {
   avail: string | null
   rounds: string | null
   coverage: ChartCoverage
-  outages: number
+  faultCount: string
   latest: string
 }
 // The agent set is the batch's applicable agents (so blocked/pending/offline
@@ -278,7 +282,6 @@ const summary = computed<SummaryRow[]>(() => {
     let rounds = historical
       ? formatAvailabilityRounds(historical.availabilityOkRounds, historical.availabilityRounds)
       : null
-    let outages = 0
     if (b) {
       const pts = bandPoints(base.id)
       if (pts.length) {
@@ -289,7 +292,6 @@ const summary = computed<SummaryRow[]>(() => {
           avail = availability(pts, now) * 100
           rounds = null
         }
-        outages = availabilityOutages(pts)
       }
     }
     const coverage = chartCoverage([samplesFor(base.id, bandSampleKind.value)], timeWindow.value)
@@ -310,7 +312,9 @@ const summary = computed<SummaryRow[]>(() => {
       avail: avail === null ? null : formatAvailability(avail / 100),
       rounds,
       coverage,
-      outages,
+      faultCount: props.monitorId && Object.prototype.hasOwnProperty.call(incidentCounts.value, base.id)
+        ? String(incidentCounts.value[base.id] ?? '—')
+        : '—',
       latest,
     }
   })
@@ -435,6 +439,39 @@ async function loadFaults() {
   }
 }
 
+// Count incidents, not failed sample runs or member signals. This is deliberately
+// the fault centre's filtered total: one merged incident remains one fault even
+// when it contains several signals. Each summary row is scoped to its Agent.
+async function loadIncidentCounts() {
+  const seq = ++incidentCountSeq
+  if (!props.monitorId) {
+    incidentCounts.value = {}
+    return
+  }
+  const allowedAgents = new Set(props.probers.map((p) => p.agent.id))
+  const currentAgents = props.restrictToProbers
+    ? storeRow.value?.agents.filter((agent) => allowedAgents.has(agent.agent_id))
+    : storeRow.value?.agents
+  const agentIDs = currentAgents?.map((agent) => agent.agent_id) ?? [...allowedAgents]
+  const window = makeChartWindow(props.rangeSec)
+  const pending = Object.fromEntries(agentIDs.map((agentID) => [agentID, null]))
+  incidentCounts.value = pending
+  const entries = await Promise.all(agentIDs.map(async (agentID): Promise<[string, number | null]> => {
+    try {
+      const page = await api.incidents(1, 1, {
+        target: props.monitorId,
+        agent: agentID,
+        since: new Date(window.startMs).toISOString(),
+        until: new Date(window.endMs).toISOString(),
+      })
+      return [agentID, page.total]
+    } catch {
+      return [agentID, null]
+    }
+  }))
+  if (seq === incidentCountSeq) incidentCounts.value = Object.fromEntries(entries)
+}
+
 // Fluctuations over the selected range: the sub-threshold streaks that explain an
 // availability figure below 100% with no fault behind it. Scoped to the range
 // picker (unlike the fault list, which is a fixed recent history) because that is
@@ -500,7 +537,7 @@ const fluxCell = (agentId: string): string =>
 async function refreshEvidence(includeBaselines: boolean) {
   const seq = ++evidenceSeq
   refreshingEvidence.value = true
-  const jobs: Promise<unknown>[] = [loadData(), loadFaults(), loadFluctuations()]
+  const jobs: Promise<unknown>[] = [loadData(), loadFaults(), loadIncidentCounts(), loadFluctuations()]
   if (includeBaselines) jobs.push(loadBaselines())
   await Promise.all(jobs)
   if (seq === evidenceSeq) refreshingEvidence.value = false
@@ -588,7 +625,7 @@ onMounted(reload)
             <td>
               <span class="mobile-label">{{ t('targetStatus.thEvents') }}</span>
               <div class="event-counts">
-                <span><strong class="mono">{{ r.avail === null ? '—' : r.outages }}</strong>{{ t('targetStatus.thOutages') }}</span>
+                <span><strong class="mono">{{ r.faultCount }}</strong>{{ t('targetStatus.thFaults') }}</span>
                 <span :title="t('targetStatus.fluctuationsHint')"><strong class="mono">{{ fluxCell(r.id) }}</strong>{{ t('targetStatus.thFluctuations') }}</span>
               </div>
             </td>
