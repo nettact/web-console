@@ -111,6 +111,17 @@ export function useMetricCards() {
       }
     }
 
+    if (m.kind === 'probe.http.connection_reused') {
+      const last = pts[pts.length - 1]
+      return {
+        label: m.label,
+        color: m.color,
+        value: last.v >= 0.5 ? t('metrics.httpConnectionReused') : t('metrics.httpConnectionNew'),
+        small: true,
+        foot: t('metrics.httpConnectionFoot', { time: fmtTime(new Date(last.t).toISOString()) }),
+      }
+    }
+
     if (m.unit === 'bool') {
       // Current health is server-authoritative (the target-status batch), never
       // inferred from these samples. This card is purely historical: the
@@ -157,15 +168,34 @@ export function useMetricCards() {
 
   const buildCards = (list: CardInput[]): Card[] => list.map(buildCard)
 
-  // buildCodeCard renders a categorical code card (NAT / probe error class) from
-  // a server-side KindSummary instead of a raw sample window: these cards only
-  // need the newest value (plus, for NAT, the newest determinate value as the
-  // stale fallback), so fetching thousands of samples per agent just to read the
-  // last one was pure waste (PERF-001 follow-up). Mirrors buildCard's NAT/error
-  // branches exactly.
-  function buildCodeCard(m: { label: string; color: string; kind: string }, summary: KindSummary | undefined): Card {
+  // buildSummaryCard renders latest-only diagnostics from raw-summary data.
+  // Categorical codes and booleans cannot use /metrics rollup averages: an HTTP
+  // 200 followed by 500 is not status 350, and reuse=0.6 is not a connection
+  // state. NAT retains its newest-determinate fallback; every other kind uses
+  // the exact newest raw observation.
+  function buildSummaryCard(m: { label: string; color: string; kind: string }, summary: KindSummary | undefined): Card {
     const latest = summary?.latest
     if (!latest) return { label: m.label, color: m.color, value: '—', foot: t('metrics.noDataRange') }
+
+    if (m.kind === 'probe.http.status') {
+      return {
+        label: m.label,
+        color: m.color,
+        value: `HTTP ${Math.round(latest.value)}`,
+        small: true,
+        foot: t('metrics.latestObservedFoot', { time: fmtTime(latest.ts) }),
+      }
+    }
+
+    if (m.kind === 'probe.http.connection_reused') {
+      return {
+        label: m.label,
+        color: m.color,
+        value: latest.value >= 0.5 ? t('metrics.httpConnectionReused') : t('metrics.httpConnectionNew'),
+        small: true,
+        foot: t('metrics.latestObservedFoot', { time: fmtTime(latest.ts) }),
+      }
+    }
 
     if (NAT_CODE_KINDS.has(m.kind)) {
       // Same transient-"unknown" fallback as buildCard: a lost/rate-limited STUN
@@ -211,5 +241,5 @@ export function useMetricCards() {
     }
   }
 
-  return { buildCard, buildCards, buildCodeCard }
+  return { buildCard, buildCards, buildSummaryCard }
 }

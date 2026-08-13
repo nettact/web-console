@@ -20,7 +20,7 @@ const pageRangeSec = computed(() => props.rangeSec || ({
   '7d': 7 * 86400,
   '30d': 30 * 86400,
   '90d': 90 * 86400,
-})[targetStatus.requestedTimeRange])
+})[targetStatus.timeRange])
 
 const latencyKinds: Record<string, string> = {
   icmp: 'probe.icmp.rtt_ms',

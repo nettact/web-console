@@ -1328,11 +1328,6 @@ onBeforeUnmount(() => tabsResizeObserver?.disconnect())
     box-shadow: inset var(--rule-fine) 0 var(--color-accent);
   }
 
-  .agent-list {
-    max-height: 720px;
-    overflow-y: auto;
-  }
-
   .mobile-back {
     display: none;
   }

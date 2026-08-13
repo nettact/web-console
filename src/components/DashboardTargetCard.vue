@@ -3,7 +3,8 @@ import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 
 import type { Sample, TargetStatusRow } from '../api'
-import { natCodeLabel } from '../lib/metricMeta'
+import { useMetricMeta } from '../composables/useMetricMeta'
+import { HTTP_TIMING_KINDS, natCodeLabel } from '../lib/metricMeta'
 import { formatAvailability } from '../lib/targetStatus'
 import { targetStatus } from '../targetStatus'
 
@@ -14,6 +15,7 @@ const props = defineProps<{
 }>()
 
 const { t, te } = useI18n()
+const { metricLabel } = useMetricMeta()
 const agent = computed(() => props.target.agents.find((row) => row.agent_id === props.agentId) ?? null)
 const sampleMap = computed(() => new Map(props.samples.map((sample) => [sample.kind, sample])))
 const sample = (kind: string) => sampleMap.value.get(kind)
@@ -79,7 +81,17 @@ const details = computed(() => {
       items.push({ label: t('dashboard.targetResult'), value: statusLabel.value })
       break
     case 'http':
-      add(t('dashboard.targetLatency'), 'probe.http.latency_ms', 'ms')
+      // New agents report request phases separately. Show the three broadest
+      // available timings without expanding the compact card; older agents keep
+      // the established latency detail rather than losing their only timing.
+      {
+        const hasTimingPhases = HTTP_TIMING_KINDS.some((kind) => sample(kind)?.value != null)
+        if (hasTimingPhases) {
+          for (const kind of HTTP_TIMING_KINDS) add(metricLabel(kind), kind, 'ms')
+        } else {
+          add(t('dashboard.targetLatency'), 'probe.http.latency_ms', 'ms')
+        }
+      }
       break
     case 'tcp':
       add(t('dashboard.targetDnsPhase'), 'probe.tcp.dns_ms', 'ms')

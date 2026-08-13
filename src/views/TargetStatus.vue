@@ -73,7 +73,10 @@ let applyingRoute = false
 
 const queryText = (value: unknown): string => typeof value === 'string' ? value : ''
 const isTimeRange = (value: string): value is TimeRange => timeRanges.includes(value as TimeRange)
-const rangeSec = computed(() => timeRangeSeconds[targetStatus.requestedTimeRange])
+// History evidence switches ranges only when the authoritative status snapshot
+// for that range has landed. During a picker refresh, keep the previous window
+// and its availability together instead of relabelling old verdicts as new.
+const rangeSec = computed(() => timeRangeSeconds[targetStatus.timeRange])
 
 function applyRouteQuery(): void {
   applyingRoute = true

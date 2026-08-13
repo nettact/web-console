@@ -21,8 +21,13 @@ function fmt(value: string): string {
 }
 
 async function load(): Promise<void> {
-  if (!props.active || !props.agentId) return
   const sequence = ++loadSequence
+  if (!props.active || !props.agentId) {
+    events.value = []
+    loading.value = false
+    error.value = ''
+    return
+  }
   loading.value = true
   error.value = ''
   try {
@@ -155,6 +160,10 @@ watch([() => props.agentId, () => props.active, () => props.rangeSec], load, { i
 
   .event-reason {
     grid-column: 2 / -1;
+    overflow: visible;
+    line-height: 1.5;
+    text-overflow: clip;
+    white-space: normal;
   }
 }
 </style>

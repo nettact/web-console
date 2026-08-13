@@ -6,6 +6,7 @@ vi.mock('../../api', () => ({ api: apiMock }))
 
 import TargetStatusPerformance from './TargetStatusPerformance.vue'
 import { i18n } from '../../i18n'
+import { targetStatus } from '../../targetStatus'
 
 const kindSummary = (latest: number | null, p95: number | null, count: number) => ({
   latest: latest == null ? null : { ts: '2026-07-19T00:00:03Z', value: latest },
@@ -19,6 +20,8 @@ const summaryOf = (kinds: Record<string, ReturnType<typeof kindSummary>>) => ({
 })
 
 beforeEach(() => {
+  targetStatus.timeRange = '24h'
+  targetStatus.requestedTimeRange = '24h'
   apiMock.metricsSummary.mockReset().mockResolvedValue(summaryOf({
     'probe.icmp.rtt_ms': kindSummary(35, 35, 3),
     'probe.icmp.loss_pct': kindSummary(2.5, 2.5, 1),
@@ -26,6 +29,23 @@ beforeEach(() => {
 })
 
 describe('target-status Agent performance facts', () => {
+  it('keeps the committed range while a wider status request is pending', async () => {
+    targetStatus.timeRange = '3h'
+    targetStatus.requestedTimeRange = '90d'
+    const wrapper = mount(TargetStatusPerformance, {
+      props: { targetId: 'target-1', targetKind: 'http', agentId: 'agent-1' },
+      global: { plugins: [i18n] },
+    })
+    await flushPromises()
+
+    expect(apiMock.metricsSummary).toHaveBeenCalledWith(
+      'agent-1',
+      ['probe.http.latency_ms'],
+      { monitor: 'target-1', sinceSeconds: 3 * 3600 },
+    )
+    wrapper.unmount()
+  })
+
   it('shows latest latency, packet loss, and selected-range raw latency P95 for ICMP', async () => {
     const wrapper = mount(TargetStatusPerformance, {
       props: { targetId: 'target-1', targetKind: 'icmp', agentId: 'agent-1', rangeSec: 24 * 3600 },

@@ -16,6 +16,7 @@ import { useMetricCards } from '../composables/useMetricCards'
 import { FALLBACK, HIDDEN_KINDS, INFO_KINDS, familyOf, isStatusKind, kindColor, orderOf } from '../lib/metricMeta'
 import { fmtBytes } from '../lib/format'
 import { agentLabel } from '../lib/agentLabel'
+import { makeChartWindow, type ChartWindow } from '../lib/chartWindow'
 
 const { t } = useI18n()
 const route = useRoute()
@@ -42,6 +43,10 @@ const rangeSec = computed(() => props.fixedRangeSec || localRangeSec.value)
 const samplesByKind = ref<Record<string, Sample[]>>({})
 const error = ref('')
 const loading = ref(false)
+// Freeze one display window per completed load. Every chart in the selected
+// host section receives the same bounds, so sparse history remains positioned
+// inside the requested range instead of each chart auto-fitting its samples.
+const timeWindow = ref<ChartWindow>(makeChartWindow(rangeSec.value))
 let dataSeq = 0
 let seriesSeq = 0
 
@@ -271,7 +276,6 @@ const trendMetrics = computed(() =>
   activeMetrics.value.filter((m) => !isStatusKind(m.kind, m.unit) && !INFO_KINDS.has(m.kind)),
 )
 const statusMetrics = computed(() => activeMetrics.value.filter((m) => isStatusKind(m.kind, m.unit)))
-const someData = (list: { samples: Sample[] }[]) => list.some((m) => m.samples.length)
 const isUptimeMetric = (kind: string) => kind === 'agent.uptime_s'
 
 const metricCards = computed(() => buildCards(activeMetrics.value))
@@ -344,13 +348,15 @@ async function loadSeries() {
 
 async function loadData() {
   const seq = ++dataSeq
+  const nextWindow = makeChartWindow(rangeSec.value)
   const g = selectedGroup.value
   if (!agentId.value || !g) {
     samplesByKind.value = {}
     collSamples.value = {}
+    timeWindow.value = nextWindow
     return
   }
-  if (g.collection) return loadCollection(seq)
+  if (g.collection) return loadCollection(seq, nextWindow)
   const kinds = selectedKinds.value.slice()
   if (!kinds.length) {
     samplesByKind.value = {}
@@ -365,6 +371,7 @@ async function loadData() {
     const map: Record<string, Sample[]> = {}
     kinds.forEach((k, i) => (map[k] = results[i]))
     samplesByKind.value = map
+    timeWindow.value = nextWindow
     error.value = ''
   } catch (e) {
     if (seq === dataSeq) error.value = String((e as Error).message || e)
@@ -373,7 +380,7 @@ async function loadData() {
   }
 }
 
-async function loadCollection(seq: number) {
+async function loadCollection(seq: number, nextWindow: ChartWindow) {
   const pairs = collectionCharts.value.flatMap((c) => [...c.series, ...(c.hidden ?? [])])
   if (!pairs.length) {
     collSamples.value = {}
@@ -388,6 +395,7 @@ async function loadCollection(seq: number) {
     const map: Record<string, Sample[]> = {}
     pairs.forEach((p, i) => (map[p.key] = results[i]))
     collSamples.value = map
+    timeWindow.value = nextWindow
     error.value = ''
   } catch (e) {
     if (seq === dataSeq) error.value = String((e as Error).message || e)
@@ -471,12 +479,17 @@ watch(() => props.fixedRangeSec, (next, previous) => {
         <template v-if="selectedGroup && selectedGroup.collection">
           <div class="card chart-card" v-for="c in collectionChartsData" :key="c.id">
             <p v-if="c.caption" class="chart-caption">{{ c.caption }}</p>
-            <MetricChart :title="c.title" :metrics="c.metrics" :range-sec="rangeSec" />
+            <MetricChart
+              :title="c.title"
+              :metrics="c.metrics"
+              :range-sec="rangeSec"
+              :time-window="timeWindow"
+              :loading="loading"
+            />
             <div v-if="c.status" class="legend">
               <span><i class="dot on"></i>{{ t('chart.normalEnabled') }}</span>
               <span><i class="dot off"></i>{{ t('chart.interruptedDisabled') }}</span>
             </div>
-            <p v-if="!loading && !someData(c.metrics)" class="empty-line hint">{{ t('metrics.noDataRange') }}</p>
           </div>
         </template>
 
@@ -500,18 +513,28 @@ watch(() => props.fixedRangeSec, (next, previous) => {
           <MetricStatCards :cards="metricCards" />
 
           <div class="card chart-card" v-if="trendMetrics.length">
-            <MetricChart :title="chartTitle" :metrics="trendMetrics" :range-sec="rangeSec" />
-            <p v-if="!loading && !someData(trendMetrics)" class="empty-line hint">{{ t('metrics.noDataRange') }}</p>
+            <MetricChart
+              :title="chartTitle"
+              :metrics="trendMetrics"
+              :range-sec="rangeSec"
+              :time-window="timeWindow"
+              :loading="loading"
+            />
           </div>
 
           <div class="card chart-card" v-for="m in statusMetrics" :key="m.key">
-            <MetricChart :title="`${chartTitle} · ${m.label}`" :metrics="[m]" :range-sec="rangeSec" />
+            <MetricChart
+              :title="`${chartTitle} · ${m.label}`"
+              :metrics="[m]"
+              :range-sec="rangeSec"
+              :time-window="timeWindow"
+              :loading="loading"
+            />
             <div class="legend">
               <span><i class="dot on"></i>{{ isUptimeMetric(m.kind) ? t('chart.online') : t('chart.normalEnabled') }}</span>
               <span><i class="dot off"></i>{{ isUptimeMetric(m.kind) ? t('chart.offlineFault') : t('chart.interruptedDisabled') }}</span>
               <span v-if="isUptimeMetric(m.kind)"><i class="dot mark"></i>{{ t('chart.restart') }}</span>
             </div>
-            <p v-if="!loading && !m.samples.length" class="empty-line hint">{{ t('metrics.noDataRange') }}</p>
           </div>
         </template>
 
@@ -736,14 +759,6 @@ watch(() => props.fixedRangeSec, (next, previous) => {
 
 .legend .dot.mark {
   background: var(--color-warning);
-}
-
-.empty-line {
-  position: absolute;
-  inset: 0;
-  display: grid;
-  place-items: center;
-  pointer-events: none;
 }
 
 .empty {

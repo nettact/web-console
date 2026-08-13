@@ -55,6 +55,15 @@ export const PROBE_ERROR_KINDS = new Set([
 // classification (flat/correlated/…), never a trend to average.
 export const CLASSIFIER_KINDS = new Set(['probe.icmp.size_sweep', 'probe.tcp.flow_fanout', 'probe.http.flow_fanout'])
 export const CODE_KINDS = new Set([...NAT_CODE_KINDS, ...PROBE_ERROR_KINDS, ...CLASSIFIER_KINDS])
+// These card-only diagnostics describe the newest observation, not a magnitude
+// that can be averaged across a rollup bucket. HTTP status 200 followed by 500
+// must never become 350, and a connection-reuse flag of 0.6 is a rate rather
+// than the final request's state. Fetch them from /metrics/summary.latest.
+export const LATEST_ONLY_KINDS = new Set([
+  'probe.http.status',
+  'probe.http.connection_reused',
+  ...CODE_KINDS,
+])
 // host.uptime_s is a monotonic counter: plotting it as a trend line is
 // meaningless, but the latest value ("up for N days") is useful — so it's an info
 // kind too, shown as a card only, never on the chart and never a picker chip.
@@ -69,8 +78,49 @@ export const INFO_KINDS = new Set([
   'host.uptime_s',
   'probe.icmp.samples',
   'probe.icmp.sent',
-  ...CODE_KINDS,
+  ...LATEST_ONLY_KINDS,
 ])
+
+export const HTTP_PRIMARY_NUMERIC_KIND = 'probe.http.latency_ms'
+export const HTTP_TIMING_KINDS = [
+  'probe.http.total_ms',
+  'probe.http.ttfb_ms',
+  'probe.http.connect_ms',
+  'probe.http.dns_ms',
+  'probe.http.tls_ms',
+] as const
+export const HTTP_DIAGNOSTIC_KINDS = [
+  ...HTTP_TIMING_KINDS,
+  'probe.http.connection_reused',
+] as const
+export const HTTP_DEFAULT_NUMERIC_KINDS = [
+  HTTP_PRIMARY_NUMERIC_KIND,
+  HTTP_TIMING_KINDS[0],
+  HTTP_TIMING_KINDS[1],
+]
+
+// HTTP has several timing phases whose lexical order begins with connect/dns.
+// The established latency series remains the headline so adding diagnostics
+// cannot silently change the number shown in the summary table.
+export function primaryNumericKind(family: string, kinds: string[]): string {
+  if (family === 'probe.http') {
+    return kinds.find((kind) => kind === HTTP_PRIMARY_NUMERIC_KIND)
+      ?? kinds.find((kind) => kind === 'probe.http.total_ms')
+      ?? kinds.find((kind) => kind === 'probe.http.ttfb_ms')
+      ?? kinds[0]
+      ?? ''
+  }
+  return kinds[0] ?? ''
+}
+
+// Start HTTP history with the three broad request timings. Connection, DNS and
+// TLS remain one-click diagnostics in the picker without opening six charts at
+// once. The fallback preserves a useful chart for partial/experimental agents.
+export function defaultNumericKinds(family: string, kinds: string[]): string[] {
+  if (family !== 'probe.http') return kinds.slice()
+  const defaults = HTTP_DEFAULT_NUMERIC_KINDS.filter((kind) => kinds.includes(kind))
+  return defaults.length ? defaults : kinds.slice(0, 1)
+}
 
 // natCodeLabel maps a NAT result code to its category label. These are the RFC
 // 4787 / RFC 3489 terms, shown verbatim in English (they are standardized terms;
@@ -111,6 +161,17 @@ const METRIC_ORDER = [
   'probe.icmp.samples',
   'probe.icmp.sent',
   'probe.icmp.error_class',
+  'probe.http.ok',
+  'probe.http.latency_ms',
+  'probe.http.total_ms',
+  'probe.http.ttfb_ms',
+  'probe.http.connect_ms',
+  'probe.http.dns_ms',
+  'probe.http.tls_ms',
+  'probe.http.status',
+  'probe.http.connection_reused',
+  'probe.http.error_class',
+  'probe.http.flow_fanout',
   'probe.tcp.ok',
   'probe.tcp.connect_ms',
   'probe.tcp.dns_ms',
@@ -158,6 +219,12 @@ const KIND_COLORS: Record<string, string> = {
   'probe.dns.error_class': '#f87171',
   'probe.http.status': '#5eead4',
   'probe.http.latency_ms': '#f472b6',
+  'probe.http.total_ms': '#38bdf8',
+  'probe.http.ttfb_ms': '#fbbf24',
+  'probe.http.connect_ms': '#34d399',
+  'probe.http.dns_ms': '#818cf8',
+  'probe.http.tls_ms': '#fb923c',
+  'probe.http.connection_reused': '#94a3b8',
   'probe.http.ok': '#34d399',
   'probe.http.error_class': '#f87171',
   'probe.http.flow_fanout': '#fb923c',

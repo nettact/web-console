@@ -19,7 +19,7 @@ const rangeSec = computed(() => ({
   '7d': 7 * 86400,
   '30d': 30 * 86400,
   '90d': 90 * 86400,
-})[targetStatus.requestedTimeRange])
+})[targetStatus.timeRange])
 const backLocation = computed(() => ({
   path: '/target-status',
   query: { target: targetID.value, agent: agentID.value },
