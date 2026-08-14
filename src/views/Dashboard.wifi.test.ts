@@ -112,6 +112,14 @@ afterEach(() => {
 })
 
 describe('Dashboard network adapter list', () => {
+  it('renders the reported agent version without adding another v prefix', async () => {
+    await render(connected, { ...baseAgent, agent_version: 'v0.4.5' })
+
+    const identity = wrapper!.get('.agent-identity')
+    expect(identity.text()).toContain('v0.4.5')
+    expect(identity.text()).not.toContain('vv0.4.5')
+  })
+
   it('merges readable Wi-Fi values into the matching adapter row', async () => {
     const card = (await render(connected)).get('.interface-surface')
     expect(card.text()).toContain('Network adapter list')

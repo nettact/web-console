@@ -1072,7 +1072,7 @@ onBeforeUnmount(() => {
                 <i></i>{{ currentAgent?.status === 'online' ? t('dashboard.statusOnline') : t('dashboard.statusOffline') }}
               </span>
             </div>
-            <p>{{ currentAgent?.hostname }} · {{ currentAgent?.platform }}<template v-if="currentAgent?.agent_version"> · v{{ currentAgent.agent_version }}</template></p>
+            <p>{{ currentAgent?.hostname }} · {{ currentAgent?.platform }}<template v-if="currentAgent?.agent_version"> · {{ currentAgent.agent_version }}</template></p>
           </div>
         </div>
         <div class="health-summary">
