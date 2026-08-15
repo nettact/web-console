@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" role="img" aria-labelledby="title desc">
+  <title id="title">NetTact application icon</title>
+  <desc id="desc">The Orbit NT mark on a dark rounded application tile.</desc>
+  <rect x="32" y="32" width="960" height="960" rx="224" fill="#10192A"/>
+  <g transform="translate(86 78) scale(4.4)" fill="none" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M22 126C37 87 86 56 158 49" stroke="#38BDF8" stroke-width="7"/>
+    <path d="M158 49C171.3 55.3 175.29 67.48 172.028 81.767" stroke="#38BDF8" stroke-width="7"/>
+    <path d="M48 140V52M48 52L132 140M132 140V52M105 52H159" stroke="#10192A" stroke-width="26"/>
+    <path d="M48 140V52" stroke="#F8FAFC" stroke-width="22"/>
+    <path d="M48 52L132 140" stroke="#38BDF8" stroke-width="22"/>
+    <path d="M132 140V52M105 52H159" stroke="#F8FAFC" stroke-width="22"/>
+    <path d="M172.028 81.767C170.63 87.89 167.9 94.4 164 101C140 141 82 160 39 153C24 151 17 141 22 126" stroke="#38BDF8" stroke-width="7"/>
+    <circle cx="22" cy="126" r="11" fill="#10192A" stroke="#F8FAFC" stroke-width="5"/>
+    <circle cx="172.028" cy="81.767" r="11" fill="#38BDF8" stroke="#F8FAFC" stroke-width="5"/>
+  </g>
+</svg>

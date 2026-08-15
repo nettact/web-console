@@ -23,8 +23,15 @@ import ProbeRoundsDetail from './ProbeRoundsDetail.vue'
 // the worst possible answer from a table whose entire job is explaining a dip.
 // Defaults true so callers that always have data need not pass it.
 const props = withDefaults(
-  defineProps<{ items: Fluctuation[]; showAgent?: boolean; total?: number; loaded?: boolean }>(),
-  { loaded: true },
+  defineProps<{
+    items: Fluctuation[]
+    showAgent?: boolean
+    showTarget?: boolean
+    showCount?: boolean
+    total?: number
+    loaded?: boolean
+  }>(),
+  { loaded: true, showCount: true },
 )
 const { t, locale } = useI18n()
 const { fmtTime, fmtDur, probeReasonLabel } = useMetricMeta()
@@ -50,6 +57,7 @@ const outageSec = (f: Fluctuation) =>
 const concurrent = (f: Fluctuation) => f.concurrent_targets
 
 const hasRounds = (f: Fluctuation) => (f.rounds?.length ?? 0) > 0
+const detailColspan = () => 5 + Number(props.showAgent) + Number(props.showTarget)
 </script>
 
 <template>
@@ -59,7 +67,7 @@ const hasRounds = (f: Fluctuation) => (f.rounds?.length ?? 0) > 0
         <h3>{{ t('targetStatus.fluctuations') }}</h3>
         <p class="hint">{{ t('targetStatus.fluctuationsHint') }}</p>
       </div>
-      <span class="count" v-if="props.items.length">
+      <span v-if="showCount && props.items.length" class="count">
         {{
           props.total
             ? t('targetStatus.fluctuationsPartial', { n: props.items.length, total: props.total })
@@ -75,6 +83,7 @@ const hasRounds = (f: Fluctuation) => (f.rounds?.length ?? 0) > 0
           <th class="expander"></th>
           <th>{{ t('metrics.thTime') }}</th>
           <th v-if="showAgent">{{ t('metrics.thAgent') }}</th>
+          <th v-if="showTarget">{{ t('targetStatus.targetColumn') }}</th>
           <th>{{ t('metrics.thFault') }}</th>
           <th>{{ t('targetStatus.thFailRounds') }}</th>
           <th>{{ t('targetStatus.thScope') }}</th>
@@ -99,6 +108,10 @@ const hasRounds = (f: Fluctuation) => (f.rounds?.length ?? 0) > 0
               <span class="sub">{{ t('targetStatus.fluctuationLasted', { d: fmtDur(outageSec(f)) }) }}</span>
             </td>
             <td v-if="showAgent" class="mono">{{ f.agent_name || f.agent_id }}</td>
+            <td v-if="showTarget" class="target-cell">
+              <strong>{{ f.target_name || f.target_addr || f.target_id }}</strong>
+              <span v-if="f.target_addr && f.target_addr !== f.target_name" class="sub mono">{{ f.target_addr }}</span>
+            </td>
             <td>{{ description(f) }}</td>
             <td>
               <span class="rounds-chip">
@@ -135,7 +148,7 @@ const hasRounds = (f: Fluctuation) => (f.rounds?.length ?? 0) > 0
           </tr>
           <tr v-if="expanded.has(f.id) && f.rounds" class="detail-row">
             <td></td>
-            <td :colspan="showAgent ? 6 : 5">
+            <td :colspan="detailColspan()">
               <ProbeRoundsDetail :rounds="f.rounds" />
             </td>
           </tr>
@@ -209,6 +222,12 @@ const hasRounds = (f: Fluctuation) => (f.rounds?.length ?? 0) > 0
   display: block;
   font-size: 11px;
   color: var(--text-muted);
+}
+.target-cell strong {
+  display: block;
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 600;
 }
 .expander {
   width: 28px;

@@ -274,10 +274,11 @@ export interface MemSample {
   stale: boolean
 }
 export interface DiskSample {
-  pct: number
+  pct: number // highest-percentage mount; kept for compatibility with older clients
+  aggregate_pct?: number // sum(used) / sum(total) across reported mounts
   used: number // bytes
   total: number // bytes
-  mount: string // worst mount (highest pct)
+  mount: string // mount represented by pct
   mounts: number
   ts: string
   stale: boolean
@@ -711,7 +712,7 @@ export interface StatusPage {
   // Opt-in recent incident history for the selected resources. Off by default.
   show_incidents: boolean
   // How much a published node discloses: 'off' is up/down only, 'basic' adds
-  // percentages and rates, 'full' adds byte totals and the busiest mount's name.
+  // percentages and rates, 'full' adds byte totals.
   agent_metrics: StatusPageAgentMetrics
   // The server's front door: an anonymous GET / redirects here instead of serving
   // the console. At most one page carries it server-wide, and saving a second one
@@ -1097,6 +1098,8 @@ export interface Fluctuation {
 export interface FluctuationPage {
   items: Fluctuation[]
   total: number
+  page: number
+  page_size: number
 }
 export interface TimelineEntry {
   ts: string
@@ -2534,6 +2537,8 @@ export const api = {
       since?: number
       until?: number
       limit?: number
+      page?: number
+      page_size?: number
     } = {},
   ) => {
     const p = new URLSearchParams()

@@ -52,22 +52,23 @@ const metric = computed<MetricCell | null>(() => {
     case 'disk': {
       if (!r.disk) return null
       const d = r.disk
+      const displayPct = d.aggregate_pct ?? d.pct
       const capacity = d.total ? `${fmtBytes(d.used)} / ${fmtBytes(d.total)}` : diskSub(d.mount, d.mounts)
       return {
-        primary: `${pct(d.pct)}%`,
-        // With several mounts the headline percentage is the worst one, and
-        // which mount that is decides whether it means anything: a full data
-        // disk and a full recovery partition read identically at 100% until the
-        // mount is named. Naming it costs one word and turns "why is this router
-        // out of space?" into an answer.
+        primary: `${pct(displayPct)}%`,
+        // New servers provide the capacity-weighted host percentage. Keep the
+        // released peak-mount presentation as a fallback while old servers and
+        // new consoles may be paired during an upgrade.
         secondary:
-          d.mounts > 1
+          d.aggregate_pct == null && d.mounts > 1
             ? t('agentStatus.diskWorst', { pct: pct(d.pct), mount: d.mount, n: d.mounts })
+            : d.mounts > 1 && d.total
+              ? t('agentStatus.diskCapacityN', { used: fmtBytes(d.used), total: fmtBytes(d.total), n: d.mounts })
             : capacity,
         ts: d.ts,
         stale: d.stale,
-        percent: clamp(d.pct),
-        tone: usageTone(d.pct),
+        percent: clamp(displayPct),
+        tone: usageTone(displayPct),
       }
     }
     case 'load':

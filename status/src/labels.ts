@@ -146,6 +146,7 @@ export function hasResources(r: PublicResources | undefined): boolean {
     r.cpu_pct != null ||
     r.load != null ||
     r.mem_pct != null ||
+    r.disk_aggregate_pct != null ||
     r.disk_pct != null ||
     r.rx_bps != null ||
     r.tx_bps != null ||

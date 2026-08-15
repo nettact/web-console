@@ -2,6 +2,7 @@
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import OnboardingFlow from './OnboardingLegacy.vue'
+import BrandMark from '../components/BrandMark.vue'
 
 const { locale } = useI18n()
 
@@ -42,12 +43,7 @@ const copy = computed(() => {
 
     <aside class="story-pane">
       <div class="brand">
-        <span class="brand-mark">
-          <svg viewBox="0 0 28 28" width="28" height="28" fill="none" stroke="currentColor" stroke-width="2.4"
-            stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-            <path d="M3.5 14h4l3-8.5 5.5 17 4-11 2 2.5h2.5" />
-          </svg>
-        </span>
+        <BrandMark class="brand-mark" responsive />
         <span class="brand-name">NetTact</span>
       </div>
 
@@ -188,20 +184,17 @@ const copy = computed(() => {
 }
 
 .brand-mark {
-  display: grid;
+  display: block;
+  flex: none;
   width: 3rem;
   height: 3rem;
-  place-items: center;
-  color: var(--color-primary-action-text);
-  border-radius: var(--radius-input);
-  background: var(--color-primary-action-bg);
 }
 
 .brand-name {
   font-family: var(--font-display);
   font-size: var(--text-xl);
   font-weight: 760;
-  letter-spacing: -.035em;
+  letter-spacing: 0;
 }
 
 .story-copy {
@@ -770,7 +763,6 @@ const copy = computed(() => {
   }
 
   .brand-mark { width: 2.5rem; height: 2.5rem; }
-  .brand-mark svg { width: 1.375rem; height: 1.375rem; }
   .brand-name { font-size: var(--text-lg); }
   .story-copy,
   .network-stage { display: none; }

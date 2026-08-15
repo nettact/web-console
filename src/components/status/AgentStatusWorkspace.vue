@@ -18,6 +18,7 @@ import MonitorStateBadge from './MonitorStateBadge.vue'
 import TargetStatusHistory from './TargetStatusHistory.vue'
 import { formatAvailability, formatAvailabilityRounds } from '../../lib/targetStatus'
 import AgentConnectivityHistory from './AgentConnectivityHistory.vue'
+import AgentFluctuationHistory from './AgentFluctuationHistory.vue'
 import HostMetrics from '../../views/HostMetrics.vue'
 import Processes from '../../views/Processes.vue'
 
@@ -450,6 +451,15 @@ onBeforeUnmount(() => tabsResizeObserver?.disconnect())
               >
                 {{ t('targetStatus.targetProbeHistory') }}
               </button>
+              <button
+                type="button"
+                role="tab"
+                :class="{ active: historyMode === 'fluctuations' }"
+                :aria-selected="historyMode === 'fluctuations'"
+                @click="updateHistoryMode('fluctuations')"
+              >
+                {{ t('targetStatus.fluctuations') }}
+              </button>
             </div>
 
             <AgentConnectivityHistory
@@ -459,7 +469,7 @@ onBeforeUnmount(() => tabsResizeObserver?.disconnect())
               :range-sec="rangeSec"
             />
 
-            <div v-else class="target-history">
+            <div v-else-if="historyMode === 'target'" class="target-history">
               <label class="target-history-picker">
                 <span>{{ t('targetStatus.historyTargetLabel') }}</span>
                 <select
@@ -482,6 +492,12 @@ onBeforeUnmount(() => tabsResizeObserver?.disconnect())
                 <span>{{ t('targetStatus.noAgentTargetsHint') }}</span>
               </div>
             </div>
+
+            <AgentFluctuationHistory
+              v-else
+              :agent-id="selectedAgent.id"
+              :range-sec="rangeSec"
+            />
           </section>
 
           <section v-else-if="tab === 'metrics'" class="agent-embedded-view" role="tabpanel">

@@ -115,7 +115,7 @@ CSS consumes `var(--space-*)`; raw spacing is limited to browser fixes.
 
 ## What pages MUST share
 
-- NetTact pulse-line mark and wordmark.
+- NetTact Orbit NT mark and wordmark.
 - Material depth: shell → primary surface → unbordered internal group.
 - Blue signal placement and semantic status palette.
 - Display, body and mono roles.

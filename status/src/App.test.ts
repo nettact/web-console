@@ -108,6 +108,18 @@ describe('status page', () => {
     expect(text).toContain('Home lab status')
     expect(text).toContain('Public board')
     expect(w.get('.brand-lockup').text()).toContain('NetTact')
+    const brandMark = w.get('.brand-mark img')
+    expect(brandMark.attributes()).toMatchObject({
+      width: '40',
+      height: '40',
+    })
+    expect(brandMark.attributes('src')).toMatch(
+      /^\.\/nettact-mark-compact(?:-reverse)?\.svg$/,
+    )
+    const markBeforeThemeToggle = brandMark.attributes('src')
+    await w.findAll('.controls button')[0].trigger('click')
+    expect(brandMark.attributes('src')).not.toBe(markBeforeThemeToggle)
+    await w.findAll('.controls button')[0].trigger('click')
     expect(w.get('.status-main').attributes('tabindex')).toBe('-1')
     expect(w.get('.site-foot a').attributes()).toMatchObject({
       href: 'https://nettact.org/',
@@ -780,7 +792,8 @@ describe('status page', () => {
             cpu_pct: 12.5,
             load: [0.42, 0.31, 0.28],
             mem_pct: 48,
-            disk_pct: 61,
+            disk_pct: 80,
+            disk_aggregate_pct: 17,
             rx_bps: 1_200_000,
             tx_bps: 340_000,
             uptime_s: 1_051_200,
@@ -797,12 +810,54 @@ describe('status page', () => {
     expect(text).toContain('1m 0.42')
     expect(text).toContain('5m 0.31 / 15m 0.28')
     expect(text).toContain('48%')
-    expect(text).toContain('61%')
+    expect(w.get('.res-disk').text()).toContain('17%')
+    expect(w.get('.res-disk').text()).not.toContain('80%')
     expect(text).toContain('1.1 MB/s')
     expect(text).toContain('12d 4h')
     // agent_metrics=basic: no byte totals and no mount path anywhere on the page.
     expect(text).not.toContain('GB')
     expect(text).not.toContain('/mnt')
+  })
+
+  it('falls back to the released disk percentage from an older server', async () => {
+    vi.spyOn(api, 'page').mockResolvedValue({ ...page, show_target_view: false })
+    vi.spyOn(api, 'agentStatuses').mockResolvedValue({
+      generated_at: page.generated_at,
+      agents: [
+        {
+          name: 'Alpha',
+          ordinal: 1,
+          online: true,
+          resources: { disk_pct: 61 },
+        },
+      ],
+    })
+
+    const w = mountApp()
+    await flushPromises()
+
+    expect(w.get('.res-disk').text()).toContain('61%')
+  })
+
+  it('keeps a published zero aggregate instead of falling back to the legacy peak', async () => {
+    vi.spyOn(api, 'page').mockResolvedValue({ ...page, show_target_view: false })
+    vi.spyOn(api, 'agentStatuses').mockResolvedValue({
+      generated_at: page.generated_at,
+      agents: [
+        {
+          name: 'Alpha',
+          ordinal: 1,
+          online: true,
+          resources: { disk_pct: 61, disk_aggregate_pct: 0 },
+        },
+      ],
+    })
+
+    const w = mountApp()
+    await flushPromises()
+
+    expect(w.get('.res-disk').text()).toContain('0%')
+    expect(w.get('.res-disk').text()).not.toContain('61%')
   })
 
   it('puts resource totals on a secondary line and protects uptime and network readouts', async () => {
@@ -819,6 +874,7 @@ describe('status page', () => {
             mem_used: 45_800_000_000,
             mem_total: 60_800_000_000,
             disk_pct: 82,
+            disk_aggregate_pct: 36.2,
             disk_used: 6_700_000_000_000,
             disk_total: 18_500_000_000_000,
             rx_bps: 65_800,
@@ -836,6 +892,8 @@ describe('status page', () => {
     expect(w.findAll('.res-primary')).toHaveLength(2)
     expect(w.findAll('.res-total').every((detail) => detail.element.tagName === 'SMALL')).toBe(true)
     expect(w.findAll('.res-io span')).toHaveLength(2)
+    expect(w.get('.res-disk').text()).toContain('36%')
+    expect(w.get('.res-disk').text()).not.toContain('82%')
     expect(w.get('.res-io').text()).toContain('↓')
     expect(w.get('.res-io').text()).toContain('↑')
     expect(w.get('.res-runtime').text()).toContain('5d 15h')

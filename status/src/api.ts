@@ -51,8 +51,10 @@ export interface PublicResources {
   mem_pct?: number
   mem_used?: number
   mem_total?: number
-  /** The busiest mount, not the sum of all of them. */
+  /** Legacy busiest-filesystem percentage; use disk_aggregate_pct when present. */
   disk_pct?: number
+  /** Capacity-weighted usage: sum(used) / sum(total) across reported filesystems. */
+  disk_aggregate_pct?: number
   disk_used?: number
   disk_total?: number
   rx_bps?: number

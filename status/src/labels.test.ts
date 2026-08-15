@@ -196,6 +196,7 @@ describe('hasResources', () => {
     // stale alone is metadata about readings that do not exist; it is not a reading.
     expect(hasResources({ stale: true })).toBe(false)
     expect(hasResources({ cpu_pct: 3 })).toBe(true)
+    expect(hasResources({ disk_aggregate_pct: 17 })).toBe(true)
     expect(hasResources({ uptime_s: 10 })).toBe(true)
   })
 })

@@ -63,6 +63,7 @@ const data = ref<IncidentReportData | null>(null)
 const loading = ref(true)
 const error = ref('')
 const generatedAt = ref('')
+const reportLogoSource = '/nettact-logo-horizontal.svg'
 
 const fmtDateTime = (s: string | null) =>
   s ? new Date(s).toLocaleString(toDateLocale(locale.value), { hour12: false }) : '—'
@@ -323,7 +324,14 @@ async function exportPdf() {
 
     <article v-else-if="data" ref="reportEl" class="report">
       <header class="report-head">
-        <div class="brand">NetTact</div>
+        <img
+          class="report-brand"
+          :src="reportLogoSource"
+          alt="NetTact"
+          width="140"
+          height="40"
+          draggable="false"
+        />
         <h1>{{ reportHeading }}</h1>
         <p v-if="attributionLine" class="attribution">{{ attributionLine }}</p>
         <ul v-if="attrClues.length" class="clues">
@@ -855,13 +863,12 @@ async function exportPdf() {
   padding-bottom: 22px;
   border-bottom: 2px solid var(--rule);
 }
-.brand {
-  display: inline-block;
-  margin-bottom: 10px;
-  font-size: 12px;
-  font-weight: 700;
-  letter-spacing: 0.04em;
-  color: var(--ink-3);
+.report-brand {
+  display: block;
+  width: 140px;
+  height: 40px;
+  margin-bottom: 14px;
+  object-fit: contain;
 }
 .report-head h1 {
   margin: 0;

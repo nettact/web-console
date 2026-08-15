@@ -1,3 +1,11 @@
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="https://nettact.org/brand/nettact-logo-horizontal-reverse.svg">
+    <source media="(prefers-color-scheme: light)" srcset="https://nettact.org/brand/nettact-logo-horizontal.svg">
+    <img alt="NetTact" src="https://nettact.org/brand/nettact-logo-horizontal.svg" width="280">
+  </picture>
+</p>
+
 # web-console
 
 NetTact Web 控制台 —— Vue 3 + Vite + TypeScript + ECharts(PWA,架构 §12)。

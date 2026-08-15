@@ -169,6 +169,7 @@ export async function generateReportPdf(reportEl: HTMLElement, filename: string)
   const leaveCapture = enterCapture(reportEl)
   try {
     await document.fonts?.ready
+    await Promise.all(Array.from(reportEl.querySelectorAll('img')).map((image) => image.decode()))
 
     // A hidden layout clone at A4 width is used to measure element positions and
     // as the source for each page band. Off-screen is fine for measurement; the

@@ -28,6 +28,7 @@ import {
 import EnrollExamples from '../components/EnrollExamples.vue'
 import ChannelEditor from '../components/ChannelEditor.vue'
 import ChannelTypeMark from '../components/ChannelTypeMark.vue'
+import BrandMark from '../components/BrandMark.vue'
 import { channelTypeDescriptor } from '../lib/channelTypes'
 import { pushProvider } from '../lib/pushProviders'
 
@@ -490,12 +491,7 @@ async function genToken(): Promise<void> {
     <div class="card wizard" v-if="ready">
       <header class="wiz-head">
         <div class="brand">
-          <span class="mark">
-            <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.2"
-              stroke-linecap="round" stroke-linejoin="round">
-              <path d="M3 12h3l2.5 7 5-15L18 12h3" />
-            </svg>
-          </span>
+          <BrandMark class="mark" variant="compact" />
           <div class="brand-text">
             <b>NetTact</b>
             <small>{{ t('setup.title') }}</small>
@@ -773,14 +769,10 @@ async function genToken(): Promise<void> {
   gap: 12px;
 }
 .mark {
-  display: grid;
-  place-items: center;
-  width: 42px;
-  height: 42px;
-  border-radius: 12px;
-  color: #04121c;
-  background: linear-gradient(150deg, #7dd3fc, var(--primary-strong));
-  box-shadow: 0 10px 26px -8px var(--primary-glow);
+  display: block;
+  flex: none;
+  width: 40px;
+  height: 40px;
 }
 .brand-text {
   display: flex;
@@ -788,7 +780,10 @@ async function genToken(): Promise<void> {
   line-height: 1.25;
 }
 .brand-text b {
+  font-family: var(--font-display);
   font-size: 17px;
+  font-weight: 760;
+  letter-spacing: 0;
 }
 .brand-text small {
   font-size: 12px;

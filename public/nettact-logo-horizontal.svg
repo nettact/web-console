@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 280 80" role="img" aria-labelledby="title desc">
+  <title id="title">NetTact Orbit NT logo</title>
+  <desc id="desc">The Orbit NT mark and NetTact wordmark.</desc>
+  <g transform="scale(.4)" fill="none" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M22 126C37 87 86 56 158 49" stroke="#0284C7" stroke-width="7"/>
+    <path d="M158 49C171.3 55.3 175.29 67.48 172.028 81.767" stroke="#0284C7" stroke-width="7"/>
+    <path d="M48 140V52M48 52L132 140M132 140V52M105 52H159" stroke="#FFFFFF" stroke-width="26"/>
+    <path d="M48 140V52" stroke="#10192A" stroke-width="22"/>
+    <path d="M48 52L132 140" stroke="#0284C7" stroke-width="22"/>
+    <path d="M132 140V52M105 52H159" stroke="#10192A" stroke-width="22"/>
+    <path d="M172.028 81.767C170.63 87.89 167.9 94.4 164 101C140 141 82 160 39 153C24 151 17 141 22 126" stroke="#0284C7" stroke-width="7"/>
+    <circle cx="22" cy="126" r="11" fill="#FFFFFF" stroke="#10192A" stroke-width="5"/>
+    <circle cx="172.028" cy="81.767" r="11" fill="#0284C7" stroke="#10192A" stroke-width="5"/>
+  </g>
+  <text x="88" y="55" fill="#10192A" font-family="Manrope, Inter, 'Segoe UI', sans-serif" font-size="44" font-weight="750" letter-spacing="0">NetTact</text>
+</svg>

@@ -7,12 +7,10 @@ import en from '../../locales/en'
 import type { AgentResources, DiskSample } from '../../api'
 import AgentResourceCell from './AgentResourceCell.vue'
 
-// A host with several mounts shows the WORST one as its headline percentage, and
-// which mount that is decides whether the number means anything. The case that
-// prompted this: an OpenWrt router displayed "peak 100% · 4 disks" while 0.9% of
-// its writable space was used — the 100% was a read-only squashfs image, and
-// nothing on screen said so. The agent no longer reports read-only mounts, but
-// naming the mount is what stops the next unexplained peak from being a mystery.
+// A current server supplies both the released peak-mount fields and the new
+// capacity-weighted aggregate. The cell leads with the aggregate and labels its
+// summed capacity, but can still render truthfully while paired with an older
+// server that only knows the peak.
 
 function mountCell(disk: DiskSample, locale: 'zh' | 'en' = 'en') {
   const resources: AgentResources = { disk } as AgentResources
@@ -26,6 +24,7 @@ function mountCell(disk: DiskSample, locale: 'zh' | 'en' = 'en') {
 
 const sample = (over: Partial<DiskSample> = {}): DiskSample => ({
   pct: 6.5,
+  aggregate_pct: 0.4,
   used: 8404992,
   total: 2172448768,
   mount: '/boot',
@@ -36,17 +35,33 @@ const sample = (over: Partial<DiskSample> = {}): DiskSample => ({
 })
 
 describe('AgentResourceCell disk', () => {
-  it('names the mount the peak belongs to when there is more than one', () => {
+  it('shows aggregate usage and summed capacity when there is more than one disk', () => {
     const text = mountCell(sample()).text()
-    expect(text).toContain('6.5%')
-    expect(text).toContain('/boot')
+    expect(text).toContain('0.4%')
+    expect(text).toContain('8.0 MB / 2.0 GB')
     expect(text).toContain('2 disks')
+    expect(text).not.toContain('/boot')
+    expect(text).not.toContain('6.5%')
   })
 
-  it('names the mount in Chinese too', () => {
+  it('labels the aggregate disk count in Chinese too', () => {
     const text = mountCell(sample(), 'zh').text()
-    expect(text).toContain('/boot')
+    expect(text).toContain('0.4%')
     expect(text).toContain('共 2 盘')
+  })
+
+  it('falls back to the labeled peak when paired with an older server', () => {
+    const text = mountCell(sample({ aggregate_pct: undefined })).text()
+    expect(text).toContain('6.5%')
+    expect(text).toContain('/boot')
+    expect(text).toContain('peak')
+  })
+
+  it('keeps a present zero aggregate instead of falling back to the peak', () => {
+    const text = mountCell(sample({ aggregate_pct: 0 })).text()
+    expect(text).toContain('0%')
+    expect(text).not.toContain('6.5%')
+    expect(text).not.toContain('peak')
   })
 
   // A placeholder reaching the DOM means the component stopped passing an
@@ -62,7 +77,8 @@ describe('AgentResourceCell disk', () => {
   // than repeating a mountpoint that is already unambiguous.
   it('shows capacity when there is only one mount', () => {
     const text = mountCell(sample({ mounts: 1, mount: '/' })).text()
-    expect(text).toContain('6.5%')
+    expect(text).toContain('0.4%')
+    expect(text).toContain('8.0 MB / 2.0 GB')
     expect(text).not.toContain('disks')
   })
 })

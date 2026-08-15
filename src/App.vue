@@ -13,6 +13,7 @@ import LangSwitch from './components/LangSwitch.vue'
 import ThemeSwitch from './components/ThemeSwitch.vue'
 import NotificationBell from './components/NotificationBell.vue'
 import Toasts from './components/Toasts.vue'
+import BrandMark from './components/BrandMark.vue'
 
 const router = useRouter()
 const route = useRoute()
@@ -153,12 +154,7 @@ async function dismissUpdate(): Promise<void> {
     ></button>
     <aside id="primary-navigation" class="sidebar" :class="{ 'is-open': navOpen }">
       <div class="logo">
-        <span class="logo-mark">
-          <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2.2"
-            stroke-linecap="round" stroke-linejoin="round">
-            <path d="M3 12h3l2.5 7 5-15L18 12h3" />
-          </svg>
-        </span>
+        <BrandMark class="logo-mark" variant="compact" />
         <span class="logo-text">
           <b>NetTact</b>
           <small>{{ t('app.consoleSubtitle') }}</small>
@@ -371,14 +367,10 @@ async function dismissUpdate(): Promise<void> {
   padding: 6px 8px 22px;
 }
 .logo-mark {
-  display: grid;
-  place-items: center;
+  display: block;
+  flex: none;
   width: 38px;
   height: 38px;
-  border-radius: 11px;
-  color: #04121c;
-  background: linear-gradient(150deg, #7dd3fc, var(--primary-strong));
-  box-shadow: 0 8px 20px -6px var(--primary-glow);
 }
 .logo-text {
   display: flex;
@@ -387,7 +379,7 @@ async function dismissUpdate(): Promise<void> {
 }
 .logo-text b {
   font-size: 16px;
-  letter-spacing: -0.01em;
+  letter-spacing: 0;
 }
 .logo-text small {
   font-size: 11px;
@@ -558,17 +550,13 @@ async function dismissUpdate(): Promise<void> {
 .logo-mark {
   width: 2.5rem;
   height: 2.5rem;
-  border-radius: var(--radius-input);
-  color: var(--color-primary-action-text);
-  background: var(--color-primary-action-bg);
-  box-shadow: none;
 }
 
 .logo-text b {
   font-family: var(--font-display);
   font-size: var(--text-base);
   font-weight: 760;
-  letter-spacing: -0.028em;
+  letter-spacing: 0;
 }
 
 .logo-text small {

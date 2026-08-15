@@ -6,7 +6,7 @@ import type {
 
 export type TargetStatusView = 'agents' | 'targets'
 export type AgentWorkspaceTab = 'overview' | 'targets' | 'history' | 'metrics' | 'processes' | 'connections'
-export type AgentHistoryMode = 'connectivity' | 'target'
+export type AgentHistoryMode = 'connectivity' | 'target' | 'fluctuations'
 export type TargetWorkspaceTab = 'overview' | 'agents' | 'history'
 export type AgentTargetTone = 'abnormal' | 'attention' | 'healthy' | 'inactive'
 
@@ -46,7 +46,7 @@ export function isAgentWorkspaceTab(value: string): value is AgentWorkspaceTab {
 }
 
 export function isAgentHistoryMode(value: string): value is AgentHistoryMode {
-  return value === 'connectivity' || value === 'target'
+  return value === 'connectivity' || value === 'target' || value === 'fluctuations'
 }
 
 export function isTargetWorkspaceTab(value: string): value is TargetWorkspaceTab {

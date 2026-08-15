@@ -5,6 +5,7 @@ import { useI18n } from 'vue-i18n'
 import { login } from '../auth'
 import LangSwitch from '../components/LangSwitch.vue'
 import ThemeSwitch from '../components/ThemeSwitch.vue'
+import BrandMark from '../components/BrandMark.vue'
 
 const { t } = useI18n()
 
@@ -37,12 +38,7 @@ async function submit() {
 
     <section class="login-story" aria-labelledby="login-brand-title">
       <div class="brand">
-        <span class="mark">
-          <svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="2.2"
-            stroke-linecap="round" stroke-linejoin="round">
-            <path d="M3 12h3l2.5 7 5-15L18 12h3" />
-          </svg>
-        </span>
+        <BrandMark class="mark" />
         <div class="brand-text">
           <b id="login-brand-title">NetTact</b>
           <small>{{ t('app.consoleSubtitle') }}</small>
@@ -145,13 +141,10 @@ async function submit() {
   gap: var(--space-xs);
 }
 .mark {
-  display: grid;
-  place-items: center;
+  display: block;
+  flex: none;
   width: 3rem;
   height: 3rem;
-  border-radius: var(--radius-input);
-  color: var(--color-primary-action-text);
-  background: var(--color-primary-action-bg);
 }
 .brand-text {
   display: flex;
@@ -162,7 +155,7 @@ async function submit() {
   font-family: var(--font-display);
   font-size: var(--text-lg);
   font-weight: 760;
-  letter-spacing: -0.028em;
+  letter-spacing: 0;
 }
 .brand-text small {
   color: var(--color-muted);

@@ -96,6 +96,7 @@ describe('Agent-first target-status model', () => {
     expect(isAgentWorkspaceTab('connections')).toBe(true)
     expect(isAgentWorkspaceTab('permissions')).toBe(false)
     expect(isAgentHistoryMode('target')).toBe(true)
+    expect(isAgentHistoryMode('fluctuations')).toBe(true)
     expect(isAgentHistoryMode('all')).toBe(false)
     expect(isTargetWorkspaceTab('agents')).toBe(true)
     expect(isTargetWorkspaceTab('metrics')).toBe(false)

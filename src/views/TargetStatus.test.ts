@@ -9,6 +9,7 @@ const apiMock = vi.hoisted(() => ({
   metrics: vi.fn(),
   metricsSummary: vi.fn(),
   agentStatusHistory: vi.fn(),
+  fluctuations: vi.fn(),
   agent: vi.fn(),
   listSeries: vi.fn(),
 }))
@@ -78,6 +79,7 @@ beforeEach(() => {
   apiMock.metrics.mockReset().mockResolvedValue([])
   apiMock.metricsSummary.mockReset().mockResolvedValue({ window_seconds: 7200, kinds: {} })
   apiMock.agentStatusHistory.mockReset().mockResolvedValue([])
+  apiMock.fluctuations.mockReset().mockResolvedValue({ items: [], total: 0, page: 1, page_size: 15 })
   apiMock.agent.mockReset().mockResolvedValue({
     id: 'agent-1',
     display_name: 'Taipei NUC',
@@ -376,6 +378,38 @@ describe('group-centric target-status page', () => {
       history: 'target',
       target: 'target-1',
     })
+  })
+
+  it('restores the Agent fluctuation history from URL state', async () => {
+    const router = createRouter({
+      history: createMemoryHistory(),
+      routes: [{ path: '/target-status', component: TargetStatus }],
+    })
+    await router.push('/target-status?view=agents&agent=agent-1&tab=history&history=fluctuations')
+    await router.isReady()
+
+    const wrapper = mount(TargetStatus, {
+      global: {
+        plugins: [router, i18n],
+        stubs: { RouterLink: true },
+      },
+    })
+    await flushPromises()
+
+    expect(wrapper.get('.agent-tabs button.active').text()).toBe(i18n.global.t('targetStatus.agentTabHistory'))
+    expect(wrapper.get('.history-mode-switch button.active').text()).toBe(i18n.global.t('targetStatus.fluctuations'))
+    expect(router.currentRoute.value.query).toEqual({
+      view: 'agents',
+      agent: 'agent-1',
+      tab: 'history',
+      history: 'fluctuations',
+    })
+    expect(apiMock.fluctuations).toHaveBeenCalledWith(expect.objectContaining({
+      agent: 'agent-1',
+      since: expect.any(Number),
+      page: 1,
+      page_size: 15,
+    }))
   })
 
   it('restores the Agent host-metrics workspace from URL state', async () => {

@@ -312,6 +312,13 @@ describe('IncidentReport', () => {
     const wrapper = await mountReport()
     const text = wrapper.text()
 
+    expect(wrapper.get('.report-brand').attributes()).toMatchObject({
+      src: '/nettact-logo-horizontal.svg',
+      alt: 'NetTact',
+      width: '140',
+      height: '40',
+    })
+
     // Header: merged localized heading (1 distinct target), attribution
     // sentence, state/group/layer.
     expect(text).toContain('共 1 个受影响目标')

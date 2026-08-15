@@ -10,6 +10,7 @@ import {
   type PublicIncident,
   type PublicIncidentSubject,
   type PublicPage,
+  type PublicResources,
   type PublicTargetRow,
 } from './api'
 import { resolveSlug } from './route'
@@ -88,6 +89,10 @@ const onlineAgents = computed(() => (agents.value ?? []).filter((a) => a.online)
 const upTargets = computed(() => (targets.value ?? []).filter((tg) => tg.status === 'up').length)
 const updatedLabel = computed(() => (generatedAt.value ? relativeUpdated(generatedAt.value, now.value, t) : ''))
 type CurrentStatus = { key: 'healthy' | 'fault' | 'unknown'; tone: 'good' | 'bad' | 'muted' }
+
+function diskUsagePct(resources: PublicResources): number {
+  return resources.disk_aggregate_pct ?? resources.disk_pct ?? 0
+}
 const currentStatus = computed<CurrentStatus>(() => {
   const publishedTargets = targets.value ?? []
   const publishedAgents = agents.value ?? []
@@ -396,9 +401,15 @@ onUnmounted(() => {
       <div class="site-head-inner">
         <div class="brand-lockup" aria-label="NetTact">
           <span class="brand-mark" aria-hidden="true">
-            <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M3 12h3l2.5 7 5-15L18 12h3" />
-            </svg>
+            <img
+              :src="theme === 'light'
+                ? './nettact-mark-compact.svg'
+                : './nettact-mark-compact-reverse.svg'"
+              alt=""
+              width="40"
+              height="40"
+              draggable="false"
+            />
           </span>
           <span class="brand-copy">
             <strong>{{ t('brand') }}</strong>
@@ -645,10 +656,13 @@ onUnmounted(() => {
                         </small>
                       </dd>
                     </div>
-                    <div v-if="agent.resources?.disk_pct != null" class="res-cell res-wide">
+                    <div
+                      v-if="agent.resources?.disk_aggregate_pct != null || agent.resources?.disk_pct != null"
+                      class="res-cell res-wide res-disk"
+                    >
                       <dt>{{ t('res.disk') }}</dt>
-                      <dd :class="`tone-${usageTone(agent.resources.disk_pct)}`">
-                        <span class="res-primary">{{ formatPct(agent.resources.disk_pct) }}</span>
+                      <dd :class="`tone-${usageTone(diskUsagePct(agent.resources))}`">
+                        <span class="res-primary">{{ formatPct(diskUsagePct(agent.resources)) }}</span>
                         <small v-if="agent.resources.disk_total != null" class="res-total">
                           {{ t('res.ofTotal', {
                             used: formatBytes(agent.resources.disk_used),
