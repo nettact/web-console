@@ -2139,6 +2139,8 @@ export default {
       unexpected: '意外失联',
       clean_shutdown: '正常关机',
       version_incompatible: '版本不兼容',
+      epoch_ahead_of_authority: '凭据版本领先于服务端',
+      sequence_conflict_requires_upgrade: '数据冲突，需升级 Agent 才能恢复',
     },
     disconnect: {
       clean: '正常关闭',
@@ -2147,6 +2149,8 @@ export default {
       revoked: '已删除',
       server_shutdown: '服务端关闭',
       unsupported_schema: '版本不兼容',
+      epoch_ahead: '凭据版本领先于服务端',
+      sequence_conflict: '数据冲突，需升级',
     },
     ageSeconds: '{n} 秒前',
     ageMinutes: '{n} 分钟前',

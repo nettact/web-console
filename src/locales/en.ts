@@ -2155,6 +2155,8 @@ export default {
       unexpected: 'Unexpectedly lost',
       clean_shutdown: 'Shut down normally',
       version_incompatible: 'Version incompatible',
+      epoch_ahead_of_authority: 'Agent credentials are ahead of the server',
+      sequence_conflict_requires_upgrade: 'Data conflict — upgrade the agent to recover',
     },
     disconnect: {
       clean: 'Closed normally',
@@ -2163,6 +2165,8 @@ export default {
       revoked: 'Deleted',
       server_shutdown: 'Server shutdown',
       unsupported_schema: 'Version incompatible',
+      epoch_ahead: 'Agent credentials are ahead of the server',
+      sequence_conflict: 'Data conflict — upgrade required',
     },
     ageSeconds: '{n}s ago',
     ageMinutes: '{n}m ago',
