@@ -1357,7 +1357,7 @@ export interface TraceSummary {
   received_at: string
   // WHY the Agent ran it. Nothing asked for this report, so the trigger is the
   // only record of its cause.
-  trigger_reason?: string // consecutive_failures
+  trigger_reason?: string // consecutive_failures | server_disconnect
   trigger_streak?: number
   first_failed_at?: string | null
   // Present when the natural mode couldn't run and the Agent transparently fell

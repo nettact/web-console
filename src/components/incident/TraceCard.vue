@@ -25,11 +25,20 @@ const {
 // Why the Agent ran this trace. Nothing on the server asked for it, so without
 // this line a report reads as an execution that appeared from nowhere — and an
 // operator cannot tell a diagnostic of THIS outage from one of a previous blip.
+//
+// A server-disconnect trace walked toward this server rather than a monitored
+// target, and its first-failure time is the moment the session dropped, so both
+// the destination and that time are labelled for what they are.
+const isServerDisconnect = computed(() => props.report.trigger_reason === 'server_disconnect')
 const triggerNote = computed(() => {
   const r = props.report
+  if (isServerDisconnect.value) return t('incidents.trace.triggerServerDisconnect')
   if (r.trigger_reason !== 'consecutive_failures' || !r.trigger_streak) return ''
   return t('incidents.trace.triggerStreak', { n: r.trigger_streak })
 })
+const triggerDetail = computed(() =>
+  isServerDisconnect.value ? t('incidents.trace.triggerServerDisconnectNote') : t('incidents.trace.triggerNote'),
+)
 const firstFailedAt = computed(() => props.report.first_failed_at || null)
 
 // Long-form "why it couldn't trace" text, shown when the run ended on a terminal
@@ -150,7 +159,7 @@ function attemptAt(hop: TraceReportView['hops'][number], idx: number) {
       <code class="rid" :title="report.report_id">{{ report.report_id }}</code>
     </div>
 
-    <p v-if="triggerNote" class="reason-detail" role="note">{{ t('incidents.trace.triggerNote') }}</p>
+    <p v-if="triggerNote" class="reason-detail" role="note">{{ triggerDetail }}</p>
 
     <p v-if="fallbackDetail" class="fallback-detail" role="note">{{ fallbackDetail }}</p>
     <p v-if="subjectDetail" class="reason-detail" role="note">{{ subjectDetail }}</p>
@@ -163,7 +172,7 @@ function attemptAt(hop: TraceReportView['hops'][number], idx: number) {
       <div>
         <!-- Labelled by subject so the destination cannot be misread as the
              monitored target when the diagnostic examined something else. -->
-        <dt>{{ isSubjectTarget ? t('incidents.trace.dest') : traceSubjectLabel(report.subject_kind) }}</dt>
+        <dt>{{ isServerDisconnect ? t('incidents.trace.serverDest') : isSubjectTarget ? t('incidents.trace.dest') : traceSubjectLabel(report.subject_kind) }}</dt>
         <dd class="mono">{{ dest }}</dd>
       </div>
       <div>
@@ -176,7 +185,7 @@ function attemptAt(hop: TraceReportView['hops'][number], idx: number) {
         </dd>
       </div>
       <div v-if="firstFailedAt">
-        <dt>{{ t('incidents.trace.firstFailedAt') }}</dt><dd>{{ fmtDateTime(firstFailedAt) }}</dd>
+        <dt>{{ isServerDisconnect ? t('incidents.trace.disconnectedAt') : t('incidents.trace.firstFailedAt') }}</dt><dd>{{ fmtDateTime(firstFailedAt) }}</dd>
       </div>
       <div><dt>{{ t('incidents.trace.startedAt') }}</dt><dd>{{ fmtDateTime(report.started_at) }}</dd></div>
       <div><dt>{{ t('incidents.trace.finishedAt') }}</dt><dd>{{ fmtDateTime(report.completed_at) }}</dd></div>

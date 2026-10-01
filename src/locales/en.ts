@@ -877,6 +877,11 @@ export default {
       duration: 'Duration',
       receivedAt: 'Received',
       triggerStreak: 'Agent-triggered · {n} consecutive failures',
+      triggerServerDisconnect: 'Agent-triggered · lost connection to this server',
+      triggerServerDisconnectNote:
+        'The Agent traced the path to this server itself the moment its connection dropped, and uploaded the result once it reconnected — so it shows where the path to the server broke while it was broken.',
+      serverDest: 'Server',
+      disconnectedAt: 'Disconnected',
       triggerNote:
         'The Agent ran this itself once the target had failed the configured number of consecutive checks, and uploaded the result afterwards — so it captures the fault close to its onset, even if the Agent could not reach this server at the time.',
       ttl: 'TTL',

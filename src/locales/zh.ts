@@ -868,6 +868,11 @@ export default {
       duration: '耗时',
       receivedAt: '上报时间',
       triggerStreak: 'Agent 本地触发 · 连续 {n} 次失败',
+      triggerServerDisconnect: 'Agent 本地触发 · 与本服务器断开连接',
+      triggerServerDisconnectNote:
+        'Agent 在与本服务器的连接断开时，自行追踪了到服务器的路由，并在重新连上后上传了结果——因此它记录的是断线当时到服务器的路径断在了哪里。',
+      serverDest: '服务器',
+      disconnectedAt: '断开时间',
       triggerNote:
         '目标连续失败达到设定次数后，Agent 自行执行了本次诊断，结果随后上传——因此即使当时 Agent 无法连上本服务器，故障发生之初的现场也被记录了下来。',
       ttl: '跳',
