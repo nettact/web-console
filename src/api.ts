@@ -496,6 +496,8 @@ export type ReasonCode =
   | 'probe_no_data'
   | 'not_applicable'
   | 'ok'
+  // The Agent's build predates the monitor kind, so it is never sent to it.
+  | 'agent_upgrade_required'
 export type WorstSeverity = 'info' | 'warn' | 'error' | 'critical'
 
 // How far a detector is from confirming a fault: consecutive failing rounds
@@ -672,14 +674,23 @@ export interface ProbeParams {
   stun_server2?: string
   // gateway
   interface?: string
+  // trace (route monitor): 'icmp' (default when empty) | 'tcp'. port above is the
+  // TCP-mode destination port; timeout_ms bounds one probe and global_timeout_ms
+  // the whole run.
+  trace_mode?: '' | 'icmp' | 'tcp'
+  max_hops?: number
+  attempts_per_hop?: number
 }
 // A monitoring target. It belongs to exactly one monitor group (group_id), which
 // owns the Agent execution scope and incident-merge policy shared by all of the
 // group's targets. Targets no longer carry their own Agent scope.
+// Monitor kinds the console knows how to edit. `kind` stays a plain string on the
+// wire type so a kind added by a newer server still round-trips through a save.
+export type TargetKind = 'icmp' | 'http' | 'tcp' | 'dns' | 'nat' | 'gateway' | 'host' | 'trace'
 export interface ProbeTarget {
   id?: string
   group_id: string
-  kind: string
+  kind: TargetKind | (string & {})
   name?: string
   target: string
   params?: ProbeParams
@@ -2233,6 +2244,146 @@ function incidentQuery(f: IncidentFilter): string {
   return qs ? '&' + qs : ''
 }
 
+// ---- Route monitoring (kind "trace") ----
+//
+// A route monitor runs a traceroute on a schedule and keeps a history of the
+// path, not just of reachability. The server collapses each run into an AS path
+// (autonomous systems crossed, in order); a run whose AS path matches the current
+// one extends the current *epoch*, and a different AS path seen on several
+// consecutive runs closes it and records a *route change*. Times are RFC3339 UTC.
+
+// One autonomous system on an AS path.
+export interface ASHop {
+  asn: number
+  as_name: string
+  as_country: string // ISO 3166 alpha-2, may be empty
+}
+// One address that answered at a TTL. asn is null for private/unannounced space.
+export interface RouteResponder {
+  ip: string
+  hostname: string
+  asn: number | null
+  as_name: string
+  as_country: string
+  prefix: string
+}
+// One TTL of a normalized path. timeout: nothing answered at this TTL at all.
+export interface RouteHopView {
+  ttl: number
+  responders: RouteResponder[]
+  timeout: boolean
+}
+export interface RoutePathView {
+  path_id: number
+  as_path: ASHop[]
+  hops: RouteHopView[]
+  reached: boolean
+}
+// Destination round-trip summary over an epoch's runs (milliseconds).
+export interface RouteRTT {
+  count: number
+  min_ms: number
+  max_ms: number
+  p50_ms: number
+  p95_ms: number
+}
+// A span of time during which one Agent saw the same AS path.
+export interface RouteEpoch {
+  id: number
+  agent_id: string
+  path_id: number
+  as_path: ASHop[]
+  start_at: string
+  end_at: string
+  run_count: number
+  deviation_count: number
+  dest_ip: string
+  local_asn: number | null
+  rtt: RouteRTT | null
+  reached_ratio: number // 0..1
+  variants: { path_id: number; count: number }[]
+}
+export type RouteAgentStatus = 'active' | 'pending' | 'agent_upgrade_required' | 'permission_blocked' | 'unsupported'
+export interface RouteAgentView {
+  agent_id: string
+  agent_name: string
+  status: RouteAgentStatus
+  last_run_at: string | null
+  current: RouteEpoch | null
+  path: RoutePathView | null
+}
+export interface RouteOverview {
+  asn_db_version: string
+  agents: RouteAgentView[]
+}
+export type RouteChangeKind = 'route' | 'destination' | 'local_egress'
+export type RouteChangeSegment = 'local_access' | 'isp_backbone' | 'interconnect' | 'destination' | 'unknown'
+export interface RouteChange {
+  id: number
+  monitor_id: string
+  agent_id: string
+  agent_name: string
+  kind: RouteChangeKind
+  segment: RouteChangeSegment
+  diverge_ttl: number | null
+  confirmed_at: string
+  from_epoch_id: number
+  to_epoch_id: number
+  from_as_path: ASHop[]
+  to_as_path: ASHop[]
+  rtt_before: RouteRTT | null
+  rtt_after: RouteRTT | null
+}
+export interface RouteRunAttempt {
+  ip: string
+  hostname: string
+  rtt_ms: number | null
+  timeout: boolean
+  asn: number | null
+  as_name: string
+}
+export interface RouteRunDetail {
+  run_at: string
+  dest_ip: string
+  reached: boolean
+  hops: { ttl: number; attempts: RouteRunAttempt[] }[]
+}
+export interface RouteChangeDetail {
+  change: RouteChange
+  before: RoutePathView
+  after: RoutePathView
+  before_run: RouteRunDetail | null
+  after_run: RouteRunDetail | null
+}
+
+// GET /sites/{id}/route-summaries: the current route of every enabled route
+// monitor in the site, per Agent in its scope, in one batch. It is what the
+// status page lists route monitors from; the per-target endpoints above carry the
+// hop-level detail and full history behind it.
+export interface RouteAgentSummary {
+  agent_id: string
+  agent_name: string
+  status: RouteAgentStatus // same values and derivation as RouteAgentView.status
+  last_run_at: string | null // the latest accepted check
+  current_since: string | null // start of the current epoch; null = no data yet
+  as_path: ASHop[] // the current epoch's AS path; [] when none
+  dest_ip: string
+  reached_ratio: number | null // 0..1
+  rtt_p50_ms: number | null
+  last_change_at: string | null // newest confirmed route change for this Agent
+  changes_24h: number
+  changes_7d: number
+  interval_seconds: number // effective check interval, for judging staleness
+}
+export interface RouteTargetSummary {
+  target_id: string
+  agents: RouteAgentSummary[]
+}
+export interface RouteSummaries {
+  asn_db_version: string
+  targets: RouteTargetSummary[]
+}
+
 export const api = {
   login: (username: string, password: string) => req<User>('POST', '/api/v1/auth/login', { username, password }),
   logout: () => req<unknown>('POST', '/api/v1/auth/logout'),
@@ -2642,4 +2793,35 @@ export const api = {
       config,
       ...(channelId ? { channel_id: channelId } : {}),
     }),
+  // Route monitoring (kind "trace"): the current path per Agent, then the epoch
+  // and change history behind it. Non-trace targets answer 400.
+  targetRoute: (targetID: string) =>
+    req<RouteOverview>('GET', `/api/v1/targets/${encodeURIComponent(targetID)}/route`),
+  targetRouteEpochs: (
+    targetID: string,
+    opts: { agent_id: string; from?: string; to?: string; limit?: number },
+  ) => {
+    const p = new URLSearchParams()
+    for (const [k, v] of Object.entries(opts)) if (v !== undefined && v !== '') p.set(k, String(v))
+    return req<{ epochs: RouteEpoch[] }>(
+      'GET',
+      `/api/v1/targets/${encodeURIComponent(targetID)}/route/epochs?${p}`,
+    )
+  },
+  targetRouteChanges: (
+    targetID: string,
+    opts: { agent_id?: string; before?: string; limit?: number } = {},
+  ) => {
+    const p = new URLSearchParams()
+    for (const [k, v] of Object.entries(opts)) if (v !== undefined && v !== '') p.set(k, String(v))
+    const qs = p.toString()
+    return req<{ changes: RouteChange[] }>(
+      'GET',
+      `/api/v1/targets/${encodeURIComponent(targetID)}/route/changes${qs ? '?' + qs : ''}`,
+    )
+  },
+  routeChange: (id: number | string) =>
+    req<RouteChangeDetail>('GET', `/api/v1/route-changes/${encodeURIComponent(String(id))}`),
+  routeSummaries: (siteID: string) =>
+    req<RouteSummaries>('GET', `/api/v1/sites/${encodeURIComponent(siteID)}/route-summaries`),
 }

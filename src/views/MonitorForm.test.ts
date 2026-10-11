@@ -618,3 +618,70 @@ describe('MonitorForm smart detection', () => {
     expect(page.get('.smart-body').text()).toContain('smart loss detection stands down')
   })
 })
+
+describe('MonitorForm route monitor (trace)', () => {
+  async function renderTrace() {
+    const page = await render()
+    await page.get('select').setValue('trace')
+    await flushPromises()
+    return page
+  }
+
+  it('offers plain-language schedule presets instead of the raw interval and timeout', async () => {
+    const page = await renderTrace()
+    const labels = page.findAll('label.field span').map((s) => s.text())
+    expect(labels).not.toContain(en.mform.interval)
+    expect(labels).not.toContain(en.mform.timeout)
+    expect(page.text()).toContain(en.mform.traceEvery10)
+    expect(page.text()).toContain(en.mform.traceEvery30)
+    expect(page.text()).toContain(en.mform.traceChangeNote)
+    // No detector and no egress proxy for this kind.
+    expect(page.text()).not.toContain(en.mform.detectionTitle)
+    expect(page.text()).not.toContain(en.mform.secProxy)
+    // The port only matters in TCP mode.
+    expect(page.find('input[placeholder="443"]').exists()).toBe(false)
+    const mode = page.findAll('select').find((s) => s.findAll('option').some((o) => o.attributes('value') === 'tcp' && o.text() === en.mform.traceModeTcp))!
+    await mode.setValue('tcp')
+    expect(page.find('input[placeholder="443"]').exists()).toBe(true)
+  })
+
+  it('saves the default schedule as unset and a chosen preset as seconds', async () => {
+    apiMock.setTargets.mockResolvedValue({ ok: true, warnings: [] })
+    const page = await renderTrace()
+    await targetInput(page).setValue('example.com')
+    await page.get('button.btn.btn-primary').trigger('click')
+    await flushPromises()
+    let sent = apiMock.setTargets.mock.calls[0][1] as ProbeTarget[]
+    let mine = sent[sent.length - 1]
+    expect(mine.kind).toBe('trace')
+    expect(mine.params?.interval_seconds).toBeUndefined()
+    expect(mine.params?.trace_mode).toBe('icmp')
+
+    apiMock.setTargets.mockClear()
+    const page2 = await renderTrace()
+    await targetInput(page2).setValue('example.com')
+    await page2.get('input[type="radio"][value="1800"]').setValue(true)
+    await page2.get('button.btn.btn-primary').trigger('click')
+    await flushPromises()
+    sent = apiMock.setTargets.mock.calls[0][1] as ProbeTarget[]
+    mine = sent[sent.length - 1]
+    expect(mine.params?.interval_seconds).toBe(1800)
+  })
+
+  it('refuses an IPv6 target and a custom interval under five minutes', async () => {
+    const page = await renderTrace()
+    await targetInput(page).setValue('2001:db8::1')
+    await page.get('button.btn.btn-primary').trigger('click')
+    await flushPromises()
+    expect(apiMock.setTargets).not.toHaveBeenCalled()
+    expect(page.text()).toContain(en.mform.errTraceIPv6)
+
+    await targetInput(page).setValue('example.com')
+    await page.get('input[type="radio"][value="custom"]').setValue(true)
+    await page.get('.trace-minutes input').setValue('2')
+    await page.get('button.btn.btn-primary').trigger('click')
+    await flushPromises()
+    expect(apiMock.setTargets).not.toHaveBeenCalled()
+    expect(page.text()).toContain(en.mform.traceIntervalErr)
+  })
+})

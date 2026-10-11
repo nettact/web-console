@@ -4,23 +4,44 @@ import { useI18n } from 'vue-i18n'
 import type { TargetAgentStatusRow } from '../../api'
 import type { TargetStatusGroupView } from '../../lib/targetStatusPage'
 import {
+  AVAILABILITY_TARGET_TABS,
+  ROUTE_TARGET_TABS,
   agentTargetTone,
+  effectiveTargetTab,
   type AgentTargetTone,
   type TargetWorkspaceTab,
 } from '../../lib/targetStatusAgentView'
+import type { RouteTargetView } from '../../lib/routeStatus'
+import { asLabel } from '../../lib/routePath'
+import { useRouteFormat } from '../../composables/useRouteFormat'
 import { formatAvailability, formatAvailabilityRounds } from '../../lib/targetStatus'
 import { toDateLocale } from '../../i18n'
 import MonitorStateBadge from './MonitorStateBadge.vue'
 import TargetStatusHistory from './TargetStatusHistory.vue'
+import RouteStateBadge from '../route/RouteStateBadge.vue'
+import RouteTargetOverview from '../route/RouteTargetOverview.vue'
+import RoutePathPanel from '../route/RoutePathPanel.vue'
+import RouteChangeTimeline from '../route/RouteChangeTimeline.vue'
 import { targetStatus } from '../../targetStatus'
 
-const props = defineProps<{
+const props = withDefaults(defineProps<{
   groups: TargetStatusGroupView[]
+  // Route monitors (kind "trace") passing the page filters, listed in their own
+  // section below the availability groups.
+  routeRows?: RouteTargetView[]
+  routeTotal?: number
+  routeNow?: number
+  routeError?: boolean
   selectedTargetId: string
   selectedAgentId: string
   tab: TargetWorkspaceTab
   rangeSec: number
-}>()
+}>(), {
+  routeRows: () => [],
+  routeTotal: 0,
+  routeNow: () => Date.now(),
+  routeError: false,
+})
 
 const emit = defineEmits<{
   'update:selectedTargetId': [value: string]
@@ -31,16 +52,35 @@ const emit = defineEmits<{
 const { t, locale } = useI18n()
 const availabilityTitle = computed(() => t(`targetStatus.availability${targetStatus.timeRange}`))
 
+const { fmtTime: fmtRouteTime, since } = useRouteFormat()
+
 const visibleTargetCount = computed(() =>
-  props.groups.reduce((sum, group) => sum + group.targets.length, 0),
+  props.groups.reduce((sum, group) => sum + group.targets.length, 0) + props.routeRows.length,
+)
+const visibleGroupCount = computed(() => props.groups.length + (props.routeRows.length ? 1 : 0))
+const selectedRoute = computed(() =>
+  props.routeRows.find((row) => row.target.target_id === props.selectedTargetId),
 )
 const selectedTarget = computed(() => {
   for (const group of props.groups) {
     const target = group.allTargets.find((row) => row.target_id === props.selectedTargetId)
     if (target) return target
   }
-  return undefined
+  return selectedRoute.value?.target
 })
+const isRouteSelected = computed(() => !!selectedRoute.value)
+// The availability workspace never shows a route tab and vice versa; a tab from
+// the other kind (a stale link, or switching targets) falls back to overview.
+const activeTab = computed(() => effectiveTargetTab(props.tab, isRouteSelected.value))
+const routeTabs = computed(() => ROUTE_TARGET_TABS.map((id) => ({ id, label: t(`targetStatus.routeTab.${id}`) })))
+const availabilityTabs = computed(() => AVAILABILITY_TARGET_TABS.map((id) => ({
+  id,
+  label: id === 'overview'
+    ? t('targetStatus.targetTabOverview')
+    : id === 'agents'
+      ? t('targetStatus.targetTabAgents', { n: sortedAgents.value.length })
+      : t('targetStatus.targetTabHistory'),
+})))
 const selectedGroup = computed(() =>
   props.groups.find((group) => group.allTargets.some((row) => row.target_id === props.selectedTargetId)),
 )
@@ -93,6 +133,17 @@ function openTarget(targetID: string): void {
   emit('update:tab', 'overview')
 }
 
+// The compact one-line AS path of a route row: "AS64500 Access → AS64501 …".
+function routePathText(row: RouteTargetView): string {
+  const path = row.primary?.as_path ?? []
+  return path.map((hop) => (hop.as_name ? `${asLabel(hop.asn)} ${hop.as_name}` : asLabel(hop.asn))).join(' → ')
+}
+
+function openRoutePath(agentID: string): void {
+  emit('update:selectedAgentId', agentID)
+  emit('update:tab', 'path')
+}
+
 function closeTarget(): void {
   emit('update:selectedTargetId', '')
   emit('update:selectedAgentId', '')
@@ -105,7 +156,7 @@ function openHistory(agentID: string): void {
 }
 
 function updateTab(tab: TargetWorkspaceTab): void {
-  if (tab === 'history' && !props.selectedAgentId) {
+  if (!isRouteSelected.value && tab === 'history' && !props.selectedAgentId) {
     emit('update:selectedAgentId', sortedAgents.value[0]?.agent_id || '')
   }
   emit('update:tab', tab)
@@ -118,7 +169,7 @@ function toneClass(agent: TargetAgentStatusRow): string {
 watch(
   [selectedTarget, sortedAgents, () => props.tab],
   () => {
-    if (!selectedTarget.value) return
+    if (!selectedTarget.value || isRouteSelected.value) return
     if (props.selectedAgentId && sortedAgents.value.some((agent) => agent.agent_id === props.selectedAgentId)) return
     if (props.tab === 'history') emit('update:selectedAgentId', sortedAgents.value[0]?.agent_id || '')
   },
@@ -129,10 +180,10 @@ watch(
 <template>
   <section class="target-board" :aria-label="t('targetStatus.targetBoardAria')">
     <p class="board-result" aria-live="polite">
-      {{ t('targetStatus.targetBoardResult', { targets: visibleTargetCount, groups: groups.length }) }}
+      {{ t('targetStatus.targetBoardResult', { targets: visibleTargetCount, groups: visibleGroupCount }) }}
     </p>
 
-    <div v-if="groups.length" class="target-groups">
+    <div v-if="groups.length || routeRows.length" class="target-groups">
       <section v-for="group in groups" :key="group.id" class="target-board-group">
         <header class="board-group-head">
           <div>
@@ -206,16 +257,12 @@ watch(
 
               <nav class="target-tabs" role="tablist" :aria-label="t('targetStatus.targetTabsAria')">
                 <button
-                  v-for="item in ([
-                    { id: 'overview', label: t('targetStatus.targetTabOverview') },
-                    { id: 'agents', label: t('targetStatus.targetTabAgents', { n: sortedAgents.length }) },
-                    { id: 'history', label: t('targetStatus.targetTabHistory') },
-                  ] as Array<{ id: TargetWorkspaceTab; label: string }>)"
+                  v-for="item in availabilityTabs"
                   :key="item.id"
                   type="button"
                   role="tab"
-                  :class="{ active: tab === item.id }"
-                  :aria-selected="tab === item.id"
+                  :class="{ active: activeTab === item.id }"
+                  :aria-selected="activeTab === item.id"
                   :disabled="item.id === 'history' && !sortedAgents.length"
                   @click="updateTab(item.id)"
                 >
@@ -224,7 +271,7 @@ watch(
               </nav>
 
               <div class="workspace-body">
-                <section v-if="tab === 'overview'" class="target-overview" role="tabpanel">
+                <section v-if="activeTab === 'overview'" class="target-overview" role="tabpanel">
                   <div class="target-summary-grid">
                     <div>
                       <span>{{ t('targetStatus.currentState') }}</span>
@@ -285,7 +332,7 @@ watch(
                   </section>
                 </section>
 
-                <section v-else-if="tab === 'agents'" class="target-agent-matrix" role="tabpanel">
+                <section v-else-if="activeTab === 'agents'" class="target-agent-matrix" role="tabpanel">
                   <div class="workspace-section-head">
                     <div>
                       <h4>{{ t('targetStatus.agentMatrixTitle') }}</h4>
@@ -346,6 +393,122 @@ watch(
         <p v-else class="board-group-empty">
           {{ group.allTargets.length ? t('targetStatus.noFilterResultsInGroup') : t('targetStatus.emptyGroup') }}
         </p>
+      </section>
+
+      <section v-if="routeRows.length" class="target-board-group route-group" :aria-label="t('targetStatus.routeSectionTitle')">
+        <header class="board-group-head">
+          <div>
+            <h3>{{ t('targetStatus.routeSectionTitle') }}</h3>
+            <span>{{ t('targetStatus.routeSectionHint', { n: routeRows.length }) }}</span>
+          </div>
+        </header>
+        <p v-if="routeError" class="board-group-empty" role="status">{{ t('targetStatus.routeSummaryError') }}</p>
+
+        <div class="target-table">
+          <div class="route-table-head" aria-hidden="true">
+            <span>{{ t('targetStatus.currentState') }}</span>
+            <span>{{ t('targetStatus.targetColumn') }}</span>
+            <span>{{ t('targetStatus.routeColPath') }}</span>
+            <span>{{ t('targetStatus.routeColHeld') }}</span>
+            <span>{{ t('targetStatus.routeColChanges7d') }}</span>
+            <span>{{ t('targetStatus.routeColLastRun') }}</span>
+            <span></span>
+          </div>
+          <template v-for="row in routeRows" :key="row.target.target_id">
+            <button
+              type="button"
+              class="route-board-row"
+              :class="{ selected: selectedTargetId === row.target.target_id }"
+              :aria-label="t('targetStatus.openTargetDetailsAria', { target: row.target.name || row.target.target })"
+              :aria-expanded="selectedTargetId === row.target.target_id"
+              :aria-controls="`target-workspace-${row.target.target_id}`"
+              @click="openTarget(row.target.target_id)"
+            >
+              <span class="route-cell-state"><RouteStateBadge :state="row.state" /></span>
+              <span class="board-target-identity">
+                <span class="kind-chip">{{ row.target.kind.toUpperCase() }}</span>
+                <span>
+                  <strong>{{ row.target.name || row.target.target }}</strong>
+                  <small>{{ row.target.target }}</small>
+                </span>
+              </span>
+              <span class="route-cell-path">
+                <span v-if="row.primary && row.primary.as_path.length" class="route-path-text" :title="routePathText(row)">{{ routePathText(row) }}</span>
+                <span v-else class="route-muted">{{ row.primary ? t('route.asPathEmpty') : t(`route.stateHint.${row.state}`) }}</span>
+                <small v-if="row.otherPaths" class="route-other-paths">{{ t('targetStatus.routeOtherPaths', { n: row.otherPaths }) }}</small>
+              </span>
+              <span class="route-cell-num">{{ row.primary ? since(row.primary.current_since, routeNow) : '—' }}</span>
+              <span class="route-cell-num">
+                {{ row.changes7d }}
+                <small v-if="row.changes24h" class="route-recent">{{ t('targetStatus.routeChanges24hShort', { n: row.changes24h }) }}</small>
+              </span>
+              <time class="route-cell-time" :datetime="row.lastRunAt || undefined">{{ fmtRouteTime(row.lastRunAt) }}</time>
+              <span class="board-open" aria-hidden="true">›</span>
+            </button>
+
+            <section
+              v-if="selectedTargetId === row.target.target_id && selectedRoute"
+              :id="`target-workspace-${row.target.target_id}`"
+              class="target-detail-workspace"
+              :aria-label="t('targetStatus.targetWorkspaceAria')"
+            >
+              <header class="workspace-head">
+                <div class="workspace-identity">
+                  <span class="kind-chip">{{ row.target.kind.toUpperCase() }}</span>
+                  <div>
+                    <h3>{{ row.target.name || row.target.target }}</h3>
+                    <p>{{ t('targetStatus.routeSectionTitle') }} · {{ row.target.target }}</p>
+                  </div>
+                </div>
+                <button type="button" class="workspace-back" @click="closeTarget">
+                  <span aria-hidden="true">←</span>
+                  <span>{{ t('targetStatus.backToTargetBoard') }}</span>
+                </button>
+              </header>
+
+              <nav class="target-tabs" role="tablist" :aria-label="t('targetStatus.targetTabsAria')">
+                <button
+                  v-for="item in routeTabs"
+                  :key="item.id"
+                  type="button"
+                  role="tab"
+                  :class="{ active: activeTab === item.id }"
+                  :aria-selected="activeTab === item.id"
+                  @click="updateTab(item.id)"
+                >
+                  {{ item.label }}
+                </button>
+              </nav>
+
+              <div class="workspace-body">
+                <RouteTargetOverview
+                  v-if="activeTab === 'overview'"
+                  role="tabpanel"
+                  :view="selectedRoute"
+                  :now="routeNow"
+                  @open-changes="updateTab('changes')"
+                  @open-path="openRoutePath"
+                />
+                <RoutePathPanel
+                  v-else-if="activeTab === 'path'"
+                  role="tabpanel"
+                  :target-id="row.target.target_id"
+                  :agent-id="selectedAgentId"
+                  @update:agent-id="emit('update:selectedAgentId', $event)"
+                />
+                <RouteChangeTimeline
+                  v-else
+                  role="tabpanel"
+                  :target-id="row.target.target_id"
+                  :agent-id="selectedAgentId"
+                  :agents="selectedRoute.agents.map((item) => item.agent)"
+                  show-agent
+                  @update:agent-id="emit('update:selectedAgentId', $event)"
+                />
+              </div>
+            </section>
+          </template>
+        </div>
       </section>
     </div>
 
@@ -1044,6 +1207,144 @@ watch(
   .priority-agent-list button,
   .history-action,
   .text-action {
+    transition-duration: var(--dur-micro);
+  }
+}
+.route-table-head,
+.route-board-row {
+  display: grid;
+  grid-template-columns: minmax(104px, 0.6fr) minmax(200px, 1.2fr) minmax(220px, 1.5fr) minmax(80px, 0.5fr) minmax(80px, 0.45fr) minmax(140px, 0.8fr) 28px;
+  align-items: center;
+  gap: var(--space-xs);
+}
+
+.route-table-head {
+  min-height: 36px;
+  padding-inline: var(--space-sm);
+  color: var(--color-muted);
+  border-bottom: var(--rule-hair) solid var(--color-rule);
+  font-size: var(--text-xs);
+}
+
+.route-board-row {
+  width: 100%;
+  min-height: 62px;
+  padding: var(--space-2xs) var(--space-sm);
+  border: 0;
+  border-bottom: var(--rule-hair) solid var(--color-rule);
+  color: inherit;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+  transition: background var(--dur-micro) var(--ease-out);
+}
+
+.route-board-row:last-of-type {
+  border-bottom: 0;
+}
+
+.route-board-row.selected {
+  border-bottom: var(--rule-hair) solid var(--color-rule);
+  background: var(--color-glass-strong);
+}
+
+.route-board-row.selected .board-open {
+  transform: rotate(90deg);
+}
+
+.route-cell-path {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.route-path-text {
+  overflow: hidden;
+  font-family: var(--font-outlier);
+  font-size: var(--text-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.route-muted,
+.route-cell-time {
+  color: var(--color-muted);
+  font-size: var(--text-xs);
+}
+
+.route-other-paths {
+  color: var(--color-info-text);
+  font-size: var(--text-xs);
+}
+
+.route-cell-num,
+.route-cell-time {
+  font-family: var(--font-outlier);
+  font-variant-numeric: tabular-nums;
+}
+
+.route-cell-num {
+  display: flex;
+  flex-direction: column;
+  font-size: var(--text-sm);
+}
+
+.route-recent {
+  color: var(--color-info-text);
+  font-size: 10px;
+  white-space: nowrap;
+}
+
+.route-board-row:focus-visible {
+  position: relative;
+  z-index: var(--z-base);
+  outline: var(--rule-fine) solid var(--color-focus);
+  outline-offset: calc(var(--rule-fine) * -1);
+}
+
+.route-board-row:active {
+  transform: translateY(var(--rule-fine));
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .route-board-row:hover {
+    background: var(--color-glass-hover);
+  }
+}
+
+@media (max-width: 1100px) {
+  .route-table-head,
+  .route-board-row {
+    grid-template-columns: minmax(104px, 0.6fr) minmax(200px, 1.2fr) minmax(200px, 1.4fr) minmax(80px, 0.5fr) 28px;
+  }
+
+  .route-table-head > :nth-child(5),
+  .route-table-head > :nth-child(6),
+  .route-board-row > :nth-child(5),
+  .route-board-row > time {
+    display: none;
+  }
+}
+
+@media (max-width: 768px) {
+  .route-table-head {
+    display: none;
+  }
+
+  .route-board-row {
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: var(--space-2xs);
+  }
+
+  .route-board-row > .route-cell-state { grid-column: 1; grid-row: 2; }
+  .route-board-row > .board-target-identity { grid-column: 1; grid-row: 1; }
+  .route-board-row > .route-cell-path { grid-column: 1 / -1; grid-row: 3; }
+  .route-board-row > :nth-child(4) { grid-column: 2; grid-row: 2; }
+  .route-board-row > .board-open { grid-column: 2; grid-row: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .route-board-row {
     transition-duration: var(--dur-micro);
   }
 }

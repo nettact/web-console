@@ -9,6 +9,7 @@ import { dismissUpdateBanner, showUpdateBanner, syncUpdateNotice } from './updat
 import { initNotifications, resetNotifications, stopNotifications } from './notifications'
 import { initTargetStatus, resetTargetStatus, stopTargetStatus } from './targetStatus'
 import { initAgentStatus, resetAgentStatus, stopAgentStatus } from './agentStatus'
+import { initRouteSummaries, resetRouteSummaries, stopRouteSummaries } from './routeSummaries'
 import LangSwitch from './components/LangSwitch.vue'
 import ThemeSwitch from './components/ThemeSwitch.vue'
 import NotificationBell from './components/NotificationBell.vue'
@@ -36,6 +37,7 @@ function syncLiveStreams(): void {
     resetNotifications()
     resetTargetStatus()
     resetAgentStatus()
+    resetRouteSummaries()
     return
   }
   if (document.visibilityState === 'visible') {
@@ -47,10 +49,12 @@ function syncLiveStreams(): void {
     initNotifications()
     initTargetStatus()
     initAgentStatus()
+    initRouteSummaries()
   } else {
     stopNotifications()
     stopTargetStatus()
     stopAgentStatus()
+    stopRouteSummaries()
   }
 }
 
@@ -74,6 +78,7 @@ onBeforeUnmount(() => {
   resetNotifications()
   resetTargetStatus()
   resetAgentStatus()
+  resetRouteSummaries()
 })
 
 // `label` is an i18n key resolved at render time so nav + breadcrumb re-translate live.

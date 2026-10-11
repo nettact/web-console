@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 
 import en from '../locales/en'
 import zh from '../locales/zh'
-import { bareHostError, httpURLError, paramsRangeError, retargetForKind, targetError } from './targetValidation'
+import { bareHostError, httpURLError, paramsRangeError, retargetForKind, targetError, traceIntervalError } from './targetValidation'
 
 // Every key this module can return must exist in BOTH locales, or a rejected
 // target renders as a raw key.
@@ -12,6 +12,7 @@ describe('targetValidation i18n coverage', () => {
     'errHostPort', 'errHostPortSyntax', 'errHostPortRange', 'errHostTooLong', 'errHostNonAscii',
     'errHostEmptyLabel', 'errHostLabelTooLong', 'errHostHyphen', 'errHostChar',
     'errURLScheme', 'errURLInvalid', 'errURLNoHost', 'errParamRange',
+    'errTraceIPv6', 'traceIntervalErr', 'traceMaxHops', 'traceAttempts',
   ] as const
   it('has zh and en messages for every error key', () => {
     for (const k of keys) {
@@ -181,5 +182,39 @@ describe('retargetForKind', () => {
     expect(retargetForKind('www.yahoo.co.jp', 'dns', 'http')).toBe('www.yahoo.co.jp')
     expect(retargetForKind('1.1.1.1', 'icmp', 'dns')).toBe('1.1.1.1')
     expect(retargetForKind('', 'http', 'dns')).toBe('')
+  })
+})
+
+describe('route monitor (trace) rules', () => {
+  it('accepts hostnames and IPv4 literals only', () => {
+    expect(targetError('trace', 'example.com')).toBe('')
+    expect(targetError('trace', '1.1.1.1')).toBe('')
+    expect(targetError('trace', '2001:db8::1')).toBe('mform.errTraceIPv6')
+    expect(targetError('trace', 'https://example.com')).toBe('mform.errHostIsURL')
+    expect(targetError('trace', 'example.com:443')).toBe('mform.errHostPort')
+  })
+
+  it('enforces the five-minute floor while allowing the default', () => {
+    expect(traceIntervalError({})).toBe('')
+    expect(traceIntervalError({ interval_seconds: 0 })).toBe('')
+    expect(traceIntervalError({ interval_seconds: 300 })).toBe('')
+    expect(traceIntervalError({ interval_seconds: 86400 })).toBe('')
+    expect(traceIntervalError({ interval_seconds: 299 })).toBe('mform.traceIntervalErr')
+    expect(traceIntervalError({ interval_seconds: 86401 })).toBe('mform.traceIntervalErr')
+    // The generic range check leaves the trace interval to the rule above.
+    expect(paramsRangeError('trace', { interval_seconds: 60 })).toBeNull()
+  })
+
+  it('bounds hops, probes per hop and the TCP port', () => {
+    expect(paramsRangeError('trace', { max_hops: 64, attempts_per_hop: 5, port: 443 })).toBeNull()
+    expect(paramsRangeError('trace', { max_hops: 65 })).toMatchObject({ labelKey: 'mform.traceMaxHops', min: 1, max: 64 })
+    expect(paramsRangeError('trace', { max_hops: 0 })).toMatchObject({ labelKey: 'mform.traceMaxHops' })
+    expect(paramsRangeError('trace', { attempts_per_hop: 6 })).toMatchObject({ labelKey: 'mform.traceAttempts', max: 5 })
+    expect(paramsRangeError('trace', { attempts_per_hop: 2.5 })).toMatchObject({ integer: true })
+    expect(paramsRangeError('trace', { port: 70000 })).toMatchObject({ labelKey: 'mform.port' })
+  })
+
+  it('carries a URL across into a bare host', () => {
+    expect(retargetForKind('https://example.com/path', 'http', 'trace')).toBe('example.com')
   })
 })

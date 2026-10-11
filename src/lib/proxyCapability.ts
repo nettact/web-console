@@ -19,6 +19,7 @@ import type { ProbeParams, Proxy, ProxyType } from '../api'
 //   nat      | yes                | tcp/tls only       | yes
 //   icmp     | no                 | no                 | yes
 //   gateway  | no                 | no                 | no
+//   trace    | no                 | no                 | no
 //   host     | no                 | no                 | no
 //
 // The columns differ by what each transport can forward:

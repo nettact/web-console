@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import type { AgentGroup, AgentStatusRow, MonitorGroup, TargetStatusRow } from '../../api'
+import type { AgentGroup, AgentStatusRow, MonitorGroup, RouteTargetSummary, TargetStatusRow } from '../../api'
 import type { AgentFilter } from '../../lib/agentStatusPage'
 import { agentLabel } from '../../lib/agentLabel'
 import {
@@ -17,12 +17,17 @@ import OsIcon from '../agents/OsIcon.vue'
 import MonitorStateBadge from './MonitorStateBadge.vue'
 import TargetStatusHistory from './TargetStatusHistory.vue'
 import { formatAvailability, formatAvailabilityRounds } from '../../lib/targetStatus'
+import { isRecentChange } from '../../lib/routeStatus'
+import { useRouteFormat } from '../../composables/useRouteFormat'
+import ASPathChain from '../route/ASPathChain.vue'
+import RouteStateBadge from '../route/RouteStateBadge.vue'
+import RouteChangeTimeline from '../route/RouteChangeTimeline.vue'
 import AgentConnectivityHistory from './AgentConnectivityHistory.vue'
 import AgentFluctuationHistory from './AgentFluctuationHistory.vue'
 import HostMetrics from '../../views/HostMetrics.vue'
 import Processes from '../../views/Processes.vue'
 
-const props = defineProps<{
+const props = withDefaults(defineProps<{
   agents: AgentStatusRow[]
   targets: TargetStatusRow[]
   groups: MonitorGroup[]
@@ -35,7 +40,14 @@ const props = defineProps<{
   tab: AgentWorkspaceTab
   historyMode: AgentHistoryMode
   rangeSec: number
-}>()
+  // Route monitors (kind "trace"): the site's route summaries by target id, and
+  // the clock their states are judged against.
+  routes?: Map<string, RouteTargetSummary>
+  routeNow?: number
+}>(), {
+  routes: () => new Map(),
+  routeNow: () => Date.now(),
+})
 
 const emit = defineEmits<{
   'update:selectedAgentId': [value: string]
@@ -45,9 +57,11 @@ const emit = defineEmits<{
   'update:statusFilter': [value: AgentFilter]
   'update:tab': [value: AgentWorkspaceTab]
   'update:historyMode': [value: AgentHistoryMode]
+  openRouteChanges: [value: { targetId: string; agentId: string }]
 }>()
 
 const { t, locale } = useI18n()
+const { since: routeSince } = useRouteFormat()
 const mobilePane = ref<'list' | 'detail'>(props.selectedAgentId ? 'detail' : 'list')
 const AGENT_LIST_COLLAPSED_KEY = 'nettact.targetStatus.agentListCollapsed'
 const agentListCollapsed = ref(localStorage.getItem(AGENT_LIST_COLLAPSED_KEY) === 'true')
@@ -56,7 +70,9 @@ const connectionFilter = ref<{ name: string; pid: number } | null>(null)
 let tabsResizeObserver: ResizeObserver | undefined
 
 const selectedAgent = computed(() => props.agents.find((agent) => agent.id === props.selectedAgentId))
-const selectedTargets = computed(() => buildAgentTargetViews(props.targets, props.selectedAgentId, props.groups))
+const selectedTargets = computed(() =>
+  buildAgentTargetViews(props.targets, props.selectedAgentId, props.groups, props.routes, props.routeNow),
+)
 const selectedSummary = computed(() => countAgentTargets(selectedTargets.value))
 const selectedHistoryTarget = computed(() =>
   selectedTargets.value.find((row) => row.target.target_id === props.selectedTargetId)?.target,
@@ -71,14 +87,32 @@ const agentGroupOptions = computed(() => {
 const agentTargetSummaries = computed(() => {
   const summaries = new Map<string, ReturnType<typeof countAgentTargets>>()
   for (const agent of props.agents) {
-    summaries.set(agent.id, countAgentTargets(buildAgentTargetViews(props.targets, agent.id, props.groups)))
+    summaries.set(agent.id, countAgentTargets(buildAgentTargetViews(props.targets, agent.id, props.groups, props.routes, props.routeNow)))
   }
   return summaries
 })
 
+// Route monitors join the priority list only when blocked or stale (tone
+// 'abnormal'); one waiting for its first check or with a recent change does not.
 const priorityTargets = computed(() =>
-  selectedTargets.value.filter((row) => row.tone === 'abnormal' || row.tone === 'attention').slice(0, 5),
+  selectedTargets.value
+    .filter((row) => row.tone === 'abnormal' || (row.tone === 'attention' && !row.route))
+    .slice(0, 5),
 )
+const hasRouteTargets = computed(() => selectedTargets.value.some((row) => row.route))
+// Route monitors whose path changed for this Agent in the last 24 hours, newest
+// change first. Informational: a change is not a fault.
+const recentRouteChanges = computed(() =>
+  selectedTargets.value
+    .filter((row) => row.route?.summary && isRecentChange(row.route.summary.last_change_at, props.routeNow))
+    .sort((a, b) =>
+      (b.route?.summary?.last_change_at ?? '').localeCompare(a.route?.summary?.last_change_at ?? ''),
+    ),
+)
+
+function openRouteChanges(row: AgentTargetView): void {
+  emit('openRouteChanges', { targetId: row.target.target_id, agentId: props.selectedAgentId })
+}
 
 function fmt(value: string | null | undefined): string {
   return value ? new Date(value).toLocaleString(toDateLocale(locale.value), { hour12: false }) : '—'
@@ -381,13 +415,44 @@ onBeforeUnmount(() => tabsResizeObserver?.disconnect())
                     <strong>{{ row.target.name || row.target.target }}</strong>
                     <small>{{ row.groupName }} · {{ row.target.kind.toUpperCase() }}</small>
                   </span>
-                  <MonitorStateBadge dim="probe" :state="row.agent.probe_state" />
+                  <RouteStateBadge v-if="row.route" :state="row.route.state" />
+                  <MonitorStateBadge v-else dim="probe" :state="row.agent.probe_state" />
                   <span class="priority-action">{{ t('targetStatus.openHistory') }} →</span>
                 </button>
               </div>
               <div v-else class="quiet-state">
                 <strong>{{ t('targetStatus.noPriorityTargets') }}</strong>
                 <span>{{ t('targetStatus.noPriorityTargetsHint') }}</span>
+              </div>
+            </section>
+
+            <section v-if="hasRouteTargets" class="priority-targets recent-route-changes">
+              <div class="section-heading">
+                <div>
+                  <h4>{{ t('targetStatus.recentRouteChanges') }}</h4>
+                  <p>{{ t('targetStatus.recentRouteChangesHint') }}</p>
+                </div>
+              </div>
+              <div v-if="recentRouteChanges.length" class="priority-list">
+                <button
+                  v-for="row in recentRouteChanges"
+                  :key="row.target.target_id"
+                  type="button"
+                  @click="openRouteChanges(row)"
+                >
+                  <span>
+                    <strong>{{ row.target.name || row.target.target }}</strong>
+                    <small>
+                      {{ t('route.lastChange') }} · {{ t('route.ago', { span: routeSince(row.route?.summary?.last_change_at, routeNow) }) }}
+                      <template v-if="row.route?.summary?.changes_24h"> · {{ t('targetStatus.routeChanges24hShort', { n: row.route.summary.changes_24h }) }}</template>
+                    </small>
+                  </span>
+                  <RouteStateBadge :state="row.route?.state ?? 'changed'" />
+                  <span class="priority-action">{{ t('targetStatus.viewRouteChanges') }} →</span>
+                </button>
+              </div>
+              <div v-else class="quiet-state">
+                <strong>{{ t('targetStatus.noRecentRouteChanges') }}</strong>
               </div>
             </section>
           </section>
@@ -401,7 +466,40 @@ onBeforeUnmount(() => tabsResizeObserver?.disconnect())
             </div>
 
             <div v-if="selectedTargets.length" class="agent-target-list">
-              <article v-for="row in selectedTargets" :key="row.target.target_id" class="agent-target-row">
+              <template v-for="row in selectedTargets" :key="row.target.target_id">
+              <article v-if="row.route" class="agent-target-row route-target-row">
+                <div class="target-row-identity">
+                  <span class="kind-chip">{{ row.target.kind.toUpperCase() }}</span>
+                  <span>
+                    <strong>{{ row.target.name || row.target.target }}</strong>
+                    <small>{{ row.groupName }} · {{ row.target.target }}</small>
+                  </span>
+                </div>
+                <div class="target-row-states">
+                  <RouteStateBadge :state="row.route.state" />
+                </div>
+                <div class="route-row-path">
+                  <ASPathChain v-if="row.route.summary?.current_since" :path="row.route.summary.as_path" compact />
+                  <span v-else class="route-row-muted">{{ t(`route.stateHint.${row.route.state}`) }}</span>
+                </div>
+                <dl class="route-row-facts">
+                  <div>
+                    <dt>{{ t('route.stableFor') }}</dt>
+                    <dd>{{ row.route.summary?.current_since ? routeSince(row.route.summary.current_since, routeNow) : '—' }}</dd>
+                  </div>
+                  <div>
+                    <dt>{{ t('route.lastChange') }}</dt>
+                    <dd>
+                      <template v-if="row.route.summary?.last_change_at">{{ t('route.ago', { span: routeSince(row.route.summary.last_change_at, routeNow) }) }}</template>
+                      <template v-else>{{ t('route.noChangeYet') }}</template>
+                    </dd>
+                  </div>
+                </dl>
+                <button type="button" class="history-row-action" @click="openTargetHistory(row)">
+                  {{ t('targetStatus.viewRouteChanges') }}
+                </button>
+              </article>
+              <article v-else class="agent-target-row">
                 <div class="target-row-identity">
                   <span class="kind-chip">{{ row.target.kind.toUpperCase() }}</span>
                   <span>
@@ -423,6 +521,7 @@ onBeforeUnmount(() => tabsResizeObserver?.disconnect())
                   {{ t('targetStatus.openHistory') }}
                 </button>
               </article>
+              </template>
             </div>
             <div v-else class="quiet-state">
               <strong>{{ t('targetStatus.noAgentTargets') }}</strong>
@@ -481,8 +580,13 @@ onBeforeUnmount(() => tabsResizeObserver?.disconnect())
                   </option>
                 </select>
               </label>
+              <RouteChangeTimeline
+                v-if="selectedHistoryTarget && selectedHistoryTarget.kind === 'trace'"
+                :target-id="selectedHistoryTarget.target_id"
+                :agent-id="selectedAgent.id"
+              />
               <TargetStatusHistory
-                v-if="selectedHistoryTarget"
+                v-else-if="selectedHistoryTarget"
                 :target="selectedHistoryTarget"
                 :agent-id="selectedAgent.id"
                 :range-sec="rangeSec"
@@ -1374,6 +1478,45 @@ onBeforeUnmount(() => tabsResizeObserver?.disconnect())
   .priority-list button,
   .history-row-action {
     transition-duration: var(--dur-micro);
+  }
+}
+.route-row-path {
+  min-width: 0;
+}
+
+.route-row-muted {
+  color: var(--color-muted);
+  font-size: var(--text-xs);
+}
+
+.route-row-facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3xs) var(--space-sm);
+  margin: 0;
+  font-size: var(--text-xs);
+}
+
+.route-row-facts > div {
+  display: flex;
+  gap: var(--space-2xs);
+}
+
+.route-row-facts dt {
+  color: var(--color-muted);
+}
+
+.route-row-facts dd {
+  margin: 0;
+  color: var(--color-ink-2);
+  font-family: var(--font-outlier);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+@container (min-width: 55rem) {
+  .agent-target-row.route-target-row {
+    grid-template-columns: minmax(210px, 1.2fr) auto minmax(200px, 1.2fr) minmax(150px, auto) auto;
   }
 }
 </style>

@@ -24,6 +24,8 @@ export function typeLabel(t: ProbeTarget, tr: Tr): string {
       return tr('mform.typeHost')
     case 'http':
       return tr('mform.typeHttp')
+    case 'trace':
+      return tr('mform.typeTrace')
     default:
       return t.kind.toUpperCase()
   }

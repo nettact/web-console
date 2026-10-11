@@ -18,7 +18,8 @@ import {
 import ComboInput from '../components/ComboInput.vue'
 import InfoTip from '../components/InfoTip.vue'
 import { pushToast } from '../toasts'
-import { LEADING_SCHEME, paramsRangeError, retargetForKind, targetError } from '../lib/targetValidation'
+import { LEADING_SCHEME, paramsRangeError, retargetForKind, targetError, traceIntervalError } from '../lib/targetValidation'
+import { TRACE_INTERVAL_DEFAULT_S, TRACE_INTERVAL_MIN_S, TRACE_INTERVAL_PRESETS } from '../lib/routePath'
 import { profileRounds } from '../lib/detection'
 import {
   anyProxyCapable,
@@ -75,6 +76,9 @@ const isGatewayMode = computed(() => form.kind === 'gateway')
 // timeout_ms, which for them means "per echo", not "per request". They get the
 // labelled per-ping field in the advanced panel instead of the generic timeout.
 const isPingMode = computed(() => form.kind === 'icmp' || form.kind === 'gateway')
+// A route monitor: scheduled traceroute with a route-change history. It has no
+// availability detector, no proxy, and its interval is chosen from presets.
+const isTraceMode = computed(() => form.kind === 'trace')
 const headersText = ref('')
 const error = ref('')
 const saved = ref(false)
@@ -126,6 +130,7 @@ const KIND_SELECT_DEFAULTS: Record<string, Record<string, string | number>> = {
   http: { method: '', flow_fanout: 0 },
   nat: { nat_transport: 'udp' },
   tcp: { flow_fanout: 0 },
+  trace: { trace_mode: 'icmp' },
 }
 
 function applyKindDefaults() {
@@ -169,7 +174,9 @@ const detection = reactive<DetectionSettingsInput>({
 // the settings revision) just because the target itself was saved.
 const detectionBaseline = ref<DetectionSettingsInput>({ ...detection })
 const detectionOpen = ref(false)
-const showDetection = computed(() => form.kind !== 'host')
+// Neither host anchors nor route monitors run the availability detector: a host
+// anchor has its own thresholds, and a route monitor records history only.
+const showDetection = computed(() => form.kind !== 'host' && form.kind !== 'trace')
 const showLossThreshold = computed(() => form.kind === 'icmp' || form.kind === 'gateway')
 // Smart loss detection stands down once the user has stated their own loss
 // tolerance, so the copy has to stop implying it is still watching.
@@ -454,6 +461,43 @@ const hostEnabledFamilies = computed<HostFamilyKey[]>(() =>
   (['cpu', 'mem', 'load', 'net', 'disk'] as HostFamilyKey[]).filter((k) => hostDet[k].enabled),
 )
 
+// ---- route monitor schedule ----
+// How often a route monitor runs is a plain-language choice: every ten minutes
+// (the default, stored as "unset") or every thirty. Anything else the monitor
+// already holds — or the operator wants — opens a labelled minutes field, with
+// the five-minute floor the server enforces. A traceroute is a burst of probes
+// toward every router on the way, so the floor is not a tunable.
+const traceIntervalCustom = ref(false)
+const traceIntervalSeconds = computed(() => {
+  const v = Number(form.params?.interval_seconds || 0)
+  return Number.isFinite(v) && v > 0 ? v : TRACE_INTERVAL_DEFAULT_S
+})
+const traceIntervalChoice = computed<string>(() => {
+  if (traceIntervalCustom.value) return 'custom'
+  const v = traceIntervalSeconds.value
+  return (TRACE_INTERVAL_PRESETS as readonly number[]).includes(v) ? String(v) : 'custom'
+})
+function setTraceIntervalChoice(v: string) {
+  if (!form.params) form.params = {}
+  if (v === 'custom') {
+    traceIntervalCustom.value = true
+    form.params.interval_seconds = traceIntervalSeconds.value
+    return
+  }
+  traceIntervalCustom.value = false
+  const n = Number(v)
+  // The default is stored as "unset" so a later change of the server default
+  // reaches monitors that never chose otherwise.
+  form.params.interval_seconds = n === TRACE_INTERVAL_DEFAULT_S ? undefined : n
+}
+const traceIntervalMinutes = computed(() => Math.round((traceIntervalSeconds.value / 60) * 100) / 100)
+function setTraceIntervalMinutes(minutes: number) {
+  if (!form.params) form.params = {}
+  const s = Math.round(Number(minutes) * 60)
+  form.params.interval_seconds = Number.isFinite(s) ? s : undefined
+}
+const isTraceTCP = computed(() => isTraceMode.value && form.params?.trace_mode === 'tcp')
+
 const defaultGroupId = computed(() => groups.value.find((g) => g.is_default)?.id || '')
 
 const dnsProto = computed(() => form.params?.resolver_protocol || '')
@@ -508,6 +552,7 @@ function placeholderFor(kind: string): string {
   if (kind === 'http') return 'https://example.com'
   if (kind === 'tcp') return 'example.com'
   if (kind === 'nat') return 'stun.example.com'
+  if (kind === 'trace') return 'example.com'
   return '1.1.1.1'
 }
 
@@ -545,6 +590,10 @@ async function loadAll() {
       httpRedirectsBeforeFanout.value = 10
     }
     headersText.value = headersToText(form.params!.headers)
+    if (form.kind === 'trace') {
+      const iv = Number(form.params!.interval_seconds || 0)
+      traceIntervalCustom.value = iv > 0 && !(TRACE_INTERVAL_PRESETS as readonly number[]).includes(iv)
+    }
     if (showDetection.value) await loadDetection(editingId.value)
     if (isHostMode.value) await loadHostDetection(editingId.value)
     return
@@ -613,6 +662,13 @@ async function save() {
   }
   // The inputs' min/max are advisory: this form saves from a button click, so the
   // browser never runs constraint validation. Check the ranges for real.
+  if (isTraceMode.value) {
+    const intervalErr = traceIntervalError(form.params as Record<string, unknown> | undefined)
+    if (intervalErr) {
+      error.value = tr(intervalErr)
+      return
+    }
+  }
   const range = paramsRangeError(form.kind, form.params as Record<string, unknown> | undefined)
   if (range) {
     // A fractional value in an integer field is not "out of range" (2.5 IS between
@@ -689,7 +745,9 @@ async function save() {
       pushToast({
         tone: 'info',
         title: tr('mform.saved'),
-        body: showDetection.value
+        body: isTraceMode.value
+          ? tr('mform.traceSaved', { n: Math.round(traceIntervalSeconds.value / 60) })
+          : showDetection.value
           ? tr('mform.savedDetectionOn', { fail: detection.fail_rounds, recover: detection.recover_rounds })
           : hostEnabledFamilies.value.length
             ? tr('mform.hostDet.savedOn', {
@@ -697,7 +755,7 @@ async function save() {
               })
             : tr('mform.hostDet.savedOff'),
       })
-      if ((showDetection.value || hostEnabledFamilies.value.length > 0) && !hasChannels.value) {
+      if (!isTraceMode.value && (showDetection.value || hostEnabledFamilies.value.length > 0) && !hasChannels.value) {
         pushToast({ tone: 'warn', title: tr('mform.savedNoChannels') })
       }
       router.push('/monitoring')
@@ -729,6 +787,13 @@ watch(
     // error names it.
     form.target = retargetForKind(form.target, prev, k)
     applyKindDefaults()
+    // Another kind's interval (often well under a minute) would land a route
+    // monitor below its five-minute floor; start it on the default instead.
+    if (k === 'trace' && prev !== 'trace') {
+      const iv = Number(form.params.interval_seconds || 0)
+      if (iv > 0 && iv < TRACE_INTERVAL_MIN_S) form.params.interval_seconds = undefined
+      traceIntervalCustom.value = iv >= TRACE_INTERVAL_MIN_S && !(TRACE_INTERVAL_PRESETS as readonly number[]).includes(iv)
+    }
     // A kind with no proxy support at all (gateway, host) cannot keep a pin: the
     // server would reject the save, and the picker is no longer shown to clear it by
     // hand. A pin that is merely now-incapable is LEFT in place so proxyProblemKey
@@ -802,6 +867,7 @@ onMounted(loadAll)
               <option value="dns">{{ tr('mform.typeDns') }}</option>
               <option value="nat">{{ tr('mform.typeNat') }}</option>
               <option value="gateway">{{ tr('mform.typeGateway') }}</option>
+              <option value="trace">{{ tr('mform.typeTrace') }}</option>
             </select>
           </label>
           <label class="field">
@@ -838,11 +904,11 @@ onMounted(loadAll)
               <span>{{ tr('mform.keywordInvert') }}</span>
             </label>
           </div>
-          <label class="field" v-if="!isHostMode">
+          <label class="field" v-if="!isHostMode && !isTraceMode">
             <span>{{ tr('mform.interval') }}</span>
             <input type="number" v-model.number="form.params!.interval_seconds" :placeholder="tr('monitoring.default')" />
           </label>
-          <label class="field" v-if="form.kind !== 'host' && !isPingMode">
+          <label class="field" v-if="form.kind !== 'host' && !isPingMode && !isTraceMode">
             <span>{{ tr('mform.timeout') }}</span>
             <input type="number" v-model.number="form.params!.timeout_ms" :placeholder="tr('monitoring.default')" />
           </label>
@@ -922,6 +988,65 @@ onMounted(loadAll)
               <span class="hint tiny" v-if="form.proxy_id">{{ tr('mform.tcpFlowFanoutProxyOff') }}</span>
             </div>
           </template>
+        </div>
+      </section>
+
+      <!-- Route monitor: the schedule is the primary choice and stays visible;
+           the probe mechanics sit beside it as labelled fields. -->
+      <section class="panel" v-if="isTraceMode">
+        <div class="panel-head"><h3>{{ tr('mform.secTrace') }}</h3></div>
+        <p class="hint panel-hint">{{ tr('mform.traceIntro') }}</p>
+        <div class="panel-body">
+          <div class="profile-list trace-freq" role="radiogroup" :aria-label="tr('mform.traceFrequency')">
+            <label v-for="opt in [...TRACE_INTERVAL_PRESETS.map(String), 'custom']" :key="opt" class="profile-opt">
+              <input
+                type="radio"
+                name="trace-interval"
+                :value="opt"
+                :checked="traceIntervalChoice === opt"
+                @change="setTraceIntervalChoice(opt)"
+              />
+              <span class="profile-name">
+                {{ opt === '600' ? tr('mform.traceEvery10') : opt === '1800' ? tr('mform.traceEvery30') : tr('mform.traceCustom') }}
+              </span>
+            </label>
+          </div>
+          <label class="field trace-minutes" v-if="traceIntervalChoice === 'custom'">
+            <span>{{ tr('mform.traceIntervalMinutes') }}</span>
+            <input
+              type="number" :min="TRACE_INTERVAL_MIN_S / 60" max="1440" step="1"
+              :value="traceIntervalMinutes"
+              @input="(e) => setTraceIntervalMinutes(Number((e.target as HTMLInputElement).value))"
+            />
+          </label>
+          <p class="hint tiny">{{ tr('mform.traceChangeNote') }}</p>
+          <p class="hint tiny">{{ tr('mform.traceNoFault') }}</p>
+        </div>
+        <div class="panel-head"><h3>{{ tr('mform.secAdvanced') }}</h3></div>
+        <div class="form-grid">
+          <label class="field">
+            <span>{{ tr('mform.traceMode') }}</span>
+            <select v-model="form.params!.trace_mode">
+              <option value="icmp">{{ tr('mform.traceModeIcmp') }}</option>
+              <option value="tcp">{{ tr('mform.traceModeTcp') }}</option>
+            </select>
+          </label>
+          <label class="field" v-if="isTraceTCP">
+            <span>{{ tr('mform.port') }}</span>
+            <input type="number" min="1" max="65535" v-model.number="form.params!.port" placeholder="443" />
+          </label>
+          <!-- Placeholders are the agent defaults for an empty field: 30 hops,
+               3 probes per hop (protocol/config schedule defaults). -->
+          <label class="field">
+            <span>{{ tr('mform.traceMaxHops') }}</span>
+            <input type="number" min="1" max="64" step="1" v-model.number="form.params!.max_hops" placeholder="30" />
+          </label>
+          <label class="field">
+            <span>{{ tr('mform.traceAttempts') }}</span>
+            <input type="number" min="1" max="5" step="1" v-model.number="form.params!.attempts_per_hop" placeholder="3" />
+          </label>
+          <p class="hint tiny wide" v-if="isTraceTCP">{{ tr('mform.traceModeHint') }}</p>
+          <p class="hint tiny wide">{{ tr('mform.traceProxyNote') }}</p>
         </div>
       </section>
 
@@ -1408,6 +1533,13 @@ onMounted(loadAll)
   margin-top: 4px;
   color: var(--color-warning-text);
   font-size: 11.5px;
+}
+.trace-freq {
+  margin-bottom: var(--space-2xs);
+}
+.trace-minutes {
+  max-width: 240px;
+  margin-bottom: var(--space-2xs);
 }
 .save-warn h4 {
   margin: 0 0 4px;

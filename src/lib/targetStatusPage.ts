@@ -162,3 +162,22 @@ export function buildStatusGroups(
   )
 }
 
+
+// The availability side of the target view. Route monitors (kind "trace") have
+// no availability verdict and are listed in their own section, so they are left
+// out here — of the groups, their counts and ranks alike. A group that holds only
+// route monitors is dropped rather than shown as an empty group, since its
+// targets do appear (in the route section).
+export function buildAvailabilityGroups(
+  groups: MonitorGroup[],
+  rows: TargetStatusRow[],
+  agentGroups: AgentGroup[],
+  filters: TargetStatusFilters,
+): TargetStatusGroupView[] {
+  const availability = rows.filter((row) => row.kind !== 'trace')
+  const routeOnly = new Set(rows.filter((row) => row.kind === 'trace').map((row) => row.group_id))
+  for (const row of availability) routeOnly.delete(row.group_id)
+  return buildStatusGroups(groups, availability, agentGroups, filters).filter((view) => !routeOnly.has(view.id))
+}
+
+export const availabilityRows = (rows: TargetStatusRow[]): TargetStatusRow[] => rows.filter((row) => row.kind !== 'trace')

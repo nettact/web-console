@@ -36,9 +36,12 @@ export type PlatformSupport = 'ok' | 'privileged' | 'component' | 'unsupported'
 // common distributions and inside Docker), on macOS unconditionally. Measured on
 // Linux: an unprivileged user and a plain non-root container both get ICMP
 // probing and gateway probing; only path diagnostics needs the privileged path.
+// Scheduled route monitoring runs the same traceroute engine, so it has the same
+// requirement.
 const NEEDS_RAW_SOCKET_OFF_WINDOWS = new Set([
   'diagnostic.traceroute.icmp',
   'diagnostic.traceroute.tcp',
+  'probe.traceroute',
 ])
 
 // Windows capabilities worth flagging as privileged when picking a policy. The

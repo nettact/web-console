@@ -7,9 +7,11 @@ import AgentStatusWorkspace from '../components/status/AgentStatusWorkspace.vue'
 import TargetStatusBoard from '../components/status/TargetStatusBoard.vue'
 import { agentStatus } from '../agentStatus'
 import { setTargetStatusTimeRange, targetStatus } from '../targetStatus'
+import { routeSummaries, routeSummaryIndex } from '../routeSummaries'
 import {
   DISPLAY_STATE_ORDER,
-  buildStatusGroups,
+  availabilityRows,
+  buildAvailabilityGroups,
   countStatuses as countTargetStatuses,
   isStatusFilter,
   type StatusBucket,
@@ -20,10 +22,11 @@ import {
   isAgentFilter,
   type AgentFilter,
 } from '../lib/agentStatusPage'
+import { buildRouteSection, summarizeRouteTargets } from '../lib/routeStatus'
 import {
   isAgentHistoryMode,
   isAgentWorkspaceTab,
-  isTargetWorkspaceTab,
+  parseTargetWorkspaceTab,
   isTargetStatusView,
   type AgentHistoryMode,
   type AgentWorkspaceTab,
@@ -96,7 +99,7 @@ function applyRouteQuery(): void {
   const rawHistoryMode = queryText(route.query.history)
   agentHistoryMode.value = isAgentHistoryMode(rawHistoryMode) ? rawHistoryMode : 'connectivity'
   const rawTargetTab = queryText(route.query.ttab)
-  targetTab.value = isTargetWorkspaceTab(rawTargetTab) ? rawTargetTab : 'overview'
+  targetTab.value = parseTargetWorkspaceTab(rawTargetTab)
   const targetFromRoute = queryText(route.query.target)
   if (initialRouteQueryApplied || routeHasTarget) {
     selectedTargetId.value = targetFromRoute
@@ -117,8 +120,15 @@ const filters = computed(() => ({
   agentId: '',
 }))
 
-const statusGroups = computed(() => buildStatusGroups(groups.value, targetStatus.targets, agentGroups.value, filters.value))
-const summary = computed(() => countTargetStatuses(targetStatus.targets))
+// Route monitors (kind "trace") are about the path, not availability: they are
+// kept out of the availability summary, buckets and groups, and listed in their
+// own section with their own summary card.
+const statusGroups = computed(() => buildAvailabilityGroups(groups.value, targetStatus.targets, agentGroups.value, filters.value))
+const summary = computed(() => countTargetStatuses(availabilityRows(targetStatus.targets)))
+const routeSection = computed(() =>
+  buildRouteSection(targetStatus.targets, routeSummaryIndex.value, routeSummaries.now, filters.value),
+)
+const routeSummary = computed(() => summarizeRouteTargets(routeSection.value.all))
 const visibleAgents = computed(() => filterAndSortAgents(agentStatus.agents, {
   search: agentSearch.value,
   groupId: agentGroupFilter.value,
@@ -185,6 +195,18 @@ function setView(next: TargetStatusView): void {
 
 function setBucket(bucket: StatusBucket): void {
   statusFilter.value = statusFilter.value === bucket ? 'all' : bucket
+}
+
+// From the Agent view's "recent route changes": open that route monitor's
+// change timeline in the target view, filtered to the Agent it came from.
+function openRouteChanges(payload: { targetId: string; agentId: string }): void {
+  view.value = 'targets'
+  search.value = ''
+  groupFilter.value = ''
+  statusFilter.value = 'all'
+  selectedTargetId.value = payload.targetId
+  selectedAgentId.value = payload.agentId
+  targetTab.value = 'changes'
 }
 
 function clearFilters(): void {
@@ -286,6 +308,7 @@ watch([statusGroups, selectedTarget], () => {
 watch([search, groupFilter, statusFilter], () => {
   if (!ready.value || !selectedTargetId.value) return
   const visible = statusGroups.value.some((group) => group.targets.some((row) => row.target_id === selectedTargetId.value))
+    || routeSection.value.visible.some((row) => row.target.target_id === selectedTargetId.value)
   if (!visible) {
     selectedTargetId.value = ''
     selectedAgentId.value = ''
@@ -430,8 +453,11 @@ onActivated(() => {
         :tab="agentTab"
         :history-mode="agentHistoryMode"
         :range-sec="rangeSec"
+        :routes="routeSummaryIndex"
+        :route-now="routeSummaries.now"
         @update:selected-agent-id="selectedAgentId = $event"
         @update:selected-target-id="selectedTargetId = $event"
+        @open-route-changes="openRouteChanges"
         @update:search="agentSearch = $event"
         @update:group-filter="agentGroupFilter = $event"
         @update:status-filter="agentStatusFilter = $event"
@@ -441,7 +467,12 @@ onActivated(() => {
     </template>
 
     <template v-else>
-    <section v-if="targetStatus.loaded" class="summary-grid" :aria-label="t('targetStatus.summaryAria')">
+    <section
+      v-if="targetStatus.loaded"
+      class="summary-grid"
+      :class="{ 'has-routes': routeSummary.total }"
+      :aria-label="t('targetStatus.summaryAria')"
+    >
       <div class="summary-card overview-card">
         <div class="donut" :style="donutStyle" aria-hidden="true"><span>{{ summary.total }}</span></div>
         <div>
@@ -463,6 +494,15 @@ onActivated(() => {
         <strong>{{ summary[card.bucket] }}</strong>
         <small>{{ t(`targetStatus.bucketHint.${card.bucket}`) }}</small>
       </button>
+      <div v-if="routeSummary.total" class="summary-card route-card">
+        <span>{{ t('targetStatus.routeSummaryTitle') }}</span>
+        <strong>{{ routeSummary.total }}</strong>
+        <small>
+          <span class="route-changes">{{ t('targetStatus.routeSummaryChanges', { n: routeSummary.changes24h }) }}</span>
+          ·
+          <span :class="{ 'route-abnormal': routeSummary.abnormal }">{{ t('targetStatus.routeSummaryAbnormal', { n: routeSummary.abnormal }) }}</span>
+        </small>
+      </div>
     </section>
 
     <section v-if="targetStatus.loaded" class="filter-bar" :aria-label="t('targetStatus.filtersAria')">
@@ -501,6 +541,10 @@ onActivated(() => {
     <TargetStatusBoard
       v-else-if="targetStatus.loaded && !metaError"
       :groups="statusGroups"
+      :route-rows="routeSection.visible"
+      :route-total="routeSection.all.length"
+      :route-now="routeSummaries.now"
+      :route-error="!routeSummaries.loaded && !!routeSummaries.error"
       :selected-target-id="selectedTargetId"
       :selected-agent-id="selectedAgentId"
       :tab="targetTab"
@@ -758,6 +802,10 @@ onActivated(() => {
   margin-bottom: var(--space-sm);
 }
 
+.summary-grid.has-routes {
+  grid-template-columns: 1.2fr repeat(5, minmax(120px, 1fr));
+}
+
 .summary-card {
   min-width: 0;
   min-height: 104px;
@@ -842,6 +890,23 @@ onActivated(() => {
 
 .bucket-card.neutral strong {
   color: var(--color-ink-2);
+}
+
+.route-card {
+  display: flex;
+  flex-direction: column;
+}
+
+.route-card .route-changes {
+  color: var(--color-info-text);
+}
+
+.route-card .route-abnormal {
+  color: var(--color-danger-text);
+}
+
+.route-card small span {
+  font-size: inherit;
 }
 
 .bucket-card.active {
@@ -965,8 +1030,13 @@ onActivated(() => {
 }
 
 @media (max-width: 960px) {
-  .summary-grid {
+  .summary-grid,
+  .summary-grid.has-routes {
     grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+
+  .route-card {
+    grid-column: 1 / -1;
   }
 
   .overview-card {
@@ -1027,7 +1097,8 @@ onActivated(() => {
     width: fit-content;
   }
 
-  .summary-grid {
+  .summary-grid,
+  .summary-grid.has-routes {
     grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
     gap: var(--space-2xs);
   }

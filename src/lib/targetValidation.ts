@@ -116,6 +116,12 @@ export function targetError(kind: string, target: string): string {
       return bareHostError(target)
     case 'nat':
       return bareHostError(target, { allowPort: true })
+    case 'trace': {
+      // A route monitor walks an IPv4 path: hostnames and IPv4 literals only.
+      const err = bareHostError(target)
+      if (err) return err
+      return isIPv6(target.trim()) ? 'mform.errTraceIPv6' : ''
+    }
     default:
       return ''
   }
@@ -155,6 +161,11 @@ const PARAM_RANGES: Record<string, ReadonlyArray<{ key: string; labelKey: string
     // the range check and then fail decoding into the server's int field.
     { key: 'flow_fanout', labelKey: 'mform.tcpFlowFanout', min: 0, max: 32, integer: true },
   ],
+  trace: [
+    { key: 'port', labelKey: 'mform.port', min: 1, max: 65535, integer: true },
+    { key: 'max_hops', labelKey: 'mform.traceMaxHops', min: 1, max: 64, integer: true },
+    { key: 'attempts_per_hop', labelKey: 'mform.traceAttempts', min: 1, max: 5, integer: true },
+  ],
   http: [
     { key: 'max_redirects', labelKey: 'mform.maxRedirects', min: -1, max: 20 },
     { key: 'max_response_bytes', labelKey: 'mform.maxResponseBytes', min: 0, max: 10485760 },
@@ -182,6 +193,9 @@ export function paramsRangeError(kind: string, params: Record<string, unknown> |
   const groups = [PARAM_RANGES.common, PARAM_RANGES[kind === 'gateway' ? 'icmp' : kind] ?? []]
   for (const group of groups) {
     for (const r of group) {
+      // A route monitor's interval has a floor rather than a range starting at 0;
+      // traceIntervalError owns it so the message can speak in minutes.
+      if (kind === 'trace' && r.key === 'interval_seconds') continue
       const raw = params[r.key]
       if (raw === undefined || raw === null || raw === '') continue
       const v = Number(raw)
@@ -218,7 +232,7 @@ export function paramsRangeError(kind: string, params: Record<string, unknown> |
 export function retargetForKind(target: string, fromKind: string, toKind: string): string {
   const s = target.trim()
   if (!s || fromKind === toKind) return target
-  const hostKinds = new Set(['dns', 'icmp', 'tcp', 'nat'])
+  const hostKinds = new Set(['dns', 'icmp', 'tcp', 'nat', 'trace'])
   // http → host-shaped: keep the host, drop scheme and path.
   if (fromKind === 'http' && hostKinds.has(toKind) && LEADING_SCHEME.test(s)) {
     let u: URL
@@ -243,4 +257,18 @@ export function retargetForKind(target: string, fromKind: string, toKind: string
   // host-shaped → http: the scheme is what the probe needs; the normalizer on the
   // field adds it, so nothing to do here beyond leaving a clean host.
   return target
+}
+
+/**
+ * A route monitor's check interval: 0/unset means the default, anything else
+ * must be at least five minutes (and no more than a day, like every kind).
+ * Returns an i18n key, or '' when acceptable.
+ */
+export function traceIntervalError(params: Record<string, unknown> | undefined): string {
+  const raw = params?.interval_seconds
+  if (raw === undefined || raw === null || raw === '') return ''
+  const v = Number(raw)
+  if (!Number.isFinite(v) || v === 0) return ''
+  if (!Number.isInteger(v) || v < 300 || v > 86400) return 'mform.traceIntervalErr'
+  return ''
 }
