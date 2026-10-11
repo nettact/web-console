@@ -59,6 +59,41 @@ export interface ServerInfo {
   // /local-agent/* routes exist (AGENT-007). Absent on every server build; the
   // desktop all-in-one is the only thing that sets it.
   local_agent?: boolean
+  // Whether this host serves an IP→ASN table status at /asn-table. Absent when
+  // the host supplies none, in which case those routes 404 — the console gates
+  // its panel on this bit rather than probing for the 404.
+  asn_table?: boolean
+}
+// Status of the IP→ASN table used to attribute route-monitor hops to AS numbers.
+// Times are RFC3339 UTC.
+export interface ASNTableStatus {
+  // 'file': a table file named by the operator (or bundled with the build);
+  // 'managed': fetched and kept current from the download center;
+  // 'off': no table configured.
+  mode: 'file' | 'managed' | 'off'
+  // file: the file path; managed: the install directory; off: "".
+  location: string
+  // managed: the download source base URL; otherwise "".
+  source: string
+  // Whether a usable table is loaded right now.
+  loaded: boolean
+  // Loaded version (managed: YYYYMMDD; file: the file's modification stamp); "" when none.
+  version: string
+  // Number of ranges in the loaded table; 0 when none.
+  ranges: number
+  // When this process loaded the current version.
+  loaded_at: string | null
+  // managed: last successful check; file: last time the file was checked.
+  last_check_at: string | null
+  // managed: when the next check is expected; otherwise null.
+  next_check_at: string | null
+  // Reason for the most recent failure; cleared on success.
+  last_error: string
+  last_error_at: string | null
+  // A check or download is in progress.
+  checking: boolean
+  // Whether a manual "check now" is allowed (true for managed and file).
+  can_check: boolean
 }
 export interface Quota {
   used: number
@@ -2396,6 +2431,12 @@ export const api = {
   changePassword: (oldPassword: string, newPassword: string) =>
     req<{ ok: boolean }>('POST', '/api/v1/auth/password', { old_password: oldPassword, new_password: newPassword }),
   serverInfo: () => req<ServerInfo>('GET', '/api/v1/server-info'),
+  // IP→ASN table status. Only call when server-info reports `asn_table: true`.
+  asnTable: () => req<ASNTableStatus>('GET', '/api/v1/asn-table'),
+  // Check for (managed) or re-read (file) the table now. 409 when the host does
+  // not allow manual checks; while a check is already running it returns the
+  // current status instead of starting another.
+  checkASNTable: () => req<ASNTableStatus>('POST', '/api/v1/asn-table/check'),
   quota: () => req<Quota>('GET', '/api/v1/quota'),
   stats: () => req<StorageStats>('GET', '/api/v1/stats'),
   sites: () => req<Site[]>('GET', '/api/v1/sites'),

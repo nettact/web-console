@@ -1,11 +1,12 @@
 <script setup lang="ts">
-import { ref, reactive, computed, onMounted } from 'vue'
+import { ref, reactive, computed, onMounted, onBeforeUnmount, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRouter } from 'vue-router'
 import {
   api,
   ApiError,
   AuthError,
+  type ASNTableStatus,
   type Channel,
   type EffectivePolicy,
   type MonitorGroup,
@@ -19,6 +20,10 @@ import {
 import { auth } from '../auth'
 import { setConsoleBase } from '../consoleBaseUrl'
 import { fmtBytes } from '../lib/format'
+import { asnBadge, asnExplanationKey, asnModeKey, asnRelative, fmtCount } from '../lib/asnTable'
+import { humanizeSpan } from '../lib/routePath'
+import { copyToClipboard } from '../lib/clipboard'
+import { toDateLocale } from '../i18n'
 import { publishServerInfo, serverInfo as liveServerInfo } from '../serverInfo'
 import {
   applyUpdateNoticeSettings,
@@ -36,7 +41,7 @@ import DataCleanup from '../components/DataCleanup.vue'
 import LocalAgentServers from '../components/LocalAgentServers.vue'
 import PolicyFields from '../components/PolicyFields.vue'
 
-const { t } = useI18n()
+const { t, locale } = useI18n()
 const router = useRouter()
 
 const SITE = 'site_default'
@@ -843,9 +848,103 @@ function channelTypeLabel(c: Channel): string {
   const descriptor = channelTypeDescriptor(c.type)
   return descriptor.labelKey ? t(descriptor.labelKey) : c.type
 }
+// IP→ASN table status (Data tab). Shown only when server-info carries the
+// `asn_table` capability bit: the routes 404 on a host that supplies no table,
+// and the bit, not a probe for that 404, is what says the panel belongs here.
+//
+// Refreshed each time the Data tab is shown rather than once at mount: the table
+// is fetched and replaced underneath an open page. A check in flight (ours or the
+// background one) is followed with a short poll that stops as soon as the server
+// reports `checking: false`, so an idle page makes no requests at all.
+const asnStatus = ref<ASNTableStatus | null>(null)
+const asnBusy = ref(false)
+const asnError = ref('')
+const asnCopy = ref<'' | 'copied' | 'failed'>('')
+const asnNow = ref(Date.now())
+let asnPollTimer: ReturnType<typeof setTimeout> | null = null
+let asnUnmounted = false
+const ASN_POLL_MS = 3000
+const asnVisible = computed(() => serverInfo.value?.asn_table === true)
+
+function clearAsnPoll() {
+  if (asnPollTimer) clearTimeout(asnPollTimer)
+  asnPollTimer = null
+}
+function applyAsnStatus(st: ASNTableStatus) {
+  asnStatus.value = st
+  asnNow.value = Date.now()
+  clearAsnPoll()
+  if (st.checking && !asnUnmounted && tab.value === 'data') {
+    asnPollTimer = setTimeout(() => void loadAsnStatus(), ASN_POLL_MS)
+  }
+}
+async function loadAsnStatus() {
+  if (!asnVisible.value) return
+  try {
+    applyAsnStatus(await api.asnTable())
+    asnError.value = ''
+  } catch (e) {
+    clearAsnPoll()
+    asnError.value = String((e as Error).message || e)
+  }
+}
+async function checkAsnNow() {
+  if (asnBusy.value || asnStatus.value?.checking) return
+  asnBusy.value = true
+  asnError.value = ''
+  try {
+    applyAsnStatus(await api.checkASNTable())
+  } catch (e) {
+    asnError.value = t('settings.asnTable.checkFailed', { err: String((e as Error).message || e) })
+  } finally {
+    asnBusy.value = false
+  }
+}
+async function copyAsnLocation() {
+  const loc = asnStatus.value?.location
+  if (!loc) return
+  const ok = await copyToClipboard(loc)
+  asnCopy.value = ok ? 'copied' : 'failed'
+  if (ok) {
+    window.setTimeout(() => {
+      if (asnCopy.value === 'copied') asnCopy.value = ''
+    }, 1500)
+  }
+}
+const asnBadgeInfo = computed(() => (asnStatus.value ? asnBadge(asnStatus.value) : null))
+const asnExplanation = computed(() => (asnStatus.value ? asnExplanationKey(asnStatus.value) : null))
+const asnDateLocale = computed(() => toDateLocale(locale.value))
+function asnFmtAbs(value: string | null | undefined): string {
+  return value ? new Date(value).toLocaleString(asnDateLocale.value, { hour12: false }) : '—'
+}
+// "3h 5m ago (2026-10-11 09:00:00)" / "in 5h (…)"; '—' when unknown.
+function asnFmtTime(value: string | null | undefined): string {
+  const rel = asnRelative(value, asnNow.value)
+  if (!rel) return '—'
+  const span = humanizeSpan(rel.seconds, {
+    d: t('route.unit.d'),
+    h: t('route.unit.h'),
+    m: t('route.unit.m'),
+    lessThanMinute: t('route.unit.lessThanMinute'),
+  })
+  const relText = t(rel.future ? 'settings.asnTable.in' : 'settings.asnTable.ago', { span })
+  return `${relText} (${asnFmtAbs(value)})`
+}
+watch(
+  () => tab.value === 'data' && asnVisible.value,
+  (shown) => {
+    if (shown) void loadAsnStatus()
+    else clearAsnPoll()
+  },
+)
+
 onMounted(() => {
   load()
   loadPolicies()
+})
+onBeforeUnmount(() => {
+  asnUnmounted = true
+  clearAsnPoll()
 })
 </script>
 
@@ -1622,6 +1721,84 @@ onMounted(() => {
         </div>
       </section>
 
+      <!-- IP→ASN table used by route monitoring. Gated on the server-info
+           capability bit: absent on hosts that supply no table. -->
+      <section class="panel asn-panel" v-if="asnVisible">
+        <div class="panel-head">
+          <h3>{{ t('settings.asnTable.title') }}</h3>
+          <span
+            v-if="asnBadgeInfo"
+            class="badge asn-badge"
+            :class="asnBadgeInfo.tone"
+            data-testid="asn-badge"
+          >{{ t('settings.asnTable.' + asnBadgeInfo.key) }}</span>
+        </div>
+        <div class="panel-body">
+          <p class="hint">{{ t('settings.asnTable.hint') }}</p>
+          <template v-if="asnStatus">
+            <p v-if="asnExplanation" class="warn-box" data-testid="asn-explain">
+              {{ t('settings.asnTable.' + asnExplanation) }}
+            </p>
+            <dl class="asn-facts">
+              <div>
+                <dt>{{ t('settings.asnTable.mode') }}</dt>
+                <dd>{{ t('settings.asnTable.' + asnModeKey(asnStatus.mode)) }}</dd>
+              </div>
+              <div v-if="asnStatus.location" class="asn-fact-wide">
+                <dt>{{ asnStatus.mode === 'managed' ? t('settings.asnTable.locationManaged') : t('settings.asnTable.locationFile') }}</dt>
+                <dd class="asn-location">
+                  <code class="mono asn-path" data-testid="asn-location">{{ asnStatus.location }}</code>
+                  <button type="button" class="btn btn-ghost asn-copy" @click="copyAsnLocation">
+                    {{ asnCopy === 'copied' ? t('settings.asnTable.copied') : t('settings.asnTable.copy') }}
+                  </button>
+                </dd>
+              </div>
+              <div v-if="asnStatus.mode === 'managed' && asnStatus.source" class="asn-fact-wide">
+                <dt>{{ t('settings.asnTable.source') }}</dt>
+                <dd><span class="mono asn-path">{{ asnStatus.source }}</span></dd>
+              </div>
+              <template v-if="asnStatus.mode !== 'off'">
+                <div>
+                  <dt>{{ t('settings.asnTable.version') }}</dt>
+                  <dd><span class="mono">{{ asnStatus.version || '—' }}</span></dd>
+                </div>
+                <div>
+                  <dt>{{ t('settings.asnTable.ranges') }}</dt>
+                  <dd data-testid="asn-ranges">{{ asnStatus.loaded ? fmtCount(asnStatus.ranges, asnDateLocale) : '—' }}</dd>
+                </div>
+                <div>
+                  <dt>{{ t('settings.asnTable.loadedAt') }}</dt>
+                  <dd>{{ asnFmtTime(asnStatus.loaded_at) }}</dd>
+                </div>
+                <div>
+                  <dt>{{ t('settings.asnTable.lastCheck') }}</dt>
+                  <dd>{{ asnFmtTime(asnStatus.last_check_at) }}</dd>
+                </div>
+                <div v-if="asnStatus.mode === 'managed'">
+                  <dt>{{ t('settings.asnTable.nextCheck') }}</dt>
+                  <dd>{{ asnFmtTime(asnStatus.next_check_at) }}</dd>
+                </div>
+              </template>
+            </dl>
+            <p v-if="asnCopy === 'failed'" class="err inline">{{ t('settings.asnTable.copyFailed') }}</p>
+            <div v-if="asnStatus.last_error" class="err inline asn-error" data-testid="asn-last-error">
+              {{ t('settings.asnTable.lastError') }}<template v-if="asnStatus.last_error_at"> · {{ asnFmtTime(asnStatus.last_error_at) }}</template>:
+              {{ asnStatus.last_error }}
+            </div>
+            <div v-if="asnStatus.can_check" class="row field-row">
+              <button
+                type="button"
+                class="btn btn-primary"
+                :disabled="asnBusy || asnStatus.checking"
+                data-testid="asn-check"
+                @click="checkAsnNow"
+              >{{ asnBusy || asnStatus.checking ? t('settings.asnTable.checking') : t('settings.asnTable.checkNow') }}</button>
+            </div>
+          </template>
+          <p v-if="asnError" class="err inline" role="alert">{{ asnError }}</p>
+        </div>
+      </section>
+
       <DataCleanup />
     </div>
   </main>
@@ -2067,6 +2244,45 @@ select.wide {
 .saved {
   color: var(--color-success-text);
 }
+/* IP→ASN table panel: a label/value grid, the long path/URL rows spanning it. */
+.asn-badge { margin-left: auto; }
+.asn-facts {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: var(--space-2xs) var(--space-lg);
+  margin: var(--space-sm) 0;
+}
+.asn-facts > div {
+  display: flex;
+  align-items: baseline;
+  min-width: 0;
+  gap: var(--space-2xs);
+  font-size: var(--text-sm);
+}
+.asn-facts > .asn-fact-wide { grid-column: 1 / -1; }
+.asn-facts dt {
+  flex: 0 0 auto;
+  margin: 0;
+  color: var(--color-muted);
+}
+.asn-facts dd {
+  margin: 0;
+  min-width: 0;
+  color: var(--color-ink-2);
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+.asn-location {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2xs);
+}
+.asn-path {
+  user-select: all;
+  overflow-wrap: anywhere;
+}
+.asn-error { margin: 0 0 var(--space-sm); }
 .listen-modes {
   display: flex;
   gap: 24px;
